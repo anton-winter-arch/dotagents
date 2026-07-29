@@ -1,38 +1,27 @@
-# `~/.agents` - agent skills, subagents, and commands
+# `~/.agents` - agent skills, subagents, commands, and claude code configs
 
-The source of truth for a set of Claude Code skills, subagents, and slash
-commands: 22 skills, 5 subagents, 11 commands, plus the station config that
-surrounds them. `sync-skills.sh` assembles them into `~/.claude` as a
-per-device view of symlinks, so the same tooling is available in every session
-on every machine that clones this repo.
+This repo contains my set of vendor-neutral "global" agent skills, subagents, 
+and slash commands: 22 skills, 5 subagents, 11 commands, and a `SPEC-CLAUDE.md`
+file that outlines my standard claude code setup. The `sync-skills.sh` script 
+installs this repo's skills, agents, and commands safely into `~/.claude` as 
+symlinks, and any existing skill with a matching name is ignored.
 
-> Changes here propagate to **every machine and every session**. Treat this as a
-> source of truth - see [`AGENTS.md`](AGENTS.md) before editing.
-
-> **[`SPEC-CLAUDE.md`](SPEC-CLAUDE.md) is the main station config** - the seed
-> spec for the whole Claude Code setup this repo assembles into (installed
-> plugins, CLI dependencies, global `CLAUDE.md`/`settings.json`, hooks). Start
-> there when setting up or auditing a machine; this README covers the
-> skills/agents/commands themselves.
+> **[`SPEC-CLAUDE.md`](SPEC-CLAUDE.md) outlines my main claude code configs** - the
+> spec for a Claude Code `~/.claude/` folder that this `~/.agents/` repo assembles 
+> into. Start there when setting up; this README covers the
+> skills/agents/commands that are installed into that agent harness.
 
 ## Design principles
 
-Five rules decide most of what is in here and how it is built, and each one is
-enforced somewhere concrete.
+**Surface the agent and session internals.** Which model is working, how much context 
+is left, what a session has cost, which branch the work is on, what background
+subagents are doing. All of it stays visible while the work happens rather than
+being abstracted away, making it easier to redirect a
+session before it goes off track. 
 
-**Surface the internals.** Which model is answering, how much context is left,
-what a session has cost, which branch the work lands on, what a background
-subagent is doing. All of it stays visible while the work happens rather than
-being reconstructed afterward, which is what makes it possible to redirect a
-session before it goes wrong. The status lines are the literal case
-([`SPEC-CLAUDE.md`](SPEC-CLAUDE.md) §9); the same instinct drives skills that
-read repo state before acting and name their assumptions out loud.
-
-**Capability gates behavior; prose does not.** A subagent told to be read-only
-but handed `Bash` will edit files, so advisory agents get a read-only `tools:`
-allowlist instead of a promise. Likewise the agent kept authoring files through
-shell heredocs until a `PreToolUse` hook denied it outright. Where a rule has to
-hold, it is wired into the harness rather than written down and hoped for.
+**Configs gate behavior; prose does not.** A subagent told to be read-only
+but allowed `Bash` will edit files, so advisory agents get a read-only `tools:`
+allowlist instead of a verbal agreement and hope. 
 
 **Checkers run outside the model.** A checklist applied by the model that wrote
 the code is the model grading its own homework. So the skills whose output is
@@ -40,20 +29,20 @@ judged mechanically ship a stdlib checker that exits non-zero on failure:
 `slop_check.py` for machine-writing tells, `docker_check.py` for compose
 host-escape grants, `django_check.py` for the fail-open DRF defaults,
 `unicode_smuggle_check.py` for instructions hidden in invisible characters.
-Anything requiring judgment stays in the prose, where a person can argue with
-it.
+Anything solely requiring judgment stays in the prose.
 
-**Knowledge is dated data, not remembered prose.** The `ai-engineering` corpus
+**Knowledge is maintained as data, not remembered prose.** The `ai-engineering` skill
 keeps one row per source in `resources/catalog.tsv` with the date each claim was
 verified, and `link-ledger.md` is generated from it rather than hand-edited. An
 undated claim cannot be told apart from a half-remembered one, so teaching the
-corpus a new category is a data edit rather than a rewrite.
+corpus a new category is a data edit rather than a skill rewrite. Separation of storage 
+and compute, sort of. 
 
 **Non-destructive by default.** Retired work is archived rather than deleted,
 finished plan items move to dated cold storage instead of vanishing, `/reflect`
-proposes a slate and waits for approval before writing, and a sync that finds
-divergence stops and asks rather than resolving it. The point is that recovering
-from a mistake should not require having caught it at the time.
+proposes memory updates and waits for approval before writing, and a sync that finds
+divergence stops and asks rather than resolving it. Preventing mistakes is less expensive 
+than fixing them.
 
 ## Skills in action
 
