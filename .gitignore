@@ -41,3 +41,9 @@ __pycache__/
 .env
 .env.*
 *.local
+
+o-o-d-a-loop/
+obsidian/
+obsidian-kg/
+repo-device-sync/
+tasks/
