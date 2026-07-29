@@ -9,6 +9,12 @@ on every machine that clones this repo.
 > Changes here propagate to **every machine and every session**. Treat this as a
 > source of truth - see [`AGENTS.md`](AGENTS.md) before editing.
 
+> **[`SPEC-CLAUDE.md`](SPEC-CLAUDE.md) is the main station config** - the seed
+> spec for the whole Claude Code setup this repo assembles into (installed
+> plugins, CLI dependencies, global `CLAUDE.md`/`settings.json`, hooks). Start
+> there when setting up or auditing a machine; this README covers the
+> skills/agents/commands themselves.
+
 ## Design principles
 
 Five rules decide most of what is in here and how it is built, and each one is
@@ -51,157 +57,37 @@ from a mistake should not require having caught it at the time.
 
 ## Skills in action
 
-Screenshots from real sessions. The diagram is the shape most of them take,
-simplified to four stages. The return edge is the part worth noticing:
-`ai-engineering` carries a dated corpus of what has been verified, and
-`ai-engineering-update` writes back into it at closeout, so a session ends by
-leaving the next one better informed rather than by forgetting.
+Screenshots from real sessions.
 
-```mermaid
-%%{init: {"theme":"base","themeVariables":{"primaryColor":"#eef2ff","primaryTextColor":"#111827","primaryBorderColor":"#818cf8","lineColor":"#94a3b8","fontFamily":"ui-monospace, SFMono-Regular, Menlo, monospace","fontSize":"13px","edgeLabelBackground":"#ffffff"},"flowchart":{"curve":"basis","nodeSpacing":45,"rankSpacing":55,"padding":16}}}%%
-flowchart LR
-  A["<b>orient</b><br/>/hi<br/>/skill-authoring"]
-  B["<b>research</b><br/>/deep-research<br/>/ai-engineering"]
-  C["<b>gate</b><br/>/my-security-<br/>review-checklist"]
-  D["<b>close out</b><br/>/ai-engineering-update<br/>/reflect&nbsp;&nbsp;/notes"]
+**Status line.** `statusline.sh` renders model, cwd, branch, reasoning effort,
+context used, tokens, session cost, and rate-limit consumption on every prompt;
+`subagent-statusline.sh` adds one row per running background task. Setup:
+copy both scripts from [`SPEC-CLAUDE.md`](SPEC-CLAUDE.md) §9 to `~/.claude/`,
+make them executable, and wire them into `settings.json`'s `statusLine` /
+`subagentStatusLine`.
 
-  A --> B --> C --> D
-  D -. "findings land in the dated corpus, ready for the next session" .-> A
+![Status line showing model, directory, branch, context and cost.](images/statusline.png)
+![Status line panel showing five parallel subagents mid-run.](images/statusline-subagents.png)
 
-  classDef phase fill:#eef2ff,stroke:#818cf8,stroke-width:1px,color:#111827
-  class A,B,C,D phase
-  linkStyle 3 stroke:#f59e0b,stroke-width:1.5px
-```
+**`deep-research` → `teach-me`.** Parallel researchers fan out one per angle,
+dating and citing claims; the skill is then built spec-first, with trigger
+evals written before the prose exists.
 
-Nothing forces the full chain and most sessions touch two or three of these.
-The ordering only matters where it is load-bearing: research before choosing,
-the security gate before merge, `/reflect` before `/notes`. The screenshots
-below follow the same arc, starting with the status line and ending with a
-pattern that drops into any stage.
+![Session charter naming the goal and skills before work starts.](images/deep-research-feynman-skill-1.png)
+![Five researchers fanning out, one per angle.](images/deep-research-feynman-skill-2.png)
+![Trigger evals written before the skill prose exists.](images/teach-me-skill-1.png)
 
-**The status line: the internals, on screen.** Two scripts render a HUD on
-every prompt. The main one is always there; the second appears only while
-background work is running.
+**`reflect` → `notes`.** `/reflect` reconciles truth and waits for approval
+before writing; only then does `/notes` file the session.
 
-`statusline.sh` renders two lines:
+![The /reflect invocation on an in-flight session.](images/reflect-and-notes-1.png)
+![The handoff to /notes after the slate was approved.](images/reflect-and-notes-2.png)
 
-| Segment | Shows | In the screenshot |
-|---|---|---|
-| `[Fable 5]` | Model answering right now | Fable 5 |
-| `.agents` | Working directory, basename only | `.agents` |
-| `⎇ develop` | Git branch; hidden outside a repo, short SHA when detached | `develop` |
-| `max` | Reasoning effort, when reported | `max` |
-| bar + `23%` | Context used, green to yellow at 70%, red at 90% | 23%, green |
-| `226k/1M ctx` | Tokens used against the window | 226k of 1M |
-| `$47.79` | Cost so far this session | $47.79 |
-| `session 20%` | Five-hour rate-limit consumption | 20% |
-| `weekly 24%` | Seven-day rate-limit consumption | 24% |
+**`meta-loop` + `advisor`.** A premium critic consulted off the hot path; its
+findings get checked against the data before the main agent acts on them.
 
-Every segment is optional and drops out silently when its field is absent, so
-early in a session, or outside a git repo, the line is simply shorter. Rate
-limits show `--` until the first API response reports them.
-
-![Two-line status line reading Fable 5, .agents, develop, max on the first line,
-then a green context bar at 23 percent, 226k of 1M tokens, $47.79, session 20
-percent and weekly 24 percent on the second.](images/statusline.png)
-
-*The main status line. Identity on line one, telemetry on line two. The
-`manual mode on` line below it is Claude Code's own, not part of this script.*
-
-`subagent-statusline.sh` adds one row per running background task, because the
-main status line's input JSON carries no task or subagent fields and cannot
-show them. Each row is a status icon (running, idle, done, error), the agent's
-name, elapsed time, tokens consumed, and a truncated description.
-
-![The agent panel during a fan-out: a main row, then five research subagents,
-each with elapsed time from 1m12s to 1m49s and token counts from 32.4k to
-40.6k.](images/statusline-subagents.png)
-
-*Five researchers running in parallel during a deep-research pass, each with
-its own runtime and token count while the work is still in flight.*
-
-**Setting it up.** Both scripts need `jq`. Copy them from
-[`SPEC-CLAUDE.md`](SPEC-CLAUDE.md) §9 to `~/.claude/statusline.sh` and
-`~/.claude/subagent-statusline.sh`, make them executable, then point
-`~/.claude/settings.json` at them:
-
-```json
-"statusLine":         { "type": "command", "command": "bash ~/.claude/statusline.sh" },
-"subagentStatusLine": { "type": "command", "command": "bash ~/.claude/subagent-statusline.sh" }
-```
-
-**`deep-research`: parallel researchers, then a cited brief.** The session
-that produced `teach-me`: the charter names the goal and the skills to route
-through, then researcher agents fan out in parallel, one per angle, each
-dating claims and capturing meta-analysis effect sizes.
-
-![The session charter: build a skill combining the Feynman technique and the
-Socratic method, researched via deep-research and specced before
-building.](images/deep-research-feynman-skill-1.png)
-
-*The charter that opened the session, naming the goal and the skills to route
-through before any work started.*
-
-![The agent narrating the fan-out before the results land: five researchers,
-one per angle, each told to date every claim and cite URLs, with the validator
-and synthesis passes already named as the next
-steps.](images/deep-research-feynman-skill-2.png)
-
-*The fan-out announced before results land: one researcher per angle, each
-required to date every claim, with the validate and synthesis passes already
-named.*
-
-**`teach-me`: built spec-first, evals-first.** The build writes the trigger
-evals and convergence battery before the skill prose exists (TDD adapted to
-skill authoring), against the spec and evidence brief from the research
-above.
-
-![The teach-me build writing its trigger evals first, before the SKILL.md
-exists, with the eval cases visible in the diff.](images/teach-me-skill-1.png)
-
-*Trigger evals written before the skill prose exists, which is test-driven
-development applied to skill authoring.*
-
-**`reflect` then `notes`: closing out in two passes.** `/reflect` reconciles
-truth - promoting durable knowledge to memory and correcting claims the
-session invalidated - and stops for approval before writing any of it. Only
-then does it hand off to `/notes`, the documentation sweep. Two skills rather
-than one, because ratifying what is true and filing what was done are separate
-jobs with separate failure modes.
-
-![The /reflect invocation carrying its arguments, on an Opus 5 session in
-~/.agents on develop at high reasoning effort, 13% into a 1M-token
-context.](images/reflect-and-notes-1.png)
-
-*Invoking the closeout, with the status line showing the session that is about
-to be reconciled.*
-
-![The handoff after the user approved the slate: reflect reports what it
-applied, notes what it trimmed rather than carried forward, and loads /notes
-as the next skill - session cost visible on the status line.](images/reflect-and-notes-2.png)
-
-*The handoff after the slate was approved: reflect reports what it applied, then
-loads `/notes` to file the session.*
-
-**`meta-loop` + `advisor`: a premium critic consulted off the hot path.** Not
-tied to one stage - an Opus 5 session hands one specific question to the
-fable-pinned `advisor` subagent, which grounds itself in the ai-engineering
-resources before answering; the main agent then verifies the advisor's claim
-against the actual data before acting on it.
-
-![The advisor subagent running on Fable 5, reading the ai-engineering map,
-catalog and reference files, while the status line shows the main session on
-Opus 5.](images/advisor-skill-spec-1.png)
-
-*The advisor grounding itself in the corpus before answering, on its own pinned
-model and its own context, separate from the session that called it.*
-
-![The main agent verifying the advisor's join-gap finding against the catalog
-- 36 of 116 map rows carry no URL - then writing the resulting spec, with the
-file-creation permission prompt visible.](images/advisor-skill-spec-2.png)
-
-*The main agent checking the advisor's finding against the data before acting on
-it, rather than taking it on trust.*
+![The advisor subagent grounding itself in the ai-engineering corpus.](images/advisor-skill-spec-1.png)
+![The main agent verifying the advisor's finding before acting on it.](images/advisor-skill-spec-2.png)
 
 ## Layout
 
