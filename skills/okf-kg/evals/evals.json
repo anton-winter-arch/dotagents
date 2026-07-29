@@ -1,0 +1,55 @@
+{
+ "skill_name": "okf-kg",
+ "evals": [
+  {
+   "id": 1,
+   "prompt": "Ingest the OKF vault at tests/fixture-vault and tell me how many concepts and link edges it contains.",
+   "expected_output": "The skill triggers, runs scripts/okf_kg.py ingest on the fixture vault, and reports 6 concepts and 10 link edges (1 dangling link skipped).",
+   "files": [
+    "tests/fixture-vault"
+   ],
+   "expectations": [
+    "The okf-kg skill is invoked",
+    "okf_kg.py ingest is executed via Bash rather than reimplementing parsing inline",
+    "The answer states 6 concepts and 10 link edges"
+   ]
+  },
+  {
+   "id": 2,
+   "prompt": "In my OKF knowledge vault at ~/kb-vault, what is the watering interval and which notes state it?",
+   "expected_output": "The skill ingests (or reuses the DB), runs query with a phrase like \"watering interval\", identifies both the irrigation runbook (3 days) and the season review meeting (5 days), and reads the source files before answering.",
+   "files": [
+    "tests/fixture-vault"
+   ],
+   "expectations": [
+    "The okf-kg skill is invoked",
+    "okf_kg.py query is executed with an FTS phrase",
+    "Both knowledge-base/runbooks-irrigation-schedule and knowledge-base/meetings-2026-06-15-review are identified",
+    "The answer notes the two documents disagree (3 days vs 5 days)"
+   ]
+  },
+  {
+   "id": 3,
+   "prompt": "Using the OKF knowledge base at ~/kb-vault, how are the season review meeting and the drip-vs-sprinkler decision connected?",
+   "expected_output": "The skill runs okf_kg.py path between the two concept ids and explains the connecting chain through the link graph.",
+   "files": [
+    "tests/fixture-vault"
+   ],
+   "expectations": [
+    "The okf-kg skill is invoked",
+    "okf_kg.py path (or neighbors) is executed with the two concept ids",
+    "The answer describes the shortest connecting chain between the two notes"
+   ]
+  },
+  {
+   "id": 4,
+   "prompt": "Fix the broken wikilink rendering in my Obsidian daily-notes template.",
+   "expected_output": "The okf-kg skill does NOT trigger; this is generic Obsidian markdown editing (wikilinks, templates), which okf-kg explicitly does not cover.",
+   "files": [],
+   "expectations": [
+    "The okf-kg skill is not invoked",
+    "No okf_kg.py command is executed"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,43 @@
+.DS_Store
+__archive*/
+
+# macOS
+._*
+.AppleDouble
+.Spotlight-V100
+.Trashes
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Per-device runtime view (agent-mail inbox, local assembly) - never sync
+.claude/
+inbox/
+settings.local.json
+
+# teach-me learning artifacts (personal, never sync)
+LEARNING/
+
+# Python bytecode (embeds absolute source paths)
+__pycache__/
+*.py[cod]
+
+# okf-kg / obsidian-kg SQLite databases (built per-vault, never committed)
+.okf-kg.db
+.okf-kg.db-*
+.obsidian-kg.db
+.obsidian-kg.db-*
+
+# Logs / temp / backups
+*.log
+*.tmp
+*.bak
+
+# Secrets safety net (repo is private, but belt-and-suspenders)
+.env
+.env.*
+*.local

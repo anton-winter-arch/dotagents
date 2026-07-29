@@ -1,0 +1,45 @@
+# rules.tsv - deterministic URL→sections auto-classification.
+# Format: <match><TAB><sections(pipe-separated)>
+# match: a plain substring, or "re:<regex>" for a regex against the full URL.
+# First matching rule wins. github.com falls through to seed-sections.tsv / triage.
+# Extend by adding rows - no code change required.
+# Do NOT put `map` in a domain rule: it would tag every subpage on that host,
+# and the tag means "has a row in agent-stack-map.md". It is derived instead,
+# by `ledger.py sync-map-tags`.
+code.claude.com	docs|harnesses
+docs.langchain.com	docs|frameworks
+docs.agno.com	docs|frameworks
+docs.firecrawl.dev	docs|ingestion
+docs.crawl4ai.com	docs|ingestion
+adk.dev	docs|frameworks
+googleapis.github.io	docs|frameworks
+google.github.io	docs|frameworks
+docs.cloud.google.com	docs|frameworks
+ai.google.dev	docs|frameworks
+learn.microsoft.com	docs|frameworks
+strandsagents.com	docs|frameworks
+aws.amazon.com	docs|frameworks
+developers.openai.com	docs
+docs.claude-mem.ai	memory
+usemotion.com	adjacent
+taskwarrior.org	adjacent
+airflow.apache.org	adjacent
+youtube.com	youtube
+huggingface.co	models
+ollama.com	serving|models
+openrouter.ai	serving
+lmcache.ai	serving
+brave.com	serving
+community.openai.com	security
+openai.com	security
+gitagent.sh	harnesses
+datasciencedojo.com	learning
+arxiv.org	papers
+gist.github.com	papers
+jules.google	docs|harnesses
+antigravity.google	docs|harnesses
+pi.dev	docs|harnesses
+docs.cursor.com	docs|harnesses
+opencode.ai	docs|harnesses
+cline.bot	docs|harnesses
+goose-docs.ai	docs|harnesses

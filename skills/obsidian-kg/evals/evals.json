@@ -1,0 +1,57 @@
+{
+  "skill_name": "obsidian-kg",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "make my vault at ~/vault truly queryable - I want to search it and see what links where",
+      "expected_output": "Skill fires. Ingest runs first via scripts/obsidian_kg.py, then queries answer from the resulting .obsidian-kg.db; no inline reimplementation of parsing.",
+      "expectations": [
+        "scripts/obsidian_kg.py ingest is executed via Bash before any query",
+        "Search uses the engine's query subcommand (bm25/FTS5), not raw grep over the vault",
+        "The agent reads the underlying .md files before asserting facts from snippets",
+        "No pip install, network call, or API key is involved"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "what links to my 'Weekly Review' note? include embeds",
+      "expected_output": "Backlinks query via the engine, resolving the note by basename; results distinguish edge kind (link vs embed) and syntax (wiki vs md).",
+      "expectations": [
+        "The backlinks subcommand is executed with the vault path and note name",
+        "If the db is missing, ingest is run first rather than hand-parsing the vault",
+        "Results reported with edge kind so embeds are distinguishable from links"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "ingest this vault of concept notes - it's our OKF knowledge base, standard markdown links, frontmattered concepts",
+      "expected_output": "Skill does NOT fire. OKF vaults belong to okf-kg (strict md-link edges). Correct behavior: invoke okf-kg instead.",
+      "expectations": [
+        "The obsidian-kg skill is not invoked",
+        "The okf-kg skill handles the request",
+        "No .obsidian-kg.db is created in the OKF vault"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "clean up the formatting and callouts in this note in my vault",
+      "expected_output": "Skill does NOT fire. Authoring/formatting belongs to the obsidian skill; obsidian-kg only indexes and queries.",
+      "expectations": [
+        "The obsidian-kg skill is not invoked",
+        "The obsidian (authoring) skill handles the request",
+        "No ingest or query subcommand is executed"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "search says my vault has ambiguous links - two notes both called 'Index'. what happened and what do I do?",
+      "expected_output": "Skill fires. stats subcommand surfaces the ambiguous-link examples; explanation matches engine behavior (bare [[link]] matching multiple basenames is recorded, never guessed) and the fix is a path-qualified link.",
+      "expectations": [
+        "The stats subcommand is executed and its ambiguous-link output cited",
+        "The explanation states the engine records ambiguity rather than guessing a target",
+        "The proposed fix is a path-qualified wikilink like [[folder/Index]]",
+        "No edge is fabricated for the ambiguous link"
+      ]
+    }
+  ]
+}
