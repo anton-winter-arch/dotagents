@@ -63,7 +63,8 @@ copy both scripts from [`SPEC-CLAUDE.md`](SPEC-CLAUDE.md) §9 to `~/.claude/`,
 make them executable, and wire them into `settings.json`'s `statusLine` /
 `subagentStatusLine`.
 
-![Status line showing model, directory, branch, context and cost.](images/statusline.png)
+![Status line on a lightweight model, low cost, low context usage.](images/statusline-cheap.png)
+![Status line on a premium model at high reasoning effort, high cost, more context used.](images/statusline-expensive.png)
 ![Status line panel showing five parallel subagents mid-run.](images/statusline-subagents.png)
 
 **`deep-research` → `teach-me`.** Parallel researchers fan out one per angle,
