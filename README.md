@@ -9,6 +9,7 @@ and most other common agent frameworks.
 More info on the open agents specs:
 https://github.com/oracle/agent-spec
 https://oracle.github.io/agent-spec/26.1.2/
+
 The `sync-skills.sh` script 
 installs this repo's skills, agents, and commands safely into `~/.claude` as 
 symlinks, and any existing skill with a matching name is ignored.
