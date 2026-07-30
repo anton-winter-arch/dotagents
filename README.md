@@ -1,8 +1,15 @@
 # `~/.agents` - agent skills, subagents, commands, and claude code configs
 
-This repo contains my set of vendor-neutral "global" agent skills, subagents, 
-and slash commands: 22 skills, 5 subagents, 11 commands, and a `SPEC-CLAUDE.md`
-file that outlines my standard claude code setup. The `sync-skills.sh` script 
+![Cover image of three agents standing in a circle pointing at each other like the common spiderman meme, one with a claude logo, one with an openai logo, and one with a gemini logo.](images/agents.png)
+
+This repo contains my set of vendor-neutral "global" agent skills, and a `SPEC-CLAUDE.md`
+file that outlines my standard claude code setup. 
+All skills in this repo follow the "open agents standard" which is compatible with claude code 
+and most other common agent frameworks. 
+More info on the open agents specs:
+https://github.com/oracle/agent-spec
+https://oracle.github.io/agent-spec/26.1.2/
+The `sync-skills.sh` script 
 installs this repo's skills, agents, and commands safely into `~/.claude` as 
 symlinks, and any existing skill with a matching name is ignored.
 
