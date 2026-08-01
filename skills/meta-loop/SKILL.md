@@ -75,8 +75,18 @@ Apply the verdict - proceed / revise / stop - before any worker starts.
 - Each worker prompt is self-contained: context, exact deliverable,
   acceptance criteria, what NOT to touch. Workers never spawn workers and
   never expand scope.
-- Two workers must not write the same file - that seam belongs to the
-  orchestrator or to sequencing.
+- **Declare each worker reading or writing, and scope its tools to match.**
+  Same `Agent` mechanism either way; this is a per-call decision, not a
+  separate tier or a named subagent.
+  - **Readers** get read-only tools (`Read`, `Grep`, `Glob`) and return
+    findings, never files. Parallelize them freely over the same paths - they
+    share no state, and the point is that the searching stays in their context
+    while only the conclusion comes back. This is where the loop's context
+    saving actually comes from.
+  - **Writers** get edit tools. Two writers must not write the same file -
+    that seam belongs to the orchestrator or to sequencing.
+- A loop that needs only one kind declares only one kind. Reading first and
+  writing second is a common and useful shape, not a required one.
 
 ## Phase 4 - Verify (orchestrator)
 
