@@ -100,9 +100,18 @@ to a second wave of subagents. How many of each depends on the work.
 Each subagent reads in its own context window and returns only its conclusions,
 so the orchestrator collects findings rather than the searching that produced
 them. That is what lets a session go deep without the main thread filling up.
-Workers run on the same model tier the orchestrator would have used itself, since
-parallelism is the leverage rather than cheapness, and each result is checked
-against acceptance criteria and evidence instead of the worker's own summary.
+Each result is checked against acceptance criteria and evidence rather than the
+worker's own summary.
+
+Workers run at the session's own model tier by default, which keeps results
+consistent for high-stakes coding; a smaller model is a reasonable choice for a
+delegated subtask that does not need the larger one. Either way the tier is
+written into each call rather than inherited, so neither a cheap session nor an
+expensive one silently decides it for you.
+
+The token saving does not come from that choice, though. It comes from the shape:
+no single agent fills a full context window, so several shorter threads cost less
+in aggregate than one long thread that maxes out and compacts repeatedly.
 
 The next two shots are that advisor step in a real session: it grounds itself in
 the `ai-engineering` corpus, and the main agent checks its finding against the

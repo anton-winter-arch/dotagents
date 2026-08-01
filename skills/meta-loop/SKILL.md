@@ -8,9 +8,12 @@ description: Orchestration loop - plan, delegate to parallel workers, verify, sy
 Three-tier loop: **orchestrator** (this session) runs the hot path
 plan → delegate → verify → synthesize; **workers** (opus) do parallel
 execution; **advisor** (fable, fresh context) is a consulted advisor off the
-hot path. The economics: parallelism is the leverage, not cheapness. A worker
-runs on the same tier the orchestrator would have used doing the work itself,
-so fanning out costs wall-clock and context - never quality.
+hot path. The economics: parallelism is the leverage, not a cheaper worker. A
+worker runs on the same tier the orchestrator would have used doing the work
+itself, so fanning out costs wall-clock and context - never quality. The saving
+is structural rather than per-token: no single agent fills a context window, so
+several shorter threads cost less in aggregate than one long thread that maxes
+out and compacts repeatedly.
 
 Session-model note: a skill cannot set the main-thread model. Run the session
 on Opus (`/model opus`) so the orchestrator matches its workers; on a Fable
