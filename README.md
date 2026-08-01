@@ -2,7 +2,7 @@
 
 # `~/.agents`
 
-**agent skills, subagents, commands, and claude code configs**
+**agent skills, subagents, commands, and harness configs**
 
 [![License MIT](https://img.shields.io/badge/license-MIT-862e9c?style=for-the-badge)](LICENSE)
 [![Spec: Agent Skills](https://img.shields.io/badge/spec-agent%20skills-0b7285?style=for-the-badge)](https://agentskills.io)
@@ -59,52 +59,20 @@ over are under [For agents](#for-agents).
 > hooks, permission rules. [`SPEC-CLAUDE.md`](specs/SPEC-CLAUDE.md) is the fullest
 > because Claude Code is the opinionated first choice. Start there when setting up.
 
-## Which harness, and which model
-
-The skills are harness-neutral; where you run them is a separate choice.
-
-| Harness | Notes |
-|---|---|
-| **Claude Code** | The first-round option most of the time, and the only one that reads the full skills + subagents + commands set |
-| **Codex CLI** | Broad everyday coverage |
-| **goose** | Fully open source, with a desktop GUI and mature governance |
-| **Kimi Code CLI** | Broad everyday coverage |
-| **Pi** | Minimal and hackable, for building a bespoke loop |
-
-Match the model to what the work is worth rather than to the harness. Hosted
-third-party models are fine for everyday work; anything load-bearing runs on
-models you trust with the material.
-
-One trap worth naming: **an Ollama `:cloud` model is not a local model.** It is
-served remotely and carries the same exposure as any hosted API, whatever the
-local-feeling command looks like. `ornith:9b` and `gpt-oss:20b` are local;
-`kimi-k2.6:cloud` is not.
-
-Harnesses that take multiple providers can be pointed wherever you like. goose
-defaults to `glm-5.2` through Ollama cloud here, which is a default rather than a
-constraint; an offline local model is left open on purpose.
-
-> **Ollama is reached through the Ollama app, never its public HTTP API.**
-> `OLLAMA_HOST` is never set to `0.0.0.0` or any routable address, on any machine,
-> for any reason. Binding the model server off loopback publishes an
-> unauthenticated inference endpoint to the network.
-
 ## Watching the work
 
-Before the skills, the thing that makes them steerable: the session's own
-internals, on screen while the work happens.
+What the session is doing, on screen while it happens.
 
 **Status line.** `statusline.sh` renders model, cwd, branch, reasoning effort,
-context used, tokens, session cost, and rate-limit consumption on every prompt;
-`subagent-statusline.sh` adds one row per running background task. Setup:
-copy both scripts from [`SPEC-CLAUDE.md`](specs/SPEC-CLAUDE.md) §9 to `~/.claude/`,
-make them executable, and wire them into `settings.json`'s `statusLine` /
+context, tokens, session cost, and rate-limit consumption on every prompt;
+`subagent-statusline.sh` adds a row per running background task. Setup: copy both
+from [`SPEC-CLAUDE.md`](specs/SPEC-CLAUDE.md) §9 to `~/.claude/`, make them
+executable, and wire them into `settings.json`'s `statusLine` /
 `subagentStatusLine`.
 
-Below: the same line on an expensive session (Fable 5 at max effort, 226k of
-context, $47.79 spent, session and weekly limits at 20% and 24%), on a cheap one
-(Sonnet 5 at medium, 42k, 43 cents, neither limit registering), and the subagent
-panel with workers running in parallel.
+Three examples below: an expensive session (Fable 5, max effort, 226k context,
+$47.79), a cheap one (Sonnet 5, medium effort, 42k context, 43 cents), and the
+subagent panel during a parallel run.
 
 ![Status line on an expensive session: Fable 5 at max effort, 226k of context, $47.79 spent, session 20% and weekly 24%.](images/statusline-expensive.png)
 ![Status line on a cheap session: Sonnet 5 at medium effort, 42k of context, $0.43 spent, neither rate limit registering yet.](images/statusline-cheap.png)
@@ -158,6 +126,36 @@ before writing; only then does `/notes` file the session.
 
 ![The /reflect invocation on an in-flight session.](images/reflect-and-notes-1.png)
 ![The handoff to /notes after the slate was approved.](images/reflect-and-notes-2.png)
+
+## Which harness, and which model
+
+The skills are harness-neutral; where you run them is a separate choice.
+
+| Harness | Notes |
+|---|---|
+| **Claude Code** | The first-round option most of the time, and the only one that reads the full skills + subagents + commands set |
+| **Codex CLI** | Broad everyday coverage |
+| **goose** | Fully open source, with a desktop GUI and mature governance |
+| **Kimi Code CLI** | Broad everyday coverage |
+| **Pi** | Minimal and hackable, for building a bespoke loop |
+
+Match the model to what the work is worth rather than to the harness. Hosted
+third-party models are fine for everyday work; anything load-bearing runs on
+models you trust with the material.
+
+Worth noting: **an Ollama `:cloud` model is not a local model.** It is served
+remotely and carries the same exposure as any hosted API, whatever the
+local-feeling command looks like. `ornith:9b` and `gpt-oss:20b` are local;
+`kimi-k2.6:cloud` is not.
+
+Harnesses that take multiple providers can be pointed wherever you like. goose
+defaults to `glm-5.2` through Ollama cloud here, which is a default rather than a
+constraint.
+
+> **Ollama is reached through the Ollama app, never its public HTTP API.**
+> `OLLAMA_HOST` is never set to `0.0.0.0` or any routable address, on any machine,
+> for any reason. Binding the model server off loopback publishes an
+> unauthenticated inference endpoint to the network.
 
 ## Design principles
 
