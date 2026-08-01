@@ -70,6 +70,18 @@ from [`SPEC-CLAUDE.md`](specs/SPEC-CLAUDE.md) §9 to `~/.claude/`, make them
 executable, and wire them into `settings.json`'s `statusLine` /
 `subagentStatusLine`.
 
+Both scripts only format values Claude Code passes them on stdin; they compute
+nothing. Two of those values are easy to misread:
+
+- **The dollar figure** is `cost.total_cost_usd` - an estimate, computed
+  client-side, of what the session's API calls would cost at API rates, subagent
+  calls included. On a subscription plan it is not money billed, since you pay a
+  flat rate. Read it as a relative measure between sessions. It resets on
+  `/clear`.
+- **The percentages** are the subscription rate-limit windows,
+  `rate_limits.five_hour` and `rate_limits.seven_day`. On a Max or Pro plan
+  those are the real constraint.
+
 Three examples below: an expensive session (Fable 5, max effort, 226k context,
 $47.79), a cheap one (Sonnet 5, medium effort, 42k context, 43 cents), and the
 subagent panel during a parallel run.

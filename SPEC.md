@@ -4,8 +4,8 @@
 
 ## What this is
 
-`~/.agents` is the **source of truth** for the user's **own** system-level agent
-tooling shared across all the user's machines. It is a git repo whose
+`~/.agents` is the **source of truth** for self-authored system-level agent
+tooling, shared across every machine. It is a git repo whose
 `skills/`, `agents/`, and `commands/` directories are the canonical set made
 available to Claude Code (and other skill-aware agents) on every device.
 

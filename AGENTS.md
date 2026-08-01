@@ -4,9 +4,10 @@
 
 ## What this directory is
 
-`~/.agents` is the **source of truth** for the user's system-level agent skills,
-shared across all their machines via a git repo. The skills here are
-symlinked into `~/.claude/skills` on each device by `sync-skills.sh`.
+`~/.agents` is the **source of truth** for the agent skills, subagents, commands
+and per-harness station specs shared across every machine via a git repo. Most
+harnesses read `skills/` from this path directly; Claude Code is the exception
+and gets a per-device view assembled by `sync-skills.sh`.
 
 **Blast radius:** a change here propagates to every machine and every future agent
 session once it's committed/pushed and re-synced. This is global config, not a
@@ -40,7 +41,7 @@ separate leak path. Standing rule for any repo we touch:
    `Read(./.env)`, `Read(./.env.*)`) + the `block-env-files.sh` hook; Codex CLI
    `deny` in `~/.codex/config.toml`. Ignore files are best-effort
    defense-in-depth - see the per-tool real-vs-theater table in
-   `SPEC-CLAUDE.md` §7 (Secrets out of agent context). **`.claudeignore` is NOT read by Claude Code**
+   `specs/SPEC-CLAUDE.md` §7 (Secrets out of agent context). **`.claudeignore` is NOT read by Claude Code**
    (verified 2026-07) - ship it forward-compat only, never rely on it.
 3. **Per-repo baseline:** confirm `.gitignore` covers `.env*`; add the hard
    deny rule for the agent(s) that repo uses; optionally drop the canonical
@@ -94,9 +95,10 @@ secrets.yaml
 
 ## After you change a skill
 
-Remind the user to:
-1. commit + push (default branch `develop`), and
-2. run `bash ~/.agents/sync-skills.sh` on each machine to refresh the links.
+1. Commit and push (default branch `develop`).
+2. On a Claude Code machine, run `bash ~/.agents/sync-skills.sh` to refresh the
+   per-device links. Harnesses that read `~/.agents/skills/` directly need
+   nothing; a pull is enough.
 
 ## Layout
 
