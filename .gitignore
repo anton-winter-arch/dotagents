@@ -37,13 +37,20 @@ __pycache__/
 *.tmp
 *.bak
 
-# Secrets safety net (repo is private, but belt-and-suspenders)
+# Secrets safety net
 .env
 .env.*
 *.local
 
-o-o-d-a-loop/
-obsidian/
-obsidian-kg/
-repo-device-sync/
-tasks/
+# Keys and credentials - never commit, in any repo
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+.envrc
+*credentials*
+
+# Upstream-only: working state, not part of the published set
+/tasks/
+/_RESEARCH/

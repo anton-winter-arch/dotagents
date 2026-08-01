@@ -135,9 +135,9 @@ class TestSkillStructure(unittest.TestCase):
         self.assertIn(f"name: {ROOT.name}", head)
 
     def test_evals_have_negative_case(self) -> None:
-        cases = json.loads((ROOT / "evals" / "evals.json").read_text(encoding="utf-8"))["evals"]
+        cases = json.loads((ROOT / "evals" / "triggers.json").read_text(encoding="utf-8"))
         self.assertGreaterEqual(len(cases), 3)
-        self.assertTrue(any(c["expected_skill"] is None for c in cases))
+        self.assertTrue(any(not c["should_trigger"] for c in cases))
 
 
 if __name__ == "__main__":

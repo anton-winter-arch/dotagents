@@ -9,5 +9,5 @@ Nothing skill-specific belongs here.
 
 Current contents:
 - `station-hooks/` - tests for the PreToolUse/SessionStart hooks seeded onto
-  each machine per `SPEC-CLAUDE.md` (e.g. `guard-rm.sh`,
+  each machine per [`SPEC-CLAUDE.md`](../specs/SPEC-CLAUDE.md) (e.g. `guard-rm.sh`,
   `deny-bash-file-writes.sh`), not owned by any one skill.

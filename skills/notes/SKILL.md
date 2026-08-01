@@ -79,9 +79,10 @@ into it.
 > `tasks/completed/plan-completed-YYYY-MM-DD.md`, verbatim, then remove the
 > original; or (b) root `PLAN.md` / `PLAN-COMPLETED.md` / `HANDOFF.md` (the
 > 2026-07-03→07-10 interlude) - sweep into those where they exist and suggest
-> converting to `tasks/plan.md` + `tasks/todo.md` (cold: `tasks/completed/`),
-> the upstream `agent-skills` layout (its `/plan` and `/build` hardcode those
-> paths), rather than mixing layouts.
+> converting to `tasks/plan.md` + `tasks/todo.md` (cold: `tasks/completed/`)
+> rather than mixing layouts. That layout is a house convention, not an external
+> requirement: the `agent-skills` plugin hardcodes no doc paths at all (checked
+> 2026-07-31), so nothing upstream constrains it.
 
 ## Step 3 - Size gate (mandatory, before writing anything)
 

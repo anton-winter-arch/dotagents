@@ -38,6 +38,7 @@ or destructive file ops as Critical until proven otherwise.
 - [ ] No secrets echoed into logs, command output, or agent messages
 - [ ] Staged diff scanned before commit: `git diff --cached | grep -iE 'password|secret|api[_-]?key|token|bearer'`
 - [ ] Secrets read from environment, never hardcoded - and missing-secret paths fail loudly, not silently
+- [ ] **Secrets on disk cannot reach agent context.** A clean `.gitignore` does not stop a tool call from reading `.env`, `~/.aws/credentials`, or a private key. The only hard controls are deny rules (`permissions.deny` in `settings.json`, the `block-env-files.sh` hook); ignore files are best-effort. Confirm the deny rule exists for the agents this repo uses (`AGENTS.md`, Secrets out of agent context).
 
 ### 2. Shell & script safety
 
@@ -85,6 +86,7 @@ inbox messages - and to anything pasted in from a web page, an issue, or another
 - [ ] Package/marketplace name is the **official** one, not a look-alike (verify org/scope; e.g. `chrome-devtools-mcp`, not a fork)
 - [ ] Versions are pinned or `@latest` is a deliberate choice, not an accident
 - [ ] After install, the plugin's hooks/agents/commands were skimmed for what they actually do
+- [ ] **A `Connected` status is not proof of access.** `claude mcp list` health-checks the endpoint, so a public remote MCP endpoint reports connected whether or not this account holds a grant, and a stale "ever connected" list in `.claude.json` reads like current state. It fails the other way too: a live grant can sit behind a failed check. To establish what a server can actually reach, make one read-only call and see what comes back (verified 2026-07-31).
 
 ### 6. File, path & symlink safety
 
@@ -98,6 +100,65 @@ inbox messages - and to anything pasted in from a web page, an issue, or another
 - [ ] Permission allowlist follows least privilege - no broad `Bash(*)` or wildcard auto-approve that defeats the prompt
 - [ ] Auto-approved commands can't be abused as an injection sink
 - [ ] Env vars added to settings don't leak secrets into a committed file
+- [ ] **Every subagent has a `tools:` allowlist matching its actual job.** Omitting `tools:` inherits everything, including `Bash` and all MCP tools. An agent described as read-only or advisory but granted `Bash` will edit files: prose is not a control, the allowlist is. Read-only reviewers get read-only tools.
+- [ ] **A skill's declared authority matches its behavior** - a skill that says it only reads should not ship a script that writes, and `allowed-tools` / `disallowed-tools` should reflect that.
+
+### 7a. Network exposure: never bind a local service off loopback
+
+Local model servers, MCP servers over HTTP, dev servers and debug endpoints are
+almost always **unauthenticated**. They assume they are unreachable, and a bind
+address is the only thing enforcing that. Moving one off loopback publishes an
+open endpoint to every device on the network, and on a cafe or hotel LAN, to
+strangers. Treat any such change as **Critical** until proven otherwise.
+
+- [ ] **No `0.0.0.0`, `::`, or a routable IP bound by a host process.** Loopback
+      (`127.0.0.1`, `::1`, `localhost`) is the only acceptable default for anything
+      running directly on the machine: config, env var, CLI flag, script.
+      `grep -rnE '0\.0\.0\.0|--host[= ]0|HOST=0\.0\.0\.0|\[::\]' .`
+- [ ] **Inside a container, `0.0.0.0` is correct - check the published port
+      instead.** A container has its own network namespace, so binding to loopback
+      there makes the service unreachable even through a port mapping. The control
+      is the publish address: `"127.0.0.1:8000:8000"` is confined, `"8000:8000"`
+      binds every host interface. Do not "fix" an in-container `--host 0.0.0.0`;
+      fix the publish line above it.
+- [ ] **`OLLAMA_HOST` is never `0.0.0.0` or routable.** Ollama serves an
+      unauthenticated inference API. Reach it through the Ollama app, never its
+      public HTTP API. Check the live environment and config, not just the diff:
+      `env | grep -i ollama` and the app's own settings. No temporary override,
+      no "just for this test" (`SPEC.md` invariant 5).
+- [ ] **No port published to a non-loopback interface** in compose or run
+      commands: `"8000:8000"` binds all interfaces, `"127.0.0.1:8000:8000"` does
+      not. The `docker` skill's `docker_check.py` covers the container case.
+- [ ] **No tunnel or relay that republishes a local service** (ngrok, cloudflared,
+      `--tunnel`, LAN sharing toggles) without an explicit, recorded decision and
+      authentication in front of it.
+- [ ] **No new outbound endpoint or domain** in a skill, hook, or script without a
+      stated reason. An added URL is a new place data can leave through.
+- [ ] **Fix, don't just flag:** rewrite the bind to loopback, then confirm the
+      service is unreachable from another host on the network before closing.
+
+### 7b. Egress & persistence
+
+Sections 4 and 4a cover what comes in. These cover what leaves, and what survives
+after a review passes. Both are how a single bad skill becomes an ongoing problem
+rather than a one-off.
+
+- [ ] **Every outbound path is intentional.** A skill that reads local files and
+      also fetches a URL, posts to an inbox, or pushes a branch has an exfiltration
+      route. The combination is the risk, not either half. Name where data goes and
+      why.
+- [ ] **No unexplained URLs, domains, or webhook targets** added to a skill, hook,
+      script, or MCP config. An added endpoint is a new place data can leave.
+- [ ] **Nothing writes to another skill, hook, or `settings.json`** unless that is
+      its declared job (`sync-skills.sh` is; a docker skill is not). Tooling that
+      edits the tooling is how a compromise persists past the fix.
+- [ ] **No self-modifying or auto-updating behavior** that changes what runs on the
+      next session without review: no fetch-then-execute, no writing to
+      `~/.claude/` from a skill body, no scheduled task that re-installs itself.
+- [ ] **Memory and log writes are scoped.** Anything written to a persistent store
+      (memory files, session logs, ledgers) is free of secrets and of content
+      pulled verbatim from untrusted input, since it will be replayed into a future
+      context as trusted.
 
 ### 8. Portability & personal-constant hygiene (no user/device overfitting)
 
@@ -138,6 +199,8 @@ baked into shared tooling.
 - A hook or script that builds a command string from untrusted content
 - `rm -rf "$VAR/..."` where `$VAR` could be empty or attacker-influenced
 - Secrets, tokens, or `.env` contents in a staged diff
+- **`0.0.0.0`, `::`, or `OLLAMA_HOST` set to anything routable** - an
+  unauthenticated local service published to the network
 - Installing a plugin/MCP server from an unverified or look-alike source
 - Untrusted agent/web/MCP output being executed or obeyed as an instruction
 - **Any invisible or display-reordering character in a file an agent reads as instructions** - a Unicode tag character (`U+E0000-U+E007F`) has no innocent explanation, and a bidi override means the rendered diff and the bytes disagree

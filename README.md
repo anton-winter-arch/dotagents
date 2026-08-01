@@ -1,75 +1,153 @@
-# `~/.agents` - agent skills, subagents, commands, and claude code configs
+<div align="center">
 
-![Cover image of three agents standing in a circle pointing at each other like the common spiderman meme, one with a claude logo, one with an openai logo, and one with a gemini logo.](images/agents.png)
+# `~/.agents`
 
-This repo contains my set of vendor-neutral "global" agent skills, and a `SPEC-CLAUDE.md`
-file that outlines my standard claude code setup. 
-All skills in this repo follow the "open agents standard" which is compatible with claude code 
-and most other common agent frameworks. 
-More info on the open agents specs:
-https://github.com/oracle/agent-spec
-https://oracle.github.io/agent-spec/26.1.2/
+**agent skills, subagents, commands, and claude code configs**
 
-The `sync-skills.sh` script 
-installs this repo's skills, agents, and commands safely into `~/.claude` as 
-symlinks, and any existing skill with a matching name is ignored.
+[![License MIT](https://img.shields.io/badge/license-MIT-862e9c?style=for-the-badge)](LICENSE)
+[![Spec: Agent Skills](https://img.shields.io/badge/spec-agent%20skills-0b7285?style=for-the-badge)](https://agentskills.io)
+[![Skills 24](https://img.shields.io/badge/skills-24-495057?style=for-the-badge)](#skills-catalog)
 
-> **[`SPEC-CLAUDE.md`](SPEC-CLAUDE.md) outlines my main claude code configs** - the
-> spec for a Claude Code `~/.claude/` folder that this `~/.agents/` repo assembles 
-> into. Start there when setting up; this README covers the
-> skills/agents/commands that are installed into that agent harness.
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-%E2%9C%93-2b8a3e?style=flat-square)](#supported-agent-frameworks)
+[![Codex](https://img.shields.io/badge/Codex-%E2%9C%93-2b8a3e?style=flat-square)](#supported-agent-frameworks)
+[![deepagents](https://img.shields.io/badge/deepagents-%E2%9C%93-2b8a3e?style=flat-square)](#supported-agent-frameworks)
+[![Gemini](https://img.shields.io/badge/Gemini-%E2%9C%93-2b8a3e?style=flat-square)](#supported-agent-frameworks)
+[![goose](https://img.shields.io/badge/goose-%E2%9C%93-2b8a3e?style=flat-square)](#supported-agent-frameworks)
+[![Kimi Code](https://img.shields.io/badge/Kimi%20Code-%E2%9C%93-2b8a3e?style=flat-square)](#supported-agent-frameworks)
+[![Pi](https://img.shields.io/badge/Pi-%E2%9C%93-2b8a3e?style=flat-square)](#supported-agent-frameworks)
 
-## Design principles
+<img src="images/agents.png" width="720"
+  alt="Cover image of three agents standing in a circle pointing at each other like the common spiderman meme, one with a claude logo, one with an openai logo, and one with a gemini logo.">
 
-**Surface the agent and session internals.** Which model is working, how much context 
-is left, what a session has cost, which branch the work is on, what background
-subagents are doing. All of it stays visible while the work happens rather than
-being abstracted away, making it easier to redirect a
-session before it goes off track. 
+</div>
 
-**Configs gate behavior; prose does not.** A subagent told to be read-only
-but allowed `Bash` will edit files, so advisory agents get a read-only `tools:`
-allowlist instead of a verbal agreement and hope. 
+---
 
-**Checkers run outside the model.** A checklist applied by the model that wrote
-the code is the model grading its own homework. So the skills whose output is
-judged mechanically ship a stdlib checker that exits non-zero on failure:
-`slop_check.py` for machine-writing tells, `docker_check.py` for compose
-host-escape grants, `django_check.py` for the fail-open DRF defaults,
-`unicode_smuggle_check.py` for instructions hidden in invisible characters.
-Anything solely requiring judgment stays in the prose.
+This repo contains my set of vendor-neutral "global" agent skills, and a
+`specs/` folder that outlines my standard agent-harness setups. All skills in
+this repo follow the open Agent Skills standard, which is compatible with claude code
+and most other common agent frameworks.
 
-**Knowledge is maintained as data, not remembered prose.** The `ai-engineering` skill
-keeps one row per source in `resources/catalog.tsv` with the date each claim was
-verified, and `link-ledger.md` is generated from it rather than hand-edited. An
-undated claim cannot be told apart from a half-remembered one, so teaching the
-corpus a new category is a data edit rather than a skill rewrite. Separation of storage 
-and compute, sort of. 
+More info on the Agent Skills standard:
 
-**Non-destructive by default.** Retired work is archived rather than deleted,
-finished plan items move to dated cold storage instead of vanishing, `/reflect`
-proposes memory updates and waits for approval before writing, and a sync that finds
-divergence stops and asks rather than resolving it. Preventing mistakes is less expensive 
-than fixing them.
+- [Agent Skills](https://agentskills.io)
+- [Agent Skills Specification](https://agentskills.io/specification)
+
+## Supported agent frameworks
+
+`~/.agents/skills/` is the cross-harness convention, so **most harnesses read this
+repo directly, with no install step.**
+
+| Harness | Setup | Spec |
+|---|---|---|
+| **Claude Code** | `sync-skills.sh` | [SPEC-CLAUDE](specs/SPEC-CLAUDE.md) |
+| **Codex CLI** | none | [SPEC-CODEX](specs/SPEC-CODEX.md) |
+| **deepagents** | passed in code | [SPEC-DEEPAGENTS](specs/SPEC-DEEPAGENTS.md) |
+| **Gemini CLI** | none | [SPEC-GEMINI](specs/SPEC-GEMINI.md) |
+| **goose** | none | [SPEC-GOOSE](specs/SPEC-GOOSE.md) |
+| **Kimi Code CLI** | none | [SPEC-KIMI](specs/SPEC-KIMI.md) |
+| **Pi** | none | [SPEC-PI](specs/SPEC-PI.md) |
+
+Claude Code is the exception and needs [`sync-skills.sh`](#for-agents), which
+symlinks the skills, subagents and commands into `~/.claude` without touching
+anything already there. Full paths, per-harness caveats and what does *not* carry
+over are under [For agents](#for-agents).
+
+> **[`specs/`](specs/) is the other half of this repo.** Skills are portable, but
+> a skill does nothing until a harness is set up to run it. Each station spec says
+> what one harness needs around these skills: config, plugins, CLI dependencies,
+> hooks, permission rules. [`SPEC-CLAUDE.md`](specs/SPEC-CLAUDE.md) is the fullest
+> because Claude Code is the opinionated first choice. Start there when setting up.
+
+## Which harness, and which model
+
+The skills are harness-neutral; where you run them is a separate choice.
+
+| Harness | Notes |
+|---|---|
+| **Claude Code** | The first-round option most of the time, and the only one that reads the full skills + subagents + commands set |
+| **Codex CLI** | Broad everyday coverage |
+| **goose** | Fully open source, with a desktop GUI and mature governance |
+| **Kimi Code CLI** | Broad everyday coverage |
+| **Pi** | Minimal and hackable, for building a bespoke loop |
+
+Match the model to what the work is worth rather than to the harness. Hosted
+third-party models are fine for everyday work; anything load-bearing runs on
+models you trust with the material.
+
+One trap worth naming: **an Ollama `:cloud` model is not a local model.** It is
+served remotely and carries the same exposure as any hosted API, whatever the
+local-feeling command looks like. `ornith:9b` and `gpt-oss:20b` are local;
+`kimi-k2.6:cloud` is not.
+
+Harnesses that take multiple providers can be pointed wherever you like. goose
+defaults to `glm-5.2` through Ollama cloud here, which is a default rather than a
+constraint; an offline local model is left open on purpose.
+
+> **Ollama is reached through the Ollama app, never its public HTTP API.**
+> `OLLAMA_HOST` is never set to `0.0.0.0` or any routable address, on any machine,
+> for any reason. Binding the model server off loopback publishes an
+> unauthenticated inference endpoint to the network.
+
+## Watching the work
+
+Before the skills, the thing that makes them steerable: the session's own
+internals, on screen while the work happens.
+
+**Status line.** `statusline.sh` renders model, cwd, branch, reasoning effort,
+context used, tokens, session cost, and rate-limit consumption on every prompt;
+`subagent-statusline.sh` adds one row per running background task. Setup:
+copy both scripts from [`SPEC-CLAUDE.md`](specs/SPEC-CLAUDE.md) §9 to `~/.claude/`,
+make them executable, and wire them into `settings.json`'s `statusLine` /
+`subagentStatusLine`.
+
+Below: the same line on an expensive session (Fable 5 at max effort, 226k of
+context, $47.79 spent, session and weekly limits at 20% and 24%), on a cheap one
+(Sonnet 5 at medium, 42k, 43 cents, neither limit registering), and the subagent
+panel with workers running in parallel.
+
+![Status line on an expensive session: Fable 5 at max effort, 226k of context, $47.79 spent, session 20% and weekly 24%.](images/statusline-expensive.png)
+![Status line on a cheap session: Sonnet 5 at medium effort, 42k of context, $0.43 spent, neither rate limit registering yet.](images/statusline-cheap.png)
+![Status line panel showing five parallel subagents mid-run.](images/statusline-subagents.png)
 
 ## Skills in action
 
 Screenshots from real sessions.
 
-**Status line.** `statusline.sh` renders model, cwd, branch, reasoning effort,
-context used, tokens, session cost, and rate-limit consumption on every prompt;
-`subagent-statusline.sh` adds one row per running background task. Setup:
-copy both scripts from [`SPEC-CLAUDE.md`](SPEC-CLAUDE.md) §9 to `~/.claude/`,
-make them executable, and wire them into `settings.json`'s `statusLine` /
-`subagentStatusLine`.
+**`/hi`, first thing.** Every session opens with
+[`/hi`](skills/hi/SKILL.md), which reads the workspace's living docs, memory,
+changelog and git status, then reports where things stand and names the single
+next action. It is read-only and writes nothing.
 
-![Status line on a lightweight model, low cost, low context usage.](images/statusline-cheap.png)
-![Status line on a premium model at high reasoning effort, high cost, more context used.](images/statusline-expensive.png)
-![Status line panel showing five parallel subagents mid-run.](images/statusline-subagents.png)
+![The /hi skill invoked at the start of a session, answering "I'll orient on the workspace state."](images/hi.png)
 
-**`deep-research` → `teach-me`.** Parallel researchers fan out one per angle,
-dating and citing claims; the skill is then built spec-first, with trigger
-evals written before the prose exists.
+**[`meta-loop`](skills/meta-loop/SKILL.md), the shape of a long session.** A
+purpose-driven set of explore subagents searches in parallel and hands findings
+to the orchestrator, which curates them into a synthesis, sends that to the
+[`advisor`](agents/advisor.md) for review, then delegates the writing and editing
+to a second wave of subagents. How many of each depends on the work.
+
+![The meta-loop: explore subagents return findings to an Opus orchestrator, which sends a curated synthesis to the Fable advisor and gets review and feedback back, then delegates writing and editing to further subagents.](images/diagram-meta-loop.png)
+
+Each subagent reads in its own context window and returns only its conclusions,
+so the orchestrator collects findings rather than the searching that produced
+them. That is what lets a session go deep without the main thread filling up.
+Workers run on the same model tier the orchestrator would have used itself, since
+parallelism is the leverage rather than cheapness, and each result is checked
+against acceptance criteria and evidence instead of the worker's own summary.
+
+The next two shots are that advisor step in a real session: it grounds itself in
+the `ai-engineering` corpus, and the main agent checks its finding against the
+data before acting on it.
+
+![The advisor subagent grounding itself in the ai-engineering corpus.](images/advisor-skill-spec-1.png)
+![The main agent verifying the advisor's finding before acting on it.](images/advisor-skill-spec-2.png)
+
+**Building a skill with `deep-research`.** These shots are the `teach-me` skill
+being *built*, not used. Parallel researchers fan out one per angle to gather the
+learning-science evidence, dating and citing every claim; the skill is then
+written spec-first, with its trigger evals authored before any of its prose
+exists.
 
 ![Session charter naming the goal and skills before work starts.](images/deep-research-feynman-skill-1.png)
 ![Five researchers fanning out, one per angle.](images/deep-research-feynman-skill-2.png)
@@ -81,11 +159,36 @@ before writing; only then does `/notes` file the session.
 ![The /reflect invocation on an in-flight session.](images/reflect-and-notes-1.png)
 ![The handoff to /notes after the slate was approved.](images/reflect-and-notes-2.png)
 
-**`meta-loop` + `advisor`.** A premium critic consulted off the hot path; its
-findings get checked against the data before the main agent acts on them.
+## Design principles
 
-![The advisor subagent grounding itself in the ai-engineering corpus.](images/advisor-skill-spec-1.png)
-![The main agent verifying the advisor's finding before acting on it.](images/advisor-skill-spec-2.png)
+**Every skill here fixes something the model gets wrong on its own.**
+`frontend-aesthetics` because default UI taste is bad. `django` because DRF's
+permission default fails open. `docker` because host escapes get handed out like
+candy. There is no generalized backend skill, because there is no generalized
+backend mistake to correct, and a skill that only repeats what the model already
+knows never fires anyway.
+
+**Prose does not stop an agent from doing anything.** Tell a subagent it is
+read-only and hand it `Bash`, and it will edit your files. Advisory agents get a
+read-only `tools:` allowlist instead, because that is the only part the harness
+actually enforces.
+
+**Nothing grades its own homework.** A checklist run by the model that wrote the
+code is theater. So the mechanically checkable parts ship as scripts that exit
+non-zero: `slop_check.py` for machine-writing tells, `docker_check.py` for
+compose host escapes, `django_check.py` for the fail-open defaults,
+`unicode_smuggle_check.py` for instructions hidden in invisible characters.
+Judgment stays in the prose, where it belongs.
+
+**Dates, or it did not happen.** `ai-engineering` keeps one row per source in a
+TSV with the date each claim was last verified, and generates its readable ledger
+from that. An undated claim is indistinguishable from a half-remembered one.
+Teaching the corpus a new category is a data edit, not a rewrite.
+
+**Nothing is ever deleted, only moved.** Finished work goes to dated cold
+storage. `/reflect` proposes memory changes and waits. A sync that finds
+divergence stops and asks rather than picking a winner. Undoing a bad merge costs
+more than the pause that would have prevented it.
 
 ## Layout
 
@@ -98,7 +201,7 @@ findings get checked against the data before the main agent acts on them.
   sync-skills.sh      # assembles ~/.claude/{skills,agents,commands} as a per-device view
   tests/              # station-level suites (e.g. the deny-bash-file-writes hook, 70 cases)
   SPEC.md             # living spec: current state and scope
-  SPEC-CLAUDE.md      # seed spec for the surrounding Claude Code station
+  specs/              # long-lived station spec per harness (SPEC-CLAUDE.md, ...)
   tasks/plan.md       # active plan, backlog, and dev docs
   tasks/todo.md       # next actions and session handoff
   tasks/completed/    # dated cold storage, immutable once written
@@ -125,7 +228,9 @@ description is its trigger contract and its body is the workflow.
 | `ai-engineering-update` | The write path for that catalog: discover, verify, record |
 | `ai-slop-magic-eraser` | Strips machine-writing tells from prose, then corrects what was invented |
 | `cover-me` | Spawns the `supervisor` peer to scrutinize in-flight work |
+| `data-engineering` | Building and running a data platform: ingestion, dbt, cost, deployment |
 | `deep-research` | Multi-angle web research: parallel researchers, cross-validated, cited |
+| `dimensional-data-modeling` | Kimball star schemas: grain, conformed dimensions, SCDs, bus matrix |
 | `django` | Build, operate and harden Django and DRF |
 | `docker` | Scaffold, operate and harden containers |
 | `frontend-aesthetics` | Raise UI past the defaults that read as AI slop |
@@ -146,7 +251,7 @@ description is its trigger contract and its body is the workflow.
 
 | Subagent | What it does |
 |---|---|
-| `advisor` | Consulted critic for `meta-loop`: strategy, decomposition, risk, taste |
+| `advisor` | Consulted advisor for `meta-loop`: strategy, decomposition, risk, taste |
 | `ai-engineer` | Fresh-context builder for heavy delegated AI and agent work |
 | `my-security-reviewer` | Fresh-context reviewer applying the checklist to staged diffs |
 | `researcher` | Source-cited researcher for one bounded angle; the `deep-research` worker |
@@ -160,12 +265,88 @@ description is its trigger contract and its body is the workflow.
 | `/my-security-review` | The agent-tooling security review; dispatches `my-security-reviewer` for depth |
 | `/reflect` | Truth reconciliation (propose → user gate → apply), then hands to `/notes` |
 | `/supervisor` | Spawns the supervisor peer (alias of `cover-me`) |
-| `/spec` `/plan` `/build` `/test` `/review` `/ship` `/code-simplify` | Bare-name aliases delegating to the namespaced agent-skills plugin skills (plugin commands register as `/agent-skills:*`; these give the short names) |
+| `/spec` `/plan` `/build` `/test` `/review` `/ship` `/code-simplify` | House SOP for each stage, self-contained |
+
+Those seven stage commands each carry the house procedure in full and defer to
+their counterpart in the third-party
+[`agent-skills`](https://github.com/addyosmani/agent-skills) plugin (by Addy
+Osmani) when it is installed. They work without it. The plugin registers its own
+as `/agent-skills:*`; these are the short names.
 
 `sync-skills.sh` links all of the above into each device's
 `~/.claude/{skills,agents,commands}`. Upstream skills come from the five
-installed plugins listed in `SPEC-CLAUDE.md` §3, and evals run through the
-skill-creator plugin's `run_eval.py`.
+installed plugins listed in [`SPEC-CLAUDE.md`](specs/SPEC-CLAUDE.md) §3, and evals
+run through the skill-creator plugin's `run_eval.py`.
+
+## Setup and daily use
+
+On a new machine, clone to the path itself. The location is the install:
+
+```bash
+git clone <this-repo> ~/.agents
+```
+
+### For agents
+
+`~/.agents/skills/` is the cross-harness convention, so most harnesses find the
+skills here with nothing further to do. Each row was checked against that
+project's own documentation on **2026-07-31**, and Codex CLI and goose were
+additionally **confirmed by direct observation** on that date. Re-check the
+documentation-only rows before trusting them, since this is moving fast.
+
+| Harness | Skills | Setup |
+|---|---|---|
+| **Claude Code** | `~/.claude/skills` only. | `bash ~/.agents/sync-skills.sh` |
+| **Codex CLI** (observed) | `$HOME/.agents/skills`, plus `$CWD/.agents/skills`, `$REPO_ROOT/.agents/skills`, `/etc/codex/skills`. Follows symlinks. | none |
+| **deepagents** | Not from a home directory. Paths are passed in code as `skills=[...]` to `create_deep_agent`, relative to the backend root. Its `deepagents-code` CLI reads project-level `.agents/skills/`. | see [`specs/`](specs/) |
+| **Gemini CLI** | `~/.agents/skills/` as an alias for `~/.gemini/skills/`, and it takes precedence within that tier. | none |
+| **goose** (observed) | `~/.agents/skills/`, its recommended global location. `.goose/skills/`, `.claude/skills/`, `~/.claude/skills/` are back-compat. | none |
+| **Kimi Code CLI** | `~/.agents/skills/` as the shared-across-tools location, alongside its own `$KIMI_CODE_HOME/skills/`. | none |
+| **Pi** | `~/.agents/skills/`, alongside `~/.pi/agent/skills/`. Note it ignores loose root-level `.md` files here and only discovers `<name>/SKILL.md` directories. | none |
+
+For Claude Code the sync builds `~/.claude/{skills,agents,commands}` from leaf
+symlinks. If any of those is still an old parent-level symlink, convert it first,
+which removes the link only and never the source:
+
+```bash
+[ -L ~/.claude/skills ] && rm ~/.claude/skills
+mkdir -p ~/.claude/skills
+bash ~/.agents/sync-skills.sh --dry-run   # preview
+bash ~/.agents/sync-skills.sh
+```
+
+**Only `skills/` is portable.** The other two trees are not, and it is worth
+knowing why before assuming a sync would help:
+
+- **`agents/`** has no shared convention. Claude Code reads `~/.claude/agents/*.md`,
+  Gemini CLI reads `~/.gemini/agents/*.md`. The file shape is the same
+  (YAML frontmatter plus a system prompt), so the content ports even though
+  neither reads the other's path. Pi ships no subagents at all by design.
+- **`commands/`** differs in format, not just location. Claude Code uses markdown;
+  Gemini CLI uses **TOML** at `~/.gemini/commands/*.toml`. Those are different
+  artifacts. Confirmed by observation on 2026-07-31: commands in
+  `~/.agents/commands/` do not appear in Codex CLI or goose, while the skills
+  beside them do.
+
+The standard's own answer to both is to express them as skills:
+`disable-model-invocation: true` gives a skill explicit slash-command behavior, and
+`context: fork` runs it in an isolated subagent. That is the portable path if you
+want these outside Claude Code.
+
+If goose does not pick up `~/.agents` on your machine, put the skills in
+`.goose/skills/` in the project as a fallback; the behavior has been reported as
+inconsistent with the documentation.
+
+[`specs/SPEC-CLAUDE.md`](specs/SPEC-CLAUDE.md) covers the rest of the Claude Code
+station: plugins, CLI dependencies, global settings, and hooks.
+
+To add or change a skill, edit it under `skills/<name>/` (a `SKILL.md` is
+required), then commit to `develop` and re-run the assembler. Skills hot-reload;
+new subagents and commands need a session restart before they register.
+Device-local skills live directly in `~/.claude/skills/` and the sync never
+touches them.
+
+Secrets stay out: this is a git repo like any other.
 
 ## Architecture
 
@@ -227,7 +408,7 @@ view = `~/.claude/skills`.
 
 - `develop` - default / working branch. All changes land here first.
 - `main` - stable. Fast-forwarded from `develop` (`git merge develop --ff-only`).
-- Remote: `origin` - a private GitHub repo.
+- Remote: `origin` - a GitHub repo.
 
 ### Ownership and isolation
 
@@ -235,8 +416,8 @@ view = `~/.claude/skills`.
 `plugin.json`, `marketplace.json`, or `package.json`, and third-party skill
 sources do not write into it (verified 2026-06-28):
 
-- The `agent-skills@addy-agent-skills` plugin (`addyosmani/agent-skills`) is now
-  **installed** (as of 2026-06-28; see `installed_plugins.json`). It loads from its
+- The `agent-skills@addy-agent-skills` plugin (`addyosmani/agent-skills`) is
+  **installed**. It loads from its
   own cache under `~/.claude/plugins/cache/addy-agent-skills/...` and exposes
   namespaced `agent-skills:*` entries - it never reads from or writes into
   `~/.agents`. The repo no longer vendors copies of its skills.
@@ -260,7 +441,7 @@ removed, and everything is recoverable from git history.
 - **Data-driven skills with a deterministic engine.** `ai-engineering` is more than
   prose: `scripts/ledger.py` (stdlib, deterministic, idempotent) is the engine, and
   its knowledge lives in **data** - `resources/catalog.tsv` (source of truth, one row
-  per URL, 436 URLs), `rules.tsv` (domain→section auto-classify), `seed-sections.tsv`
+  per URL), `rules.tsv` (domain→section auto-classify), `seed-sections.tsv`
   (repo→section). `resources/link-ledger.md` is **generated** by `ledger.py render` -
   never hand-edit it. Teaching a new category is a data edit, not a code change. The
   `ai-engineering-update` skill owns the discovery+freshness loop around this engine.
@@ -268,39 +449,30 @@ removed, and everything is recoverable from git history.
   non-destructive archive copies of retired root docs (soft-deletion; never
   hard-delete).
 
-## Setup and daily use
-
-On a new machine:
-
-```bash
-git clone <this-repo> ~/.agents
-# make ~/.claude/skills a real dir if it isn't already:
-[ -L ~/.claude/skills ] && rm ~/.claude/skills   # removes the link only
-mkdir -p ~/.claude/skills
-bash ~/.agents/sync-skills.sh
-```
-
-[`SPEC-CLAUDE.md`](SPEC-CLAUDE.md) covers the rest of the station: plugins, CLI
-dependencies, global settings, and hooks.
-
-To add or change a skill, edit it under `skills/<name>/` (a `SKILL.md` is
-required), then commit to `develop` and re-run the assembler. Skills hot-reload;
-new subagents and commands need a session restart before they register.
-Device-local skills live directly in `~/.claude/skills/` and the sync never
-touches them.
-
-Secrets stay out: the repo is private, but it is still a git repo.
-
 ## Documentation
 
 [`CLAUDE.md`](CLAUDE.md) has the lifecycle these follow.
 
 - [`SPEC.md`](SPEC.md) - what this repo is, its active scope and invariants.
-- [`SPEC-CLAUDE.md`](SPEC-CLAUDE.md) - seed spec for the surrounding Claude Code
-  station; follow it when setting up a device.
+- [`specs/`](specs/) - one long-lived station spec per harness, describing what
+  that harness needs configured around these skills. Distinct from the ephemeral
+  `tasks/SPEC-FEATURE-NAME.md`, which retires when its feature ships.
 - [Skills catalog](#skills-catalog) and [Architecture](#architecture) - both in
   this file.
-- [`tasks/plan.md`](tasks/plan.md) - active plan, backlog, and dev docs.
-- [`tasks/todo.md`](tasks/todo.md) - next actions and session handoff.
-- [`tasks/completed/`](tasks/completed/) - dated cold storage, append-once and
-  immutable after the day, plus retired feature specs as whole dated files.
+- `tasks/` - working state, kept in the authoring copy of this repo rather than
+  published: `plan.md` (active plan, backlog, dev docs), `todo.md` (next actions
+  and session handoff), and `completed/` (dated cold storage, append-once and
+  immutable after the day, plus retired feature specs as whole dated files).
+
+## Contributing
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) - branch model, skill conventions,
+  verification, and house style.
+- [`AGENTS.md`](AGENTS.md) - rules and cautions for agents working in here; read
+  it before your first change.
+- [`SECURITY.md`](SECURITY.md) - reporting a vulnerability, and what counts as one
+  in a repo whose payload is instructions an agent executes.
+
+## License
+
+[MIT](LICENSE).

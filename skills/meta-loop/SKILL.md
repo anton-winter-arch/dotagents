@@ -7,7 +7,7 @@ description: Orchestration loop - plan, delegate to parallel workers, verify, sy
 
 Three-tier loop: **orchestrator** (this session) runs the hot path
 plan → delegate → verify → synthesize; **workers** (opus) do parallel
-execution; **advisor** (fable, fresh context) is a consulted critic off the
+execution; **advisor** (fable, fresh context) is a consulted advisor off the
 hot path. The economics: parallelism is the leverage, not cheapness. A worker
 runs on the same tier the orchestrator would have used doing the work itself,
 so fanning out costs wall-clock and context - never quality.
@@ -98,5 +98,5 @@ work. The loop pays for itself only when workers run in parallel.
 
 ## Related tooling
 
-`advisor` agent (the consulted critic - this skill's off-path judgment),
+`advisor` agent (this skill's off-path judgment and counsel),
 `supervisor` agent via cover-me (in-flight watcher, push not pull).

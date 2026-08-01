@@ -12,6 +12,7 @@ back.
 - [Go (static, distroless)](#go-static-distroless)
 - [.dockerignore](#dockerignore)
 - [Compose: dev vs prod](#compose-dev-vs-prod)
+- [Multi-service: frontend, API, database](#multi-service-frontend-api-database)
 - [Choosing a base image](#choosing-a-base-image)
 
 ## Decide first
@@ -190,6 +191,184 @@ services:
 Note what is **absent** from both: no `privileged`, no `network_mode: host`, no
 `/var/run/docker.sock`, no `- /:/host`. If you are reaching for one of those,
 stop and read the privilege section of SKILL.md.
+
+## Multi-service: frontend, API, database
+
+One container or several is a deployment decision, not a different job. Every rule
+above still applies per service. What changes is the wiring, and three decisions
+carry it.
+
+**Does the frontend ship as files or as a process?** An SPA that compiles to static
+assets has no production container at all - the proxy serves the build output, and a
+service whose only job is running `serve` is a container you invented. Server-side
+rendering (Next, Nuxt, SvelteKit in SSR mode) genuinely needs a Node process, so it
+gets one. Decide this before writing any compose file, because it determines whether
+"web" is a service or a build stage.
+
+**Publish from the proxy and nothing else.** In a single-service compose you expose
+the app port because there is no other way in. The moment a proxy exists, it owns the
+only published port and every other service is reachable by service name over the
+compose network. This is the concrete security gain of splitting, and it is the part
+most often skipped.
+
+**Put the database on an internal network.** `internal: true` gives it no route off
+the host, in either direction. A compromised dependency in the API cannot use the
+database as an egress path.
+
+For a static frontend the final stage is the proxy, which is what keeps it off the
+service list:
+
+```dockerfile
+# web/Dockerfile
+FROM node:22-alpine@sha256:<digest> AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build                   # emits /app/dist
+
+FROM caddy:2-alpine@sha256:<digest>
+COPY --from=build /app/dist /srv
+COPY Caddyfile /etc/caddy/Caddyfile
+USER 1000:1000                      # the caddy image runs as root otherwise
+HEALTHCHECK --interval=30s CMD ["wget", "-qO-", "http://localhost:8080/"]
+```
+
+A non-root proxy cannot bind 80 or 443, so it listens on 8080 and compose maps the
+privileged port to it. That is the trade for dropping root, and it is why TLS
+usually terminates at a load balancer in front rather than here. Terminating it in
+this container means granting `CAP_NET_BIND_SERVICE` back, which is a decision to
+make deliberately rather than by copying a template.
+
+Dev - real dev servers with hot reload, proxied so that paths match production:
+
+```yaml
+# compose.dev.yml
+services:
+  proxy:
+    image: caddy:2-alpine
+    volumes:
+      - ./Caddyfile.dev:/etc/caddy/Caddyfile:ro
+    ports:
+      - "127.0.0.1:8080:8080"     # the only published port, loopback only
+    depends_on: [web, api]
+
+  web:
+    build:
+      context: ./web
+      target: build               # the fat stage; it has the dev tooling
+    command: npm run dev -- --host 0.0.0.0
+    volumes:
+      - ./web/src:/app/src:ro
+
+  api:
+    build:
+      context: ./api
+      target: build
+    command: uvicorn src.main:app --reload --host 0.0.0.0
+    volumes:
+      - ./api/src:/app/src:ro
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+```
+
+The dev proxy routes to the dev server rather than to built files, so hot reload
+survives the hop:
+
+```
+# Caddyfile.dev
+:8080
+handle /api/* {
+	reverse_proxy api:8000
+}
+handle {
+	reverse_proxy web:5173
+}
+```
+
+Prod - the frontend is baked into the proxy image, the database is unreachable from
+outside, and every service drops privileges:
+
+```yaml
+# compose.prod.yml
+services:
+  proxy:
+    image: registry.example.com/web:${TAG:?}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    ports:
+      - "80:8080"                # privileged port outside, unprivileged inside
+    networks: [edge]
+    depends_on: [api]
+
+  api:
+    image: registry.example.com/api:${TAG:?}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks: [edge, internal]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 5
+    networks: [internal]         # no ports, no route out
+
+networks:
+  edge:
+  internal:
+    internal: true
+
+volumes:
+  pgdata:
+```
+
+Name every service's networks once you declare any, because a service with no
+`networks:` key silently joins the default network and quietly undoes the isolation
+you just wrote.
+
+**When one container is still right.** A single process with no separate frontend
+build and no database of its own does not need any of this. Splitting for its own
+sake buys a network to debug and nothing else.
 
 ## Choosing a base image
 

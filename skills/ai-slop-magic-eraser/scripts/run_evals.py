@@ -35,7 +35,8 @@ from pathlib import Path
 
 SKILL = Path(__file__).resolve().parent.parent
 SKILL_NAME = SKILL.name
-EVALS = SKILL / "evals" / "evals.json"
+EVALS_DIR = SKILL / "evals"
+EVAL_FILENAMES = ("triggers.json", "evals.json")
 
 HARNESS_CANDIDATES = [
     Path.home()
@@ -60,10 +61,21 @@ def find_harness() -> Path:
 
 
 def load_cases() -> list[dict]:
-    if not EVALS.is_file():
-        print(f"no eval set at {EVALS}", file=sys.stderr)
-        raise SystemExit(2)
-    return json.loads(EVALS.read_text(encoding="utf-8"))["evals"]
+    """Read whichever eval file the skill ships.
+
+    Two shapes are in use: a bare list of harness-shaped cases (triggers.json),
+    and {"skill_name": ..., "evals": [...]} in the house schema (evals.json).
+    """
+    for name in EVAL_FILENAMES:
+        path = EVALS_DIR / name
+        if path.is_file():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else data["evals"]
+    print(
+        f"no eval set in {EVALS_DIR} (looked for {', '.join(EVAL_FILENAMES)})",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
 
 
 def build_sandbox(cases: list[dict], sandbox: Path) -> None:
@@ -77,12 +89,21 @@ def build_sandbox(cases: list[dict], sandbox: Path) -> None:
         shutil.copy(src, sandbox / src.name)
 
 
+def case_query(case: dict) -> str:
+    """The prompt text, under whichever key the case's shape uses."""
+    return case["query"] if "query" in case else case["prompt"]
+
+
 def to_harness_schema(cases: list[dict]) -> list[dict]:
-    """House schema -> the {query, should_trigger} pairs the harness reads."""
+    """Either shape -> the {query, should_trigger} pairs the harness reads."""
     return [
         {
-            "query": c["prompt"],
-            "should_trigger": c.get("expected_skill") == SKILL_NAME,
+            "query": case_query(c),
+            "should_trigger": (
+                c["should_trigger"]
+                if "should_trigger" in c
+                else c.get("expected_skill") == SKILL_NAME
+            ),
         }
         for c in cases
     ]
@@ -98,7 +119,7 @@ def main() -> int:
 
     harness = find_harness()
     cases = load_cases()
-    by_prompt = {c["prompt"]: c for c in cases}
+    by_prompt = {case_query(c): c for c in cases}
 
     sandbox = Path(tempfile.mkdtemp(prefix=f"{SKILL_NAME}-evals-"))
     try:

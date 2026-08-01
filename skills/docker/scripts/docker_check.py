@@ -38,6 +38,10 @@ MAX_LINE_CHARS = 2_000
 
 DOCKERFILE_NAMES = ("dockerfile",)
 COMPOSE_NAMES = ("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml")
+# Canonical names plus the environment-suffixed variants everyone actually ships
+# (compose.dev.yml, docker-compose.override.yml). Matching only the four canonical
+# names silently skipped every compose file this skill's own scaffold prescribes.
+COMPOSE_RE = re.compile(r"^(?:docker-)?compose(?:\.[a-z0-9_-]+)*\.ya?ml$")
 
 
 @dataclass(frozen=True)
@@ -303,7 +307,7 @@ def check_compose(path: Path) -> list[Finding]:
 
 def classify(path: Path) -> str | None:
     name = path.name.lower()
-    if name in COMPOSE_NAMES:
+    if COMPOSE_RE.match(name):
         return "compose"
     if name.startswith(DOCKERFILE_NAMES) or name.endswith(".dockerfile"):
         return "dockerfile"

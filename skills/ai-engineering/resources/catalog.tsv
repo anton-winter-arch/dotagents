@@ -13,6 +13,9 @@ https://arxiv.org/html/2509.15464v1	papers	active	AI-AGENT-DEV-TOOLS-MAIN.md	202
 https://arxiv.org/html/2603.27277v1	papers|map	active	phase0-map-reconcile	2026-07-27			
 https://aws.amazon.com/blogs/opensource/introducing-strands-agents-an-open-source-ai-agents-sdk	docs|frameworks	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://brave.com/search/api	serving	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
+https://build.nvidia.com/	serving|models	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://build.nvidia.com/blueprints	serving|models	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://catalog.ngc.nvidia.com/	serving|adjacent	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
 https://cline.bot/	docs|harnesses	active	ai-tooling-refresh-2026-07	2026-07-01			
 https://code.claude.com/docs/en/advisor	docs|harnesses	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://code.claude.com/docs/en/agent-sdk/agent-loop	docs|harnesses	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
@@ -74,6 +77,7 @@ https://deepwiki.com/LearningCircuit/local-deep-research	rag|deepwiki	active	AI-
 https://deepwiki.com/MemPalace/mempalace	memory|deepwiki	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://deepwiki.com/MemoriLabs/Memori	memory|deepwiki	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://deepwiki.com/Shubhamsaboo/awesome-llm-apps	learning|deepwiki	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
+https://deepwiki.com/Sumanth077/Hands-On-AI-Engineering	learning|deepwiki	active	ingest	2026-07-31			
 https://deepwiki.com/Sumanth077/ai-engineering-toolkit	learning|deepwiki	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://deepwiki.com/TableProApp/TablePro	triage|deepwiki	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://deepwiki.com/activeloopai/deeplake	vectordb|deepwiki	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
@@ -136,6 +140,8 @@ https://deepwiki.com/usestrix/strix	security|deepwiki	active	AI-AGENT-DEV-TOOLS-
 https://deepwiki.com/vercel-labs/wterm	adjacent|deepwiki	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://deepwiki.com/wandb/wandb	eval|deepwiki	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://deepwiki.com/zeroc00I/LLM-anonymization	security|deepwiki	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
+https://developer.nvidia.com/blog/enhance-your-ai-agent-with-data-flywheels-using-nvidia-nemo-microservices	learning	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://developer.nvidia.com/nim	docs|serving|map	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28		2026-07-28	
 https://developers.openai.com/cookbook	docs	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://developers.openai.com/cookbook/examples/partners/temporal_agents_with_knowledge_graphs/temporal_agents	docs	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://docs.agno.com/introduction	docs|frameworks|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
@@ -188,6 +194,9 @@ https://docs.firecrawl.dev/quickstarts/python	docs|ingestion	active	AI-AGENT-DEV
 https://docs.firecrawl.dev/webhooks/events	docs|ingestion	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://docs.firecrawl.dev/webhooks/overview	docs|ingestion	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://docs.firecrawl.dev/webhooks/security	docs|ingestion	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
+https://docs.langchain.com/oss/javascript/deepagents/overview	docs|frameworks	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
+https://docs.langchain.com/oss/python/deepagents/overview	docs|frameworks	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
+https://docs.langchain.com/oss/python/integrations/providers/nvidia	docs|frameworks	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
 https://docs.langchain.com/oss/python/langgraph/add-memory	docs|frameworks	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://docs.langchain.com/oss/python/langgraph/application-structure	docs|frameworks	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://docs.langchain.com/oss/python/langgraph/deploy	docs|frameworks	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
@@ -204,6 +213,25 @@ https://docs.langchain.com/oss/python/langgraph/test	docs|frameworks	active	AI-A
 https://docs.langchain.com/oss/python/langgraph/thinking-in-langgraph	docs|frameworks	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://docs.langchain.com/oss/python/langgraph/ui	docs|frameworks	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://docs.langchain.com/oss/python/langgraph/workflows-agents	docs|frameworks	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
+https://docs.nvidia.com/ai-enterprise/planning-resource/licensing-guide/latest/licensing.html	docs|adjacent	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://docs.nvidia.com/aiq-blueprint/latest/architecture/agents/deep-researcher.html	docs|frameworks	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
+https://docs.nvidia.com/aiq-blueprint/latest/index.html	docs|frameworks	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
+https://docs.nvidia.com/enterprise-reference-architectures/index.html	docs|adjacent|map	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28		2026-07-28	
+https://docs.nvidia.com/nemo	docs|tuning	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://docs.nvidia.com/nemo-framework/user-guide/latest/overview.html	docs|tuning|map	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28		2026-07-28	
+https://docs.nvidia.com/nemo/agent-toolkit/latest/build-workflows/llms/index.html	docs|frameworks	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
+https://docs.nvidia.com/nemo/agent-toolkit/latest/components/integrations/frameworks.html	docs|frameworks|map	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
+https://docs.nvidia.com/nemo/agent-toolkit/latest/improve-workflows/profiler.html	docs|frameworks	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://docs.nvidia.com/nemo/agent-toolkit/latest/index.html	docs|frameworks	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://docs.nvidia.com/nemo/agent-toolkit/latest/run-workflows/existing-agents/langgraph.html	docs|frameworks|map	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
+https://docs.nvidia.com/nemo/agent-toolkit/latest/run-workflows/mcp-server.html	docs|frameworks	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://docs.nvidia.com/nemo/agent-toolkit/latest/run-workflows/observe/observe.html	docs|frameworks	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://docs.nvidia.com/nemo/microservices/latest	docs|serving|map	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28		2026-07-28	
+https://docs.nvidia.com/nemo/microservices/latest/api/index.html	docs|serving	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://docs.nvidia.com/nemo/microservices/latest/requirements.html	docs|serving	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://docs.nvidia.com/nim-operator/latest	docs|serving	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://docs.nvidia.com/nim/large-language-models/latest/about-nim-llm/overview.html	docs|serving	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://docs.nvidia.com/vss/latest	docs|rag	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
 https://docs.ollama.com/capabilities/tool-calling	serving|models	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://docs.usemotion.com/	adjacent	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://docs.usemotion.com/api-reference/comments/get	adjacent	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
@@ -258,13 +286,43 @@ https://github.com/Lum1104/Understand-Anything	triage	triage	AI-AGENT-DEV-TOOLS-
 https://github.com/MemPalace/mempalace	memory|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/MemTensor/MemOS	memory|map	active	phase0-map-reconcile	2026-07-27			
 https://github.com/MemoriLabs/Memori	memory|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
+https://github.com/NVIDIA-AI-Blueprints	learning|frameworks|map	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28		2026-07-28	manual
+https://github.com/NVIDIA-AI-Blueprints/ai-virtual-assistant	learning	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-AI-Blueprints/aiq	frameworks|learning	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28		2026-07-29	
+https://github.com/NVIDIA-AI-Blueprints/biomedical-aiq-research-agent	learning	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-AI-Blueprints/bring-llms-to-nim	serving	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-AI-Blueprints/data-flywheel	eval|tuning|map	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28		2026-07-28	
+https://github.com/NVIDIA-AI-Blueprints/llm-router	serving	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-AI-Blueprints/nemotron-voice-agent	learning	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-AI-Blueprints/pdf-to-podcast	learning	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-AI-Blueprints/rag	rag|learning	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization	rag|learning|map	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28		2026-07-28	
+https://github.com/NVIDIA-AI-Blueprints/vulnerability-analysis	security|learning	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-NeMo/Automodel	tuning	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-NeMo/Curator	ingestion	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-NeMo/DataDesigner	ingestion	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-NeMo/Evaluator	eval	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-NeMo/Export-Deploy	serving	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-NeMo/Gym	eval	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-NeMo/Megatron-Bridge	tuning	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-NeMo/Nemotron	models|learning	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-NeMo/RL	tuning|map	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28		2026-07-28	
+https://github.com/NVIDIA-NeMo/Run	tuning	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-NeMo/Skills	skills	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA-NeMo/Speech	tuning|map	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28		2026-07-28	
 https://github.com/NVIDIA-NeMo/labs-molt	tuning|map	active	2026-07-26 directed refresh	2026-07-27			
+https://github.com/NVIDIA-NeMo/nemo-platform	serving	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA/Megatron-LM	tuning	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
+https://github.com/NVIDIA/NeMo-Agent-Toolkit	frameworks|map	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28		2026-07-28	
+https://github.com/NVIDIA/NeMo-Aligner	tuning|map	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28		2026-07-28	
+https://github.com/NVIDIA/NeMo-Guardrails	security|map	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28		2026-07-28	
 https://github.com/NVIDIA/skills	skills|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/NousResearch/hermes-agent	harnesses|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/OpenHands/OpenHands	harnesses|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/OpenHands/software-agent-sdk	harnesses	active	ai-tooling-refresh-2026-07	2026-07-01			
 https://github.com/OpenPipe/ART	tuning|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/Shubhamsaboo/awesome-llm-apps	learning	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
+https://github.com/Sumanth077/Hands-On-AI-Engineering	learning	active	ingest	2026-07-31			
 https://github.com/Sumanth077/ai-engineering-toolkit	learning	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/TableProApp/TablePro	triage	triage	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/VILA-Lab/Dive-into-Claude-Code	skills	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
@@ -335,9 +393,10 @@ https://github.com/koala73/worldmonitor	triage	triage	AI-AGENT-DEV-TOOLS-MAIN.md
 https://github.com/kyegomez/OpenMythos	triage	triage	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/kyutai-labs/pocket-tts	serving|adjacent	active	2026-07-14 firehose paste	2026-07-14			
 https://github.com/labring/FastGPT	frameworks|rag|map	active	phase0-map-reconcile	2026-07-27			
-https://github.com/langchain-ai/deepagents	frameworks|harnesses|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
-https://github.com/langchain-ai/deepagentsjs	frameworks|harnesses	active	ai-tooling-refresh-2026-07	2026-07-01			
+https://github.com/langchain-ai/deepagents	frameworks|harnesses|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29		2026-07-29	
+https://github.com/langchain-ai/deepagentsjs	frameworks|harnesses	active	ai-tooling-refresh-2026-07	2026-07-01		2026-07-29	
 https://github.com/langchain-ai/langchain	frameworks|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
+https://github.com/langchain-ai/langchain-nvidia	frameworks|serving|map	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29		2026-07-29	
 https://github.com/langchain-ai/langgraph	frameworks|map	active	phase0-map-reconcile	2026-07-27			
 https://github.com/langchain-ai/openwiki	codeintel|memory|ingestion	active	2026-07-14 firehose paste	2026-07-14			
 https://github.com/langgenius/dify	frameworks|map	active	phase0-map-reconcile	2026-07-27			
@@ -425,16 +484,23 @@ https://google.github.io/agents-cli	docs|frameworks	active	AI-AGENT-DEV-TOOLS-MA
 https://googleapis.github.io/python-genai	docs|frameworks	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://huggingface.co/Jiunsong/supergemma4-26b-uncensored-gguf-v2	models	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://huggingface.co/Qwen/Qwen3.6-27B	models	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
+https://huggingface.co/nvidia	models	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
 https://huggingface.co/openai/privacy-filter	models	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://jules.google/	docs|harnesses|map	active	ai-tooling-refresh-2026-07	2026-07-01			
 https://learn.microsoft.com/en-us/agent-framework	docs|frameworks	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://learn.microsoft.com/en-us/agent-framework/overview	docs|frameworks	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://lmcache.ai/	serving	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://ollama.com/blog/tool-support	serving|models	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
+https://ollama.com/library/nemotron-3-nano	serving|models|map	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28		2026-07-28	
 https://openai.com/index/introducing-openai-privacy-filter	security	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://opencode.ai/	docs|harnesses	active	ai-tooling-refresh-2026-07	2026-07-01			
 https://openrouter.ai/	serving	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://pi.dev/	docs|harnesses	active	ai-tooling-refresh-2026-07	2026-07-01			
+https://pypi.org/project/deepagents	docs	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
+https://pypi.org/project/deepagents-cli	docs	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
+https://pypi.org/project/deepagents-code	docs	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
+https://pypi.org/project/langchain-nvidia-ai-endpoints	docs	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
+https://pypi.org/project/nvidia-nat	docs|frameworks	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			manual
 https://strandsagents.com/	docs|frameworks	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://taskwarrior.org/	adjacent	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://taskwarrior.org/docs	adjacent	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
@@ -442,6 +508,12 @@ https://taskwarrior.org/docs/start	adjacent	active	AI-AGENT-DEV-TOOLS-MAIN.md	20
 https://taskwarrior.org/download	adjacent	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://taskwarrior.org/tools	adjacent	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://www.gitagent.sh/	harnesses	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
+https://www.hpcwire.com/aiwire/2026/07/08/langchain-and-nvidia-launch-nemoclaw-deep-agents-blueprint-for-enterprise-agents	learning	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
+https://www.langchain.com/blog/deep-agents-0-6	learning	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
+https://www.langchain.com/blog/nvidia-enterprise	learning|map	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
+https://www.npmjs.com/package/deepagents	docs	active	2026-07-29 deepagents x NeMo directed refresh	2026-07-29			
+https://www.nvidia.com/en-us/ai-data-science/foundation-models/nemotron	docs|models|map	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28		2026-07-28	manual
+https://www.nvidia.com/en-us/data-center/products/ai-enterprise	docs|adjacent	active	2026-07-28 NVIDIA NeMo directed refresh	2026-07-28			
 https://www.usemotion.com/help	adjacent	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://www.usemotion.com/help/getting-started/display-options	adjacent	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://www.usemotion.com/help/getting-started/display-options/motion-desktop-tabs	adjacent	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			

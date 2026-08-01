@@ -40,14 +40,15 @@ not give opinions, and it touches no project files unless you pass `--save`.
 
 | Invocation | Pipeline | When |
 |---|---|---|
-| `/deep-research <topic>` | Full: PLAN → N parallel researchers → VALIDATE → SYNTHESIZE | Default. Substantive topic. |
+| `/deep-research <topic>` | Full: PLAN → researchers (max 3 concurrent) → VALIDATE → SYNTHESIZE | Default. Substantive topic. |
 | `--inline <topic>` | Single agent: 3-5 searches + inline validation, no subagent spawns | Quick check that still needs verification. |
-| `--deep <topic>` | Full with 5-7 angles + a 2nd validator pass on flagged items | High-stakes; needs triangulation. |
+| `--deep <topic>` | Full with up to 6 angles, run in waves of 3, + a 2nd validator pass on flagged items | High-stakes; needs triangulation. Costs a second wave of wall-clock - say so before starting. |
 | `--save <path>` | Any of the above, plus persist the brief to `<path>` | When you want a durable artifact. Default is chat-only. |
 
 ## Phase 1 - PLAN (main agent)
 
-Decompose the topic into 2-5 distinct angles (5-7 for `--deep`) - each a separate question
+Decompose the topic into 2-5 distinct angles (up to 6 for `--deep`, the hard ceiling on
+researchers per run) - each a separate question
 (e.g. for "Obsidian callouts": syntax & types · folding/nesting · custom CSS · render-mode
 caveats). Default to 2-3 angles; use 4-5 only when the charter genuinely spans that many
 independent domains - angles that would share sources belong to one researcher. State the
@@ -56,13 +57,22 @@ say so rather than running the pipeline.
 
 ## Phase 2 - RESEARCH (N parallel subagents)
 
-Spawn N `researcher` subagents **in parallel** (single message, multiple Agent calls), one
-per angle - the `researcher` agent definition (agents/researcher.md) pins model (opus),
-effort, tool allowlist, and turn cap structurally, so the spawn cannot inherit the session
-tier. If the `researcher` agent type is unavailable in this environment, fall back to
-`general-purpose` and pass `model: opus` explicitly. Give each researcher a findings-file
-path in the session scratchpad (e.g. `<scratchpad>/deep-research/<angle-slug>.md`, slug
-characters `[a-z0-9-]` only).
+Spawn `researcher` subagents one per angle - the `researcher` agent definition
+(agents/researcher.md) pins model (opus), effort, tool allowlist, and turn cap structurally,
+so the spawn cannot inherit the session tier. If the `researcher` agent type is unavailable
+in this environment, fall back to `general-purpose` and pass `model: opus` explicitly. Give
+each researcher a findings-file path in the session scratchpad (e.g.
+`<scratchpad>/deep-research/<angle-slug>.md`, slug characters `[a-z0-9-]` only).
+
+**Two ceilings: at most 3 researchers in flight at once, and at most 6 per run.**
+Parallelism is for latency, not throughput, and every researcher in flight is issuing web
+searches and page fetches against the same shared quota at the same moment. A wide burst
+rate-limits the *session*, which costs far more wall-clock than running a second wave.
+
+With 4+ angles, run them in **waves of 3**: spawn a wave in one message, let it complete,
+then spawn the next. A wave that returns thin does not get topped up with extra spawns -
+fold the gap into the could-not-verify list instead. If a topic seems to need more than
+six researchers, it is two research passes, not one wider one.
 
 **Researcher prompt template:**
 ```
@@ -143,7 +153,13 @@ primary/official) · artifact path if saved.
 - **Two-source minimum** for currency-sensitive claims; at least one primary/official.
 - **Cite URLs** in every brief and inline answer. No invisible reasoning.
 - **Never invent** facts, sources, or dates. "Could not verify" is a valid result.
-- **Run researchers in parallel**, not serially - they are independent by angle.
+- **Run researchers in parallel up to the ceiling of 3 concurrent, 6 per run**, then in waves.
+  They are independent by angle, but they share one web-search and fetch quota, and a wide
+  burst rate-limits the session.
+- **A rate limit stops the pipeline** - it is never retried around. Do not respawn the failed
+  researcher, do not fall back to fetching search-result pages, and do not start the next
+  wave. Report which angles completed, note that findings already on disk are safe to resume
+  from, and hand the timing decision to the user.
 - **Validator verifies only** - new facts require a new researcher pass, not a validator edit.
 - **Structural pins over prose** - spawn the `researcher` agent type (model, effort, tools,
   turn cap pinned in its definition); where it does not exist, pass `model: opus` explicitly.
@@ -162,7 +178,11 @@ primary/official) · artifact path if saved.
 ## Anti-patterns
 
 - Running the full pipeline for a one-line fact (use `--inline` or raw `WebSearch`).
-- Researchers spawned serially instead of in parallel.
+- Researchers spawned one at a time when three could have run together - the ceiling is 3
+  concurrent, not 1.
+- Spawning every angle at once because they are independent. Independence is why they can
+  run concurrently; the shared search/fetch quota is why no more than three do.
+- Retrying or respawning into a rate limit, or starting the next wave after one.
 - Spawning any subagent without an explicit `model` (it silently inherits the session tier).
 - A researcher browsing past its budget, or scraping search-engine result pages when a
   search tool fails.

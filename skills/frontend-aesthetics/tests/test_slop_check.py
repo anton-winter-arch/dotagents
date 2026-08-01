@@ -133,11 +133,10 @@ class TestSkillStructure(unittest.TestCase):
     def test_evals_exist_with_negative_case(self) -> None:
         import json
 
-        evals = json.loads((ROOT / "evals" / "evals.json").read_text(encoding="utf-8"))
-        cases = evals["evals"]
+        cases = json.loads((ROOT / "evals" / "triggers.json").read_text(encoding="utf-8"))
         self.assertGreaterEqual(len(cases), 3, "house minimum is 3 eval cases")
         self.assertTrue(
-            any(c["expected_skill"] is None for c in cases),
+            any(not c["should_trigger"] for c in cases),
             "needs at least one should-NOT-trigger case",
         )
 

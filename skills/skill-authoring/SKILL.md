@@ -50,6 +50,14 @@ specifically are not tracked on skills at all - see the Eval convention below.
   reference files **one level deep** from SKILL.md; give reference files over
   100 lines a table of contents. (`tests/` fixtures may nest; they are not
   read as references.)
+- **`references/` is the name, not `resources/`.** The three conventional dirs
+  split by consumer: `references/` = docs the model reads, `assets/` = files that
+  end up in the output, `scripts/` = code it runs. Data a script reads or writes
+  fits none of the three, and `resources/` is the local name for that fourth
+  category (ai-engineering's corpus TSVs) - an addition to the convention, never
+  a substitute for `references/`. A skill that puts model-read docs in
+  `resources/` is not broken, but it is off-convention and it teaches the next
+  author the wrong default.
 - Scripts beat inline generated code; state whether the agent should EXECUTE
   or READ each script; scripts solve errors explicitly, never punt.
 - No time-sensitive facts inline (they rot); date any that are unavoidable.
@@ -137,8 +145,23 @@ Run over `skills/*/SKILL.md`, `agents/*.md`, `commands/*.md`:
 The plugin is the eval ENGINE; this skill sets the house conventions it runs
 under. Division of labor: plugin = mechanism, this profile = policy.
 
-- Evals live in each skill at `skills/<name>/evals/` using the plugin's
-  schema (`evals.json`; see the plugin's `references/schemas.md`).
+- **The plugin has TWO eval concerns with two schemas, and documents only one.
+  Name each file for its consumer, or it needs hand-conversion every run:**
+
+  | File | Shape | Read by |
+  |---|---|---|
+  | `evals/triggers.json` | flat JSON list of `{query, should_trigger}` | `run_eval.py`, `run_loop.py`, `improve_description.py`, `generate_report.py` |
+  | `evals/evals.json` | `{skill_name, evals[].{id, prompt, expected_output, expectations}}` (the shape in the plugin's `references/schemas.md`) | `aggregate_benchmark.py` |
+
+  Triggering is the concern nearly every skill needs, so `triggers.json` is the
+  default and `evals.json` is for skills that also want behaviour benchmarks.
+  Putting trigger cases in a file named `evals.json` is the trap: it matches
+  neither consumer and no tool will tell you (cost two sessions of manual
+  conversion before it was caught, 2026-07-30).
+- **Extra keys in `triggers.json` are tolerated** - `run_eval.py` does a plain
+  `json.loads` and indexes only `query` and `should_trigger`, with no schema
+  validation. So carry `name` and `why` per case; the rationale is what lets you
+  tell a bad case from a real miss when one fails.
 - Minimum 3 cases per skill, including at least one should-trigger and one
   should-NOT-trigger case (trigger precision matters as much as recall).
 - Write evals BEFORE polishing prose on a new skill; re-run after any
@@ -146,6 +169,28 @@ under. Division of labor: plugin = mechanism, this profile = policy.
 - `tests/` (does the code work) sits alongside `evals/` (does the skill fire and
   behave); they answer different questions and both gate merge. See the test
   convention below for what a skill shipping executable code owes.
+- **Invocation, which is not obvious and has cost time twice.** Run it **as a
+  module from the plugin's own skill directory**, because a direct path
+  invocation dies on `ModuleNotFoundError: No module named 'scripts'`. The flags
+  are `--eval-set` and `--skill-path`, not `--evals` and `--skill`. Do not wrap
+  it in `timeout`; macOS has no such command.
+
+  ```bash
+  cd ~/.claude/plugins/cache/claude-plugins-official/skill-creator/*/skills/skill-creator
+  python3 -m scripts.run_eval \
+    --eval-set <skill>/evals/triggers.json \
+    --skill-path <skill> --model claude-sonnet-5 --num-workers 1
+  ```
+
+  It spawns a fresh `claude -p` per case, and `--runs-per-query` defaults to 3,
+  so the real unit is cases times three: a 20-case set is 60 serialized spawns at
+  roughly 20 seconds each, near 20 minutes. Budget from that arithmetic rather
+  than from the case count, and run it in the background. Send its output
+  straight to a file; piping it through `tail` or `head` buffers the whole run,
+  so progress stays invisible until the process exits. Drop to
+  `--runs-per-query 1` when the question is only whether a description change
+  moved recall by a lot, and keep 3 when a flaky miss has to be told from a
+  real one.
 - Run `run_eval.py` with `--num-workers 1` and an explicitly pinned `--model`
   (probes must never inherit the session tier; a cheap tier is fine for trigger
   probes): parallel workers register their

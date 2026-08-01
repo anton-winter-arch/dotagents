@@ -29,6 +29,42 @@ def run(*paths: Path) -> tuple[int, str]:
     return proc.returncode, proc.stdout
 
 
+class TestComposeFilenames(unittest.TestCase):
+    """A compose file the classifier does not recognize is scanned by nothing and
+    still reports clean, which reads as a pass. The scaffold prescribes
+    compose.dev.yml / compose.prod.yml, so those must classify."""
+
+    def _classify(self, name: str) -> str | None:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import docker_check
+
+        return docker_check.classify(Path(name))
+
+    def test_recognizes_env_suffixed_variants(self) -> None:
+        for name in (
+            "compose.yml", "compose.yaml",
+            "docker-compose.yml", "docker-compose.yaml",
+            "compose.dev.yml", "compose.prod.yml", "compose.prod.yaml",
+            "docker-compose.override.yml", "compose.dev.local.yml",
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(self._classify(name), "compose")
+
+    def test_ignores_lookalikes(self) -> None:
+        for name in ("composer.yml", "mycompose.yml", "values.yml", "compose.txt"):
+            with self.subTest(name=name):
+                self.assertIsNone(self._classify(name))
+
+    def test_suffixed_compose_is_actually_scanned(self) -> None:
+        """End to end: a hazard in compose.prod.yml must fail the gate."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "compose.prod.yml"
+            path.write_text("services:\n  app:\n    privileged: true\n")
+            code, out = run(path)
+            self.assertEqual(code, 1, "hazard in compose.prod.yml must block")
+            self.assertIn("privileged", out)
+
+
 class TestCatchesHazards(unittest.TestCase):
     def setUp(self) -> None:
         self.code, self.out = run(BAD)
@@ -144,9 +180,9 @@ class TestSkillStructure(unittest.TestCase):
             self.assertNotRegex(md.read_text(encoding="utf-8"), r"(?m)^Version:")
 
     def test_evals_have_negative_case(self) -> None:
-        cases = json.loads((ROOT / "evals" / "evals.json").read_text(encoding="utf-8"))["evals"]
+        cases = json.loads((ROOT / "evals" / "triggers.json").read_text(encoding="utf-8"))
         self.assertGreaterEqual(len(cases), 3)
-        self.assertTrue(any(c["expected_skill"] is None for c in cases))
+        self.assertTrue(any(not c["should_trigger"] for c in cases))
 
 
 if __name__ == "__main__":

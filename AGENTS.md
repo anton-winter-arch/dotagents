@@ -5,7 +5,7 @@
 ## What this directory is
 
 `~/.agents` is the **source of truth** for the user's system-level agent skills,
-shared across all their machines via a private git repo. The skills here are
+shared across all their machines via a git repo. The skills here are
 symlinked into `~/.claude/skills` on each device by `sync-skills.sh`.
 
 **Blast radius:** a change here propagates to every machine and every future agent
@@ -22,7 +22,7 @@ throwaway project. Act accordingly.
 - **Keep `SKILL.md` valid.** Every skill is `skills/<name>/SKILL.md` with YAML
   frontmatter (`name`, `description`). A malformed skill can break discovery.
 - **Test executable skills** before declaring done (e.g. a skill's own `tests/`).
-- **No secrets.** This is a git repo (private, but still). Never commit tokens,
+- **No secrets.** This is a git repo. Never commit tokens,
   keys, or credentials.
 - **Don't sync the per-device view.** `~/.claude/skills` is assembled per machine;
   only `~/.agents` is canonical. Don't commit machine-specific paths or local skills.

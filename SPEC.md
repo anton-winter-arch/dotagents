@@ -1,46 +1,54 @@
 # SPEC - ~/.agents
 
-**Status:** active · **Last updated:** 2026-07-28
+**Status:** active · **Last updated:** 2026-07-31
 
 ## What this is
 
 `~/.agents` is the **source of truth** for the user's **own** system-level agent
-tooling shared across all the user's machines. It is a private git repo whose
+tooling shared across all the user's machines. It is a git repo whose
 `skills/`, `agents/`, and `commands/` directories are the canonical set made
 available to Claude Code (and other skill-aware agents) on every device.
 
 Third-party/upstream skills are **not** vendored here - they are consumed from
 installed plugins (e.g. `agent-skills@addy-agent-skills`), which auto-update and
 expose namespaced `plugin:skill` entries. This repo carries only what the user
-authors or forks (as of 2026-07-28: **22 skills** `agent-mail`, `notes`,
+authors or forks (**24 skills** `agent-mail`, `notes`,
 `my-security-review-checklist`, `deep-research`, `obsidian`, `cover-me`,
 `reflect`, `ai-engineering`, `ai-engineering-update`, `ai-agent-project-scaffold`, `hi`,
 `skill-authoring`, `okf-kg`, `repo-device-sync`, `meta-loop`, `obsidian-kg`,
 `frontend-aesthetics`, `docker`, `django`, `o-o-d-a-loop`,
-`ai-slop-magic-eraser`, `teach-me`;
+`ai-slop-magic-eraser`, `teach-me`, `dimensional-data-modeling`, `data-engineering`;
 **5 subagents** `my-security-reviewer`, `supervisor`, `ai-engineer`, `advisor`,
 `researcher`;
 **11 commands** `agent-mail`, `my-security-review`, `supervisor`, `reflect`, and
 the agent-skills aliases `spec`, `plan`, `build`, `test`, `review`,
 `code-simplify`, `ship`).
 
-> The `frontend-aesthetics`, `docker`, and `django` skills (added 2026-07-14)
-> share one design: a method plus a **deterministic gate that runs outside the
+> The `frontend-aesthetics`, `docker`, and `django` skills share one design: a method plus a **deterministic gate that runs outside the
 > model** (a stdlib checker script), because a checklist run by the model that
 > wrote the code is the model grading its own homework. Each passed fresh-context
 > security review before merge - which caught real, test-invisible defects
 > (a ReDoS hang, a socket-path miss, annotated-settings blindness). See
 > `tasks/plan.md` for the pattern and the gotchas.
 
+> The `dimensional-data-modeling` and `data-engineering` pair split one domain along theory and practice: the first owns grain, SCD
+> semantics, conformance and the bus matrix, the second owns how a platform is
+> built and run, and each routes the other's questions away rather than competing
+> for the trigger. `data-engineering` organizes by **altitude** rather than topic,
+> so every reference file carries the architecture, implementation and
+> line-of-code view of its subject plus the up- and down-links between them,
+> because a choice at one altitude forecloses options at the one below. It ships
+> `dbt_audit.py` (20 checks) and 41 tests.
+
 > The `ai-engineering` bundle (`ai-engineering` + `ai-engineering-update` +
-> `ai-agent-project-scaffold` + the `ai-engineer` subagent) landed 2026-06-30/07-01
-> and was split along its real seams on 2026-07-27: **`ai-engineering` reads**
+> `ai-agent-project-scaffold` + the `ai-engineer` subagent) is split along its
+> real seams: **`ai-engineering` reads**
 > (knowledge, comparison, architecture review), **`ai-engineering-update` writes**
 > (discover, verify, and record first-hand experience), **`ai-agent-project-scaffold`
 > runs intake** and exits with a named component per stack slot. Anything learned
 > in one reaches the others through a single store and a single write command
 > rather than a policy asking three skills to remember each other.
-> `ledger.py` carries the catalog (506 rows), field notes, stack decisions, a
+> `ledger.py` carries the catalog, field notes, stack decisions, a
 > claims-freshness axis separate from URL liveness, and a derived `map` tag; it has
 > 88 tests. Its bundled `resources/` stay portable to a reader outside this
 > station, so they name no station-local skill, and `resources/data-contract.md`
@@ -49,18 +57,17 @@ the agent-skills aliases `spec`, `plan`, `build`, `test`, `review`,
 > treat its shortlist as considered-but-not-proven. Only 26 of 119 map rows carry
 > a verification date, which is what `check --claims` exists to work through.
 
-> `teach-me` (added 2026-07-28) is an evidence-based teach-and-certify tutoring
+> `teach-me` is an evidence-based teach-and-certify tutoring
 > skill: pretest, exposure/teaching, closed-book Feynman explanation, Socratic
 > probing, then a scored inline cert - guardrails from the AI-tutor RCT
 > literature (hints before answers, no sycophantic validation, source treated
 > as data). Artifacts land in a per-workspace `LEARNING/` dir (gitignored
 > here); the cited evidence base is bundled at
-> `skills/teach-me/references/evidence.md`; the shipped spec is archived at
-> `tasks/completed/SPEC-TEACH-ME-2026-07-28.md`. The same session hardened
-> `deep-research`: it now spawns the `researcher` subagent (model, effort, and
-> turn caps pinned in frontmatter - structural enforcement, not prose), with
-> hard search/fetch budgets, capsule returns, and fetched-content-is-data
-> guards.
+> `skills/teach-me/references/evidence.md`.
+
+> `deep-research` spawns the `researcher` subagent (model, effort, and turn caps
+> pinned in frontmatter - structural enforcement, not prose), with hard
+> search/fetch budgets, capsule returns, and fetched-content-is-data guards.
 
 ## Why it exists
 
@@ -83,11 +90,49 @@ assembly step, so:
   tree into `~/.claude/{skills,agents,commands}`, preserving device-local entries.
 - Keep the living docs current (this file, `README.md` - incl. its Architecture
   and Skills catalog sections - and `tasks/plan.md`).
-- Maintain [`SPEC-CLAUDE.md`](SPEC-CLAUDE.md) (added 2026-07-03) - the standing
+- Maintain [`specs/SPEC-CLAUDE.md`](specs/SPEC-CLAUDE.md) - the standing
   seed spec for the full Claude Code station around this repo: required plugins,
   CLI deps, and the global `CLAUDE.md`/`RTK.md`/`settings.json`/hook templates.
   Keep it in sync with the live station; it contains no personal constants by
   rule (`my-security-review-checklist` §8).
+
+**Two kinds of `SPEC-*` file, and they do not mix.** `specs/SPEC-<HARNESS>.md` is
+long-lived: one per agent harness, always describing current state, never
+retiring. `tasks/SPEC-FEATURE-NAME.md` is ephemeral: one per in-flight feature,
+folding into the root spec and moving to `tasks/completed/` when it ships. The test is
+whether the document outlives the work it describes. Nothing external forces this
+layout - the `agent-skills` plugin hardcodes no doc paths (checked 2026-07-31).
+
+## Harness and model policy
+
+**Multi-harness by construction, single-harness by preference.** The skills
+target the open Agent Skills standard, so they load unchanged wherever
+`~/.agents/skills/` is read. Claude Code is the tier 1 workhorse and the only
+harness carrying the full set, because `agents/` and `commands/` have no portable
+equivalent. The others are deliberate lanes rather than redundancy: **goose** is
+the open-source lane, chosen for mature governance and a desktop GUI; **Pi** is
+the configurable lane for a bespoke loop; **Codex CLI** covers medium-stakes work.
+
+**Model tier is a function of the stakes, not of the harness.** Work that matters
+runs on Anthropic or genuinely local models. Medium and hobby work may use hosted
+third-party models. This is the constraint that decides which harness is
+acceptable for a given task, and it holds regardless of which harness is more
+convenient.
+
+**An Ollama `:cloud` model is not local.** It is remotely served and carries
+hosted-API exposure despite a local-looking invocation. Any rule written here that
+says "local" excludes them.
+
+**goose runs on `glm-5.2` as its Ollama cloud model.** An offline local model
+(gemma-class 8B or similar) is deliberately unresolved and low priority; the
+proof of concept stays on cloud.
+
+**Ollama is reached through the Ollama app only.** Never the public HTTP API,
+never a non-loopback bind. `OLLAMA_HOST` is never set to `0.0.0.0` or any
+routable address, on any machine, for any reason, however temporary. Binding the
+model server off loopback publishes an unauthenticated inference endpoint and, on
+any network that is not fully trusted, hands arbitrary parties a free model and a
+foothold. This is not a preference to weigh against convenience.
 
 ## Scope (out / non-goals)
 
@@ -107,6 +152,12 @@ assembly step, so:
    then fast-forward to `main`.
 4. Changes are global by blast radius - edit deliberately, read before overwrite,
    per the user's non-destructive rule.
+5. **Ollama is never exposed off loopback.** `OLLAMA_HOST` is never `0.0.0.0` or
+   any routable address; access goes through the Ollama app, never its public
+   HTTP API. No exception, no temporary override, no "just for this test".
+6. Work that matters runs on Anthropic or genuinely local models. Hosted
+   third-party models are for medium-stakes and hobby work. Ollama `:cloud`
+   models are hosted, not local, and fall under that limit.
 
 ## Workflow to propagate a change
 
@@ -114,21 +165,18 @@ assembly step, so:
 2. Commit + push (`develop`), then fast-forward `main`.
 3. On each machine: `git pull && bash ~/.agents/sync-skills.sh`.
 
-## Shipped - `okf-kg` (core shipped 2026-07-03; spec archived 2026-07-10)
+## `okf-kg` scope
 
-The offline core shipped as `skills/okf-kg/`: stdlib-only single script,
-SQLite+FTS5, `ingest`/`query`/`neighbors`/`path`. The LLM `enrich` pass and
-`conflicts` ledger remain DEFERRED (user decision: no API key in this tool;
-vaults arrive pre-curated) - that remainder is a `tasks/plan.md` backlog item; the
-full spec text is archived in `tasks/completed/` (folded
-SPEC-COMPLETED section; root `SPEC-OKF-GRAPH.md` retired). History: the earlier Postgres/Docker/MCP draft
-was removed 2026-07-02 as over-scaled for the real workload (vaults of
-~50-100 small files). The 2026-07-09 `obsidian-kg` twin covers wikilink
-vaults separately by design.
+The offline core is `skills/okf-kg/`: stdlib-only single script, SQLite+FTS5,
+`ingest`/`query`/`neighbors`/`path`. The LLM `enrich` pass and `conflicts`
+ledger remain DEFERRED (user decision: no API key in this tool; vaults arrive
+pre-curated) - that remainder is a `tasks/plan.md` backlog item. A
+Postgres/Docker/MCP design was rejected as over-scaled for the real workload
+(vaults of ~50-100 small files). The `obsidian-kg` twin covers wikilink vaults
+separately by design.
 
 ---
 
 See `README.md` → Architecture for how the sync view is built and why it's safe.
 Shipped work is recorded in `tasks/completed/` - per-date files, the only cold
-store (SPEC-COMPLETED.md retired 2026-07-13; the single `plan-completed.md` append
-log was split into per-date files 2026-07-26; this file states current truth only).
+store. This file states current truth only.

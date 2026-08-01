@@ -1,7 +1,7 @@
 ---
 name: agent-stack-map
-description: Opinionated, comparison-table map of the modern OSS agent stack - frameworks, harnesses, memory, retrieval/context, skills, ingestion, tuning/RL, self-improvement - with recommended architectures and a current shortlist. The analytical core of the ai-engineering skill.
-updated: 2026-07-27
+description: Opinionated, comparison-table map of the modern OSS agent stack - frameworks, harnesses, memory, retrieval/context, skills, ingestion, tuning/RL, self-improvement, and the NVIDIA NeMo stack - with recommended architectures and a current shortlist. The analytical core of the ai-engineering skill.
+updated: 2026-07-29
 ---
 
 # Agent Stack Software Map
@@ -56,6 +56,7 @@ Orchestration + tools + prompts/workflows + usually some memory/persistence/know
 | Microsoft Agent Framework | - | verify | Orchestration SDK | Build/orchestrate/deploy agents + multi-agent across Python/.NET. | APIs still maturing; SK successor-layer. | Include | [repo](https://github.com/microsoft/agent-framework) |
 | AnythingLLM | 58k | MIT | End-user agent + RAG app | All-in-one private AI app: agents, docs, tools, vector DB, local/cloud. | Less of a low-level SDK. | Include | [repo](https://github.com/mintplex-labs/anything-llm) |
 | AutoGen | 56.9k | MIT | Multi-agent research framework | Influential MS multi-agent framework. | ⚠️ **Maintenance mode**; prefer Agent Framework for new builds. | Flagged | [repo](https://github.com/microsoft/autogen) |
+| NeMo Agent Toolkit | ~2.5k | Apache-2.0 | **Interop + profiling layer, not a framework** | Wraps an existing framework's agents/tools as composable functions; adds YAML workflows, an eval harness, a token/latency/bottleneck profiler and MCP in both directions. v1.8 (2026-06-16), verified 2026-07-28. | Renamed twice in three minors (`agentiq`→`aiqtoolkit`→`nvidia-nat`) with the shims now deleted; breaking changes ship in minor releases. See Section J. | Include (alongside, not instead of) | [repo](https://github.com/NVIDIA/NeMo-Agent-Toolkit) |
 | OpenClaw | verify | MIT | Personal assistant platform | Self-hosted assistant controllable from chat apps. | Rapidly changing; provider-policy sensitive. | Caution | [repo](https://github.com/openclaw/openclaw) |
 
 ### Platform-style builders (app/workflow over library)
@@ -108,7 +109,7 @@ Stars/status verified 2026-07-01 where dated; treat undated `verify` cells as un
 | Cline | open source | IDE+CLI coding agent | Plan/Act modes, MCP, parallel agents + Kanban boards; grew standalone CLI + SDK in 3.x. 8M+ users. Roo Code/Kilo Code forked from it. | VS Code-first heritage. | [repo](https://github.com/cline/cline) |
 | Aider | Apache-2.0 | Git-native pair-programmer | Terminal pair-programming pioneer; every edit a git commit; model-agnostic BYOK. ~46.8k★. | **Cadence slowed - last push 2026-05-22; leaderboard not refreshed for 2026 frontier models.** | [repo](https://github.com/Aider-AI/aider) |
 | goose | Apache-2.0 | Coding agent harness | Open, extensible agent (Rust; desktop/CLI/API), recipes (YAML), subagents, MCP, 15+ providers. v1.39.0 (2026-06-25). | **Governance moved Block → Agentic AI Foundation (Linux Foundation); `block/goose` redirects to `aaif-goose/goose`.** | [repo](https://github.com/aaif-goose/goose) |
-| deepagents | MIT | Batteries-included harness | LangChain's opinionated harness on `create_agent`/LangGraph: planning, virtual filesystem, subagents, memory, skills. ~25k★. JS twin: `deepagentsjs`. | A harness *and* a framework layer; needs LangGraph runtime. | [repo](https://github.com/langchain-ai/deepagents) |
+| deepagents | MIT | Batteries-included harness | LangChain's opinionated harness on `create_agent`/LangGraph. Built-ins: filesystem (`ls`/`read_file`/`write_file`/`edit_file`/`delete`/`glob`/`grep`, pluggable backends), `write_todos` planning, `task` subagents, `execute` shell, `eval` (QuickJS), skills, `AGENTS.md` memory, auto-summarization. **Middleware is the composition model.** v0.7.0 (2026-07-29), ~27k★, py≥3.11. JS twin `langchain-ai/deepagentsjs` publishes to npm as **`deepagents`** (v1.11.x - versions are not aligned, the API is). | A harness *and* a framework layer; needs the LangGraph runtime. ⚠️ **Pre-1.0, breaking changes at minor versions** - 0.7.0 removed `read_file`'s line-number gutter and changed empty `ls`/`glob` output. Model-agnostic in claim but Anthropic-shaped in practice (prompt caching is Anthropic/Bedrock; the JS default model is Claude). | [repo](https://github.com/langchain-ai/deepagents) |
 | OpenHands | verify | Autonomous SWE agent | End-to-end software-engineering agent (ex-OpenDevin); hit 1.0 on a new Software Agent SDK (2026); browse/edit/test/retry, CI-friendly. 65k★, $18.8M Series A. | Higher autonomy = more guardrails needed. | [repo](https://github.com/OpenHands/OpenHands) |
 | Crush | verify | Terminal coding agent | Charm's continuation of the original (archived) Go opencode codebase. | Verify license/status; don't confuse with TS OpenCode. | [repo](https://github.com/charmbracelet/crush) |
 | Jules | proprietary (Google) | Async coding agent | Assign a full task; runs in an isolated VM and returns a PR. GA at I/O 2026; Gemini 3.1 Pro/3 Flash; Jules Tools CLI + API; self-healing CI. | Not OSS; async model (not interactive). | [site](https://jules.google/) |
@@ -309,6 +310,209 @@ Read/Grep, not instead of it - caveat 3 is why.
 
 ---
 
+## Section J - The NVIDIA NeMo stack (researched 2026-07-28)
+
+NVIDIA ships an agent stack at every layer, but it is four products with one prefix
+rather than one product. The single most useful thing to hold onto is **where the
+free OSS ends and the licence begins**, because the boundary does not fall where
+the "open source" framing suggests.
+
+| Layer | What it is | License reality |
+|---|---|---|
+| [NeMo Agent Toolkit](https://github.com/NVIDIA/NeMo-Agent-Toolkit) | Interop + eval + profiling around *your* framework | Apache-2.0, plain `pip install nvidia-nat`. No GPU, no NVIDIA account, no licence. |
+| [NeMo Guardrails](https://github.com/NVIDIA/NeMo-Guardrails) | Programmable I/O rails for LLM apps | Apache-2.0, ~6.8k★, v0.23.0. Usable standalone; the only platform piece that is genuinely independent. |
+| [NeMo Framework](https://docs.nvidia.com/nemo-framework/user-guide/latest/overview.html) | Self-managed training / post-training / RL | Source Apache-2.0; the **container** ships under the NVIDIA AI Product Agreement. |
+| [NeMo Platform (microservices)](https://docs.nvidia.com/nemo/microservices/latest/) | Customizer, Evaluator, Auditor, Data Designer, Safe Synthesizer, Entity/Data Store, Deployment Mgmt, NIM Proxy, Studio | NGC containers under NVIDIA's SLA. **Production requires NVIDIA AI Enterprise.** |
+| [NIM](https://developer.nvidia.com/nim) | A model + inference engine in a container, exposed as an OpenAI-compatible endpoint | Free to self-host for dev/test/research/eval under free Developer Program membership. **Production requires NVAIE.** |
+| [Blueprints](https://github.com/NVIDIA-AI-Blueprints) | Reference apps: source + Helm chart + sample | Blueprint *source* is Apache-2.0; the NIM containers they pull are not. |
+| [Nemotron 3](https://www.nvidia.com/en-us/ai-data-science/foundation-models/nemotron/) | Open-weight model family, Nano / Super / Ultra | Permissive but **not uniform** - see the licence split below. |
+
+### J.1 - NeMo Agent Toolkit: what it actually is
+
+Read the name as a trap. It is **not** a competitor to LangGraph or CrewAI, and
+adopting it does not mean replatforming. It wraps agents, tools and workflows from a
+framework you already use as composable function calls, then adds the things those
+frameworks are weakest at: a YAML workflow config, an eval harness, and a profiler
+that reports tokens, latency, throughput, bottlenecks and concurrency spikes per
+invocation. Shipped plugins cover LangChain/LangGraph, LlamaIndex, CrewAI, Semantic
+Kernel, Google ADK, AutoGen and Agno, plus LiteLLM, Bedrock, OCI and OpenTelemetry.
+It is an MCP **client and server** (`nat mcp serve`, `nat fastmcp server run`).
+
+**The real caution is naming, not capability.** It has been renamed twice in three
+minor versions - `agentiq` → `aiqtoolkit` (v1.1) → `nvidia-nat` with the CLI moving
+`aiq` → `nat` (v1.2) - and the transitional package, the `aiq` module, the `aiq`
+command and the `aiq_*` aliases are all **now deleted**. Every blog post, tutorial
+and Stack Overflow answer written before mid-2025 is dead code against current
+releases. Breaking changes also ship in *minor* versions (1.4 moved the function-group
+separator `.` → `__`; 1.5 split the meta-package and moved import paths). Pin it.
+
+### J.2 - The layer that answers "CI/CD for agentic state"
+
+This is the part of the stack worth the most attention, and NVIDIA's published
+answer is the **[Data Flywheel Blueprint](https://github.com/NVIDIA-AI-Blueprints/data-flywheel)**:
+a continuously-running FastAPI orchestrator over NeMo Customizer (LoRA/SFT),
+Evaluator (incl. tool-calling accuracy and LLM-as-judge), Data Store and Deployment
+Manager. It replays production traffic logs on a schedule, fine-tunes and evaluates
+smaller candidate models, and promotes one when it still clears the accuracy, latency
+and cost bar. The Agent Toolkit feeds it: emitted traces carry a `workload_id`, and
+the `client_id`+`workload_id` pair selects the training data.
+
+NVIDIA's showcase result is a fine-tuned Llama 3.2 1B reaching tool-calling accuracy
+near Llama 3.1 70B - a ~70x size reduction. Treat that as a vendor claim on a
+favorable task, but treat the *architecture* as the serious contribution: it is a
+concrete, deployable shape for the "how do agents stay current as the enterprise
+changes" problem, and there is not much else published at this level of detail.
+Note the operational seam - config is static during a run, so a change means
+stop, edit, redeploy.
+
+### J.3 - NeMo Framework: the monolith is gone
+
+`NVIDIA/NeMo` no longer means what it used to. The repo now redirects to
+[NVIDIA-NeMo/Speech](https://github.com/NVIDIA-NeMo/Speech) and has narrowed to
+speech/multimodal; the rest was split across ~27 repos in a new `NVIDIA-NeMo` org
+(Megatron-Bridge, RL, Automodel, Run, Curator, Evaluator, Export-Deploy, Skills,
+Gym, Nemotron), nearly all Apache-2.0. **[NeMo-Aligner is unmaintained](https://github.com/NVIDIA/NeMo-Aligner)**
+as of 2025-05-15 and is replaced by [NeMo RL](https://github.com/NVIDIA-NeMo/RL).
+NeMo 2.0 also replaced YAML experiment config with Python config plus NeMo-Run
+recipes/executors; NVIDIA documents the migration but has not formally declared the
+1.0 YAML path deprecated.
+
+Framework vs microservices is a genuine fork, not a packaging choice: the Framework
+is code-level control over arbitrary checkpoints, while Customizer is an API over
+*NIM-packaged* models, scoped to LoRA/SFT/DPO/GRPO, that redeploys its output as a
+NIM. They version independently.
+
+### J.4 - Nemotron 3 and local runnability
+
+| Tier | Size | Local? |
+|---|---|---|
+| Nano | 30B total / ~3.5B active, hybrid Mamba-2 MoE, 1M context | **Yes** - official [Ollama library entry](https://ollama.com/library/nemotron-3-nano), 24GB at q4_K_M; third-party GGUFs exist. |
+| Super | 120B / 12B active (2026-03-11) | Server-class only: vLLM / SGLang / TensorRT-LLM. |
+| Ultra | 550B / 55B active (2026-06-04) | Multi-GPU; the 1M-token NVFP4 context needs Blackwell. |
+
+⚠️ **The licence is not uniform across the family.** Nano and Super are published
+under the NVIDIA Open Model License; the Ultra announcement states **OpenMDW-1.1**
+(Linux Foundation) instead. Both claims come from NVIDIA's own posts and were not
+reconciled - check the specific model card before depending on either (verify).
+All agentic benchmark figures NVIDIA publishes for these (PinchBench 85.6% Super /
+91% Ultra, SWE-bench Verified 65-70.4%) are first-party and self-selected.
+
+### J.5 - VSS: the video-corpus RAG architecture
+
+[VSS 3](https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization)
+went GA 2026-06-25 and open-sourced all its microservices; 3.1.0 is in early access.
+The pipeline is three layers: real-time vision (DeepStream + RT-DETR/Sparse4D
+detection, Cosmos-Embed1 embeddings, a VLM - Cosmos Reason or Qwen3-VL) → a message
+broker (Kafka / Redis Streams / MQTT) → behaviour analytics and VLM-verified alerts →
+an agent layer exposed over MCP. Audio is not a separate ASR stage in v3; it arrives
+via the Nemotron 3 Nano Omni model handling video and audio together.
+
+The retrieval design is the transferable idea. **CA-RAG** stores VLM-generated
+captions plus embeddings (Milvus by default) *and* runs an LLM over those captions to
+extract entities and relationships into a graph (Neo4j by default, ArangoDB
+supported). Flat vector retrieval answers "find the clip"; the caption-derived
+knowledge graph is what answers cross-clip and cross-stream questions, and the
+"Advanced Retrieval" plan-and-execute mode only runs on a graph backend. That is a
+concrete, working answer to what a graph buys you over a video corpus that pure
+vector RAG cannot deliver. (Caveat: the CA-RAG database defaults were read from the
+current docs but the 3.x top-level architecture page emphasises Elasticsearch, so
+the Milvus/Neo4j defaults may describe the 2.x path carried forward - verify.)
+
+### J.6 - What NVIDIA AI Enterprise actually buys
+
+Worth stating precisely, because it is overstated in both directions. It is **not**
+GPU compute and it is **not** required to run CUDA on bare metal. It gates: access to
+NIM microservices, 9-month production branches and 3-year LTS branches with
+monthly/quarterly CVE patching and API stability, SBOM + VEX records + signed
+containers, NVIDIA vGPU for Compute, and SLA-backed support (4-hour initial
+response). Licensed per GPU. The free path is real and generous for development -
+hosted endpoints on build.nvidia.com plus self-hostable NIM containers under free
+Developer Program membership - but NVIDIA defines "production" as anything beyond
+development, testing, research and evaluation, which includes serving real end users.
+NVIDIA also publishes [Enterprise Reference Architectures](https://docs.nvidia.com/enterprise-reference-architectures/index.html)
+(32-256 GPU AI factories, plus an AI-Q Research Agent RA and a Secure Agent Workspace
+reference design) if a hardware-through-observability blueprint is what is wanted.
+
+### J.7 - Which agent framework to bring (researched 2026-07-29)
+
+The Agent Toolkit is framework-agnostic on paper and all eight supported frameworks
+(ADK, Agno, AutoGen, CrewAI, LangChain/LangGraph, LlamaIndex, Semantic Kernel,
+Strands) get full tool calling and profiling. Support is **not** evenly deep, though,
+and the [framework matrix](https://docs.nvidia.com/nemo/agent-toolkit/latest/components/integrations/frameworks.html)
+is the tell:
+
+| Dimension | Coverage |
+|---|---|
+| Tool calling, profiling | All 8 frameworks |
+| Embedder providers | LangChain and LlamaIndex only |
+| **Retriever providers** (NeMo Retriever, Milvus) | **LangChain only** |
+| Extra LLM providers | LangChain adds Hugging Face; Semantic Kernel is OpenAI-only; Agno marked limited |
+
+Three more signals point the same way. `nvidia-nat-langchain` is a single
+distribution covering *both* LangChain and LangGraph, and it is what the
+getting-started example installs, while the other frameworks get one extra each and
+`crewai`/`adk` carry documented dependency conflicts with `openpipe-art`. Examples
+skew to LangChain/LangGraph (3, including a dedicated `langgraph_wrapper` path and a
+["Running Existing LangGraph Agents"](https://docs.nvidia.com/nemo/agent-toolkit/latest/run-workflows/existing-agents/langgraph.html)
+doc page with no equivalent for the others), and CrewAI ships a plugin with zero
+examples. And **LangGraph is the de facto orchestration layer across the blueprint
+catalog** - aiq, vulnerability-analysis, ai-virtual-assistant, biomedical-aiq and
+retail-shopping-assistant. No blueprint surfaced that is built on CrewAI, Semantic
+Kernel, ADK or Agno.
+
+**deepagents specifically sits inside a formal NVIDIA/LangChain partnership**, which
+is the part not visible from NVIDIA's docs alone. The
+[`langchain-ai/langchain-nvidia`](https://github.com/langchain-ai/langchain-nvidia)
+monorepo, developed with NVIDIA, ships `langchain-nvidia-ai-endpoints` (`ChatNVIDIA`,
+`NVIDIAEmbeddings`, `NVIDIARerank`), `langchain-nvidia-trt`,
+`langchain-nvidia-langgraph` (NVIDIA-optimised execution applied at LangGraph compile
+time - parallel independent nodes, speculative execution of both conditional
+branches, no change to node logic) and `langchain-nvidia-openshell`, which wires
+NVIDIA OpenShell sandboxes to Deep Agents specifically. LangChain joined the Nemotron
+Coalition, a joint [enterprise platform announcement](https://www.langchain.com/blog/nvidia-enterprise)
+landed around 2026-03, a **NemoClaw** blueprint (Deep Agents Code + Nemotron 3 Ultra
++ OpenShell) was announced 2026-07-08, and deepagents 0.7.0 shipped a built-in
+Nemotron 3 Ultra harness profile with NIM attribution. The headline cost figure from
+that partnership (0.86 aggregate at $4.48 vs $43.48 for the next closest model) is
+announcement-grade and has no verified primary artifact.
+
+**How AI-Q actually composes the two**, which is the reference pattern worth copying:
+deepagents owns the inner loop (`create_deep_agent` coordinates subagents itself) and
+the Agent Toolkit wraps it as a component of type `deep_research_agent`. NVIDIA
+describes its own agents as toolkit-independent with "registration being a thin layer
+in `register.py`". The toolkit supplies config-driven composition, MCP wiring, eval,
+profiling and tracing; deepagents supplies planning, subagents and context. Models
+reach it through the toolkit's `nim` provider resolving via `nvidia_nat_langchain` to
+`ChatNVIDIA`, so `langchain-nvidia-ai-endpoints` arrives transitively rather than as a
+direct dependency. AI-Q also adds its own middleware (`EmptyContentFix`,
+`ToolNameSanitization`, `ModelRetry`) around the run, and post-processes the report
+deterministically to verify every citation against sources actually retrieved.
+
+⚠️ **The pin asymmetry is a live hazard.** AI-Q pins the toolkit exactly
+(`nvidia-nat*==1.8.0`) but deepagents as an open floor (`deepagents>=0.6.5`), and
+deepagents ships breaking changes at minor versions. A fresh install today resolves
+0.7.0, which is not the line AI-Q was built against. Pin deepagents yourself.
+
+**Counterweight, stated plainly:** the Agent Toolkit's own docs never mention Deep
+Agents. Support is expressed through the LangGraph/LangChain plugin surface and the
+blueprints, and every deepagents-specific package lives in LangChain's org, not
+NVIDIA's. So the honest claim is not "NVIDIA supports deepagents first-class"; it is
+that LangGraph is NVIDIA's house orchestration layer, deepagents is a harness on top
+of it with a partnership behind it, and the coupling is maintained from the LangChain
+side. No public source ranks integration effort across frameworks, so "easiest to
+integrate" is not a falsifiable claim - it is a reasonable read of where the
+investment has gone.
+
+**Stance.** Take the Agent Toolkit and Guardrails on their merits - both are
+Apache-2.0, both work against non-NVIDIA providers, and the profiler has no real
+OSS equivalent. Treat the blueprints as readable reference architectures and
+starting points, which is what NVIDIA intends (AI-Q composes with the RAG blueprint;
+the biomedical agent is a documented fork of AI-Q). Go into NeMo Platform, NIM
+self-hosting and the Data Flywheel with the NVAIE production licence priced in from
+the start, not discovered at deployment.
+
+---
+
 ## Recommended architectures by use case
 
 ### 1) Fastest path to a serious OSS agent stack
@@ -357,7 +561,8 @@ control plane, composable with local storage/memory/graph, and friendly to
 - **Tuning / optimization:** Unsloth · Agent Lightning · OpenPipe ART · Molt · TRL · PEFT · Axolotl
 - **Frontend:** CopilotKit
 - **Codebase knowledge graph:** graphify · codegraph · codebase-memory-mcp (see Section I.1 for how to rank them)
-- **Agent evals / red-team:** Giskard v3 · deepeval · Opik
+- **Agent evals / red-team:** Giskard v3 · deepeval · Opik · NeMo Agent Toolkit (profiling + eval over an existing framework) · NeMo Guardrails (I/O rails)
+- **NVIDIA stack:** NeMo Agent Toolkit · NeMo Guardrails · Nemotron 3 Nano (local) · Data Flywheel + VSS as reference architectures (see Section J for the licence boundary)
 
 ---
 
@@ -377,6 +582,11 @@ control plane, composable with local storage/memory/graph, and friendly to
 - **GitVizz** - **no license file** (all rights reserved by default) and untouched since 2026-02-12. Do not vendor (verified 2026-07-27).
 - **Codebase knowledge-graph tools generally** - the category's star counts are inflated and every performance number is first-party; see Section I.1's shared caveats before citing any of them. No security advisories were open against graphify, codegraph, codebase-memory-mcp, code-review-graph, herdr or aiden as of 2026-07-27, and all ship auditable source.
 - **Vendor monorepo drops** (Grok Build) - published as squashed periodic exports, so issues and PRs land against a snapshot rather than live history. Fine to use, wrong to treat as a community project you can upstream to.
+- **NVIDIA NeMo Platform / NIM self-hosting** - free for development, testing, research and evaluation; **production requires an NVIDIA AI Enterprise licence**, where NVIDIA defines production as anything else, including serving real end users. Budget it before the pilot, not after (verified 2026-07-28).
+- **NVIDIA Blueprints** - the repo source is Apache-2.0, but the NIM containers a blueprint pulls carry NVIDIA's own terms. "Apache-2.0 blueprint" does not mean an Apache-2.0 deployment (verified 2026-07-28).
+- **Nemotron 3** - the family licence is **not uniform**: Nano and Super under the NVIDIA Open Model License, Ultra announced under OpenMDW-1.1. Check the individual model card (verified 2026-07-28).
+- **NeMo Agent Toolkit** - renamed twice (`agentiq`→`aiqtoolkit`→`nvidia-nat`) with all compatibility shims deleted, and breaking changes ship in minor releases. Pin the version; treat any pre-2026 tutorial as stale (verified 2026-07-28).
+- **NeMo-Aligner** - unmaintained since 2025-05-15; superseded by NeMo RL. Do not start new work on it (verified 2026-07-28).
 
 ---
 

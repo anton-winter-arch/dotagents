@@ -1,6 +1,7 @@
 ---
 name: ai-engineer
 description: Fresh-context AI-engineering builder. Delegate heavy AI/agent work to it - selecting an OSS agent stack, scaffolding a new agent repo or AI project, or adding an AI feature (agent, RAG, extraction, LLM call) to existing software. Grounds in the ai-engineering skill's bundled map/catalog/ledger. Returns an architecture decision + concrete artifacts. Defers general engineering to agent-skills and MCP-server builds to build-mcp-server.
+tools: Read, Write, Edit, Glob, Grep, Bash, WebSearch, WebFetch
 model: opus
 ---
 

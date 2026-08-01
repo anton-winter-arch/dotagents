@@ -43,3 +43,30 @@ docs.cursor.com	docs|harnesses
 opencode.ai	docs|harnesses
 cline.bot	docs|harnesses
 goose-docs.ai	docs|harnesses
+# NVIDIA - specific paths first; `docs.nvidia.com/nemo` would otherwise swallow
+# `nemo-framework` and `nemo/agent-toolkit`, which are different layers.
+docs.nvidia.com/nemo/agent-toolkit	docs|frameworks
+docs.nvidia.com/nemo/microservices	docs|serving
+docs.nvidia.com/nemo-framework	docs|tuning
+docs.nvidia.com/nim-operator	docs|serving
+docs.nvidia.com/nim/	docs|serving
+docs.nvidia.com/vss	docs|rag
+docs.nvidia.com/enterprise-reference-architectures	docs|adjacent
+docs.nvidia.com/ai-enterprise	docs|adjacent
+docs.nvidia.com/nemo	docs|tuning
+build.nvidia.com	serving|models
+catalog.ngc.nvidia.com	serving|adjacent
+developer.nvidia.com/blog	learning
+developer.nvidia.com/nim	docs|serving
+forums.developer.nvidia.com	learning
+research.nvidia.com	papers
+developer.nvidia.com	docs|adjacent
+www.nvidia.com	docs|adjacent
+docs.nvidia.com/aiq-blueprint	docs|frameworks
+# `langchain.com` must stay below `docs.langchain.com` - it is a substring of it.
+reference.langchain.com	docs|frameworks
+langchain.com	learning
+pypi.org	docs
+npmjs.com	docs
+hpcwire.com	learning
+prnewswire.com	learning
