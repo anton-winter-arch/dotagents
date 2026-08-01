@@ -73,19 +73,21 @@ Apply the verdict - proceed / revise / stop - before any worker starts.
   arguable, use opus. Never downgrade a whole fan-out at once - the exception
   is per-subtask and the orchestrator states the reason in the plan.
 - Each worker prompt is self-contained: context, exact deliverable,
-  acceptance criteria, what NOT to touch. Workers never spawn workers and
-  never expand scope.
-- **Declare each worker reading or writing, and scope its tools to match.**
-  Same `Agent` mechanism either way; this is a per-call decision, not a
-  separate tier or a named subagent.
-  - **Readers** get read-only tools (`Read`, `Grep`, `Glob`) and return
-    findings, never files. Parallelize them freely over the same paths - they
-    share no state, and the point is that the searching stays in their context
-    while only the conclusion comes back. This is where the loop's context
-    saving actually comes from.
-  - **Writers** get edit tools. Two writers must not write the same file -
-    that seam belongs to the orchestrator or to sequencing.
-- A loop that needs only one kind declares only one kind. Reading first and
+  acceptance criteria, what NOT to touch.
+- **Pick the subagent by what the subtask does**, via `subagent_type`. The
+  allowlist lives in the definition and the harness enforces it, which is why
+  this is not left to the prompt:
+  - **`reader`** (`tools: Read, Grep, Glob`) for anything that only needs to
+    find things. It *cannot* write, whatever its prompt says. Parallelize
+    readers freely over the same paths - they share no state, and the point is
+    that the searching stays in their context while only the conclusion comes
+    back. This is where the loop's context saving actually comes from.
+  - **`worker`** (adds `Write`, `Edit`, `Bash`) for anything that changes the
+    tree. Two workers must not write the same file - that seam belongs to the
+    orchestrator or to sequencing, and no allowlist can express it.
+  - Neither can spawn agents, so a fan-out stays one level deep by
+    construction rather than by instruction.
+- A loop that needs only one kind uses only one kind. Reading first and
   writing second is a common and useful shape, not a required one.
 
 ## Phase 4 - Verify (orchestrator)

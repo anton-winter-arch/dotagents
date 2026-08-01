@@ -261,8 +261,10 @@ description is its trigger contract and its body is the workflow.
 | `advisor` | Consulted advisor for `meta-loop`: strategy, decomposition, risk, taste |
 | `ai-engineer` | Fresh-context builder for heavy delegated AI and agent work |
 | `my-security-reviewer` | Fresh-context reviewer applying the checklist to staged diffs |
+| `reader` | Read-only fan-out worker: searches one bounded question, returns findings |
 | `researcher` | Source-cited researcher for one bounded angle; the `deep-research` worker |
 | `supervisor` | Read-only peer watching in-flight work for drift and landmines |
+| `worker` | Fan-out worker that changes the tree and returns evidence of what it changed |
 
 ### Commands (`commands/*.md`)
 

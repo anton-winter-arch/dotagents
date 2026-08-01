@@ -18,8 +18,8 @@ authors or forks (**24 skills** `agent-mail`, `notes`,
 `skill-authoring`, `okf-kg`, `repo-device-sync`, `meta-loop`, `obsidian-kg`,
 `frontend-aesthetics`, `docker`, `django`, `o-o-d-a-loop`,
 `ai-slop-magic-eraser`, `teach-me`, `dimensional-data-modeling`, `data-engineering`;
-**5 subagents** `my-security-reviewer`, `supervisor`, `ai-engineer`, `advisor`,
-`researcher`;
+**7 subagents** `my-security-reviewer`, `supervisor`, `ai-engineer`, `advisor`,
+`researcher`, `reader`, `worker`;
 **11 commands** `agent-mail`, `my-security-review`, `supervisor`, `reflect`, and
 the agent-skills aliases `spec`, `plan`, `build`, `test`, `review`,
 `code-simplify`, `ship`).
