@@ -74,6 +74,16 @@ Apply the verdict - proceed / revise / stop - before any worker starts.
   is per-subtask and the orchestrator states the reason in the plan.
 - Each worker prompt is self-contained: context, exact deliverable,
   acceptance criteria, what NOT to touch.
+- **A worker prompt carries task content only.** It is an input to a fresh
+  context, not a message to a colleague. Cut the session narrative ("we just
+  finished X", "the user then asked"), the justification for why the task
+  exists, apologies, encouragement, and any commentary about the loop itself.
+  A worker that has to read past framing to find its instructions has been
+  handed a worse prompt. Include a fact only if the worker's output changes
+  without it.
+- **Both directions are asymmetric on purpose:** be exhaustive in the searching
+  and the doing, ruthless in what crosses a context boundary. That applies to
+  the prompt going out and the findings coming back.
 - **Pick the subagent by what the subtask does**, via `subagent_type`. The
   allowlist lives in the definition and the harness enforces it, which is why
   this is not left to the prompt:
