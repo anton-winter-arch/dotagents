@@ -2,6 +2,7 @@
 name: worker
 description: Writing worker for a meta-loop fan-out. Executes one bounded, fully-specified subtask against the tree and returns evidence of what it changed. Use as the execution half of an orchestration loop, one call per independent subtask. Cannot spawn further agents by design, so a fan-out stays one level deep. Pairs with the meta-loop skill. Use reader instead when the subtask only needs to find things.
 tools: Read, Write, Edit, Glob, Grep, Bash
+model: opus
 ---
 
 # Worker

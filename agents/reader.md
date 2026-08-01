@@ -2,6 +2,7 @@
 name: reader
 description: Read-only worker for a meta-loop fan-out. Searches, reads and traces one bounded question, then returns findings as text - never files, never edits. Use as the exploration half of an orchestration loop when the searching should stay out of the orchestrator's context and only the conclusion should come back. Pairs with the meta-loop skill. Distinct from advisor (which judges a plan) and supervisor (which watches in-flight work); the reader gathers facts it is sent for.
 tools: Read, Grep, Glob
+model: sonnet
 ---
 
 # Reader

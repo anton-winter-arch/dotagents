@@ -1,13 +1,14 @@
 ---
 name: meta-loop
-description: Orchestration loop - plan, delegate to parallel workers, verify, synthesize - with a premium advisor consulted off the hot path. The session model orchestrates, workers run as Agent calls on model opus by default (dropping to sonnet only for genuinely low-stakes subtasks), and the advisor agent (model fable) is pulled in for decomposition critique, risk, and taste. MUST be used whenever the user asks to run something as a loop, orchestrate, fan out, or delegate to workers ("run this as a meta loop", "orchestrate this", "fan this out with an advisor", "use cheap workers for the leg work"), whenever a requested task visibly splits into three or more independent subtasks, and for any mid-loop situation: verifying a worker's returned result against its claims, re-delegating a rejected subtask, or critiquing a decomposition before fan-out. Also on "/meta-loop". Not for single-file or single-step tasks.
+description: Orchestration loop - plan, delegate to parallel workers, verify, synthesize - with a premium advisor consulted off the hot path. The session model orchestrates, fan-out runs as Agent calls against two pinned subagents (`reader` on sonnet for read-only gathering, `worker` on opus for anything that changes the tree), and the advisor agent (model fable) is pulled in for decomposition critique, risk, and taste. MUST be used whenever the user asks to run something as a loop, orchestrate, fan out, or delegate to workers ("run this as a meta loop", "orchestrate this", "fan this out with an advisor", "use cheap workers for the leg work"), whenever a requested task visibly splits into three or more independent subtasks, and for any mid-loop situation: verifying a worker's returned result against its claims, re-delegating a rejected subtask, or critiquing a decomposition before fan-out. Also on "/meta-loop". Not for single-file or single-step tasks.
 ---
 
 # meta-loop
 
 Three-tier loop: **orchestrator** (this session) runs the hot path
-plan → delegate → verify → synthesize; **workers** (opus) do parallel
-execution; **advisor** (fable, fresh context) is a consulted advisor off the
+plan → delegate → verify → synthesize; **workers** (`reader` on sonnet,
+`worker` on opus) do parallel execution; **advisor** (fable, fresh context)
+is a consulted advisor off the
 hot path. The economics: parallelism is the leverage, not a cheaper worker. A
 worker runs on the same tier the orchestrator would have used doing the work
 itself, so fanning out costs wall-clock and context - never quality. The saving
@@ -16,12 +17,12 @@ several shorter threads cost less in aggregate than one long thread that maxes
 out and compacts repeatedly.
 
 Session-model note: a skill cannot set the main-thread model. Run the session
-on Opus (`/model opus`) so the orchestrator matches its workers; on a Fable
+on Opus (`/model opus`) so the orchestrator matches its writers; on a Fable
 session the loop still works - the advisor then buys a fresh, unanchored
-context rather than a model upgrade. Worker tier does not follow the session:
-`model: "opus"` is passed explicitly on every `Agent` call, because an
-omitted `model` inherits the session model and a cheap session would silently
-downgrade the whole fan-out.
+context rather than a model upgrade. Worker tier never follows the session:
+`reader` and `worker` pin their own models in frontmatter, because an agent
+with no pin inherits the session model, which silently downgrades a fan-out on
+a cheap session and silently runs it on the priciest tier on an expensive one.
 
 ## Phase 1 - Plan (orchestrator)
 
@@ -57,21 +58,22 @@ Apply the verdict - proceed / revise / stop - before any worker starts.
 
 ## Phase 3 - Delegate (workers, parallel)
 
-- One `Agent` call per subtask, **`model: "opus"`**, in a single message so
-  they run concurrently; background by default. Opus is the default because a
-  worker's output is only as trustworthy as the model that wrote it, and the
-  orchestrator verifies from evidence - it does not re-do the work. A weak
-  worker does not save money; it moves the cost into re-delegation, missed
-  edge cases, and defects the verify step is not guaranteed to catch.
-- **The sonnet exception.** Drop a single subtask to `model: "sonnet"` only
-  when it is genuinely low-stakes on every count: mechanical and fully
-  specified (no judgment calls, no design decisions), trivially reversible,
-  its acceptance criteria machine-checkable (tests, a diff, an exact string),
-  and a wrong result is cheap and obvious rather than silently wrong.
-  Examples that qualify: a mechanical rename sweep, a formatting pass, a
-  file-listing or grep-collation errand. If any one of those conditions is
-  arguable, use opus. Never downgrade a whole fan-out at once - the exception
-  is per-subtask and the orchestrator states the reason in the plan.
+- One `Agent` call per subtask, in a single message so they run concurrently;
+  background by default.
+- **The tier comes from the definition, not the call.** `reader` is pinned to
+  sonnet and `worker` to opus, so a fan-out cannot silently inherit whatever
+  model the session happens to be running. Gathering facts against a cited
+  source is well-specified work the orchestrator verifies anyway; changing the
+  tree is not, and a writer's output is only as trustworthy as the model that
+  wrote it. A weak writer does not save money - it moves the cost into
+  re-delegation, missed edge cases, and defects the verify step may not catch.
+- **Override per call only with a reason, stated in the plan.** A call-site
+  `model` beats the frontmatter. Raise a reader to opus when the question needs
+  real judgment rather than retrieval (tracing intent across a subsystem,
+  reconciling sources that disagree). Drop a writer to sonnet only when the
+  subtask is mechanical and fully specified, trivially reversible, and
+  machine-checkable - a rename sweep, a formatting pass. Never re-tier a whole
+  fan-out at once.
 - Each worker prompt is self-contained: context, exact deliverable,
   acceptance criteria, what NOT to touch.
 - **A worker prompt carries task content only.** It is an input to a fresh
