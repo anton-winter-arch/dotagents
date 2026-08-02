@@ -60,6 +60,13 @@ Apply the verdict - proceed / revise / stop - before any worker starts.
 
 - One `Agent` call per subtask, in a single message so they run concurrently;
   background by default.
+- **`reader` and `worker` are the generic defaults, not the only choices.**
+  When a subtask matches a specialized subagent, spawn that one instead: it
+  carries a purpose-built prompt and its own pinned tools and model.
+  `researcher` for source-cited research, `my-security-reviewer` for the
+  security checklist, `ai-engineer` for AI and agent builds. Reach for a
+  generic worker when nothing fits, not by default - a specialized definition
+  is strictly more context than a generic prompt can carry.
 - **The tier comes from the definition, not the call.** `reader` is pinned to
   sonnet and `worker` to opus, so a fan-out cannot silently inherit whatever
   model the session happens to be running. Gathering facts against a cited
