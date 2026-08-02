@@ -9,8 +9,8 @@ rules and cautions for working in this folder. See [`README.md`](README.md) for
 layout and the sync model.
 
 **Looking for the global `CLAUDE.md` template?** It is
-[`specs/claude-code/CLAUDE.md`](specs/claude-code/CLAUDE.md) - the rules file
-that seeds `~/.claude/CLAUDE.md`, not this one. This file only orients an agent
+[`specs/claude-code/CLAUDE.md.example`](specs/claude-code/CLAUDE.md.example) -
+the rules file that seeds `~/.claude/CLAUDE.md`, not this one. This file only orients an agent
 working inside this repo. Every other station template sits beside it in
 [`specs/claude-code/`](specs/claude-code/) and is indexed in §0 of the spec.
 

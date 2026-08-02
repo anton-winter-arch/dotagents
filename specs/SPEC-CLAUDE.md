@@ -21,14 +21,14 @@ file rather than a code block, so it can be diffed, linted and copied directly:
 
 | File | Goes to | Section |
 |---|---|---|
-| [`CLAUDE.md`](claude-code/CLAUDE.md) | `~/.claude/CLAUDE.md` | [5](#5-global-claudeclaudemd-template) |
-| [`RTK.md`](claude-code/RTK.md) | `~/.claude/RTK.md` | [6](#6-global-claudertkmd-template) |
+| [`CLAUDE.md.example`](claude-code/CLAUDE.md.example) | `~/.claude/CLAUDE.md` | [5](#5-global-claudeclaudemd-template) |
+| [`RTK.md.example`](claude-code/RTK.md.example) | `~/.claude/RTK.md` | [6](#6-global-claudertkmd-template) |
 | [`settings.json`](claude-code/settings.json) | `~/.claude/settings.json` | [7](#7-global-claudesettingsjson---rules-in-principle-then-the-template) |
 | [`hooks/`](claude-code/hooks) | `~/.claude/hooks/` | [8](#8-hook-scripts-claudehooks) |
 | [`statusline.sh`](claude-code/statusline.sh) | `~/.claude/statusline.sh` | [9](#9-status-lines-claudestatuslinesh--subagent-statuslinesh) |
 | [`keybindings.json`](claude-code/keybindings.json) | `~/.claude/keybindings.json` | [10](#10-keybindings-claudekeybindingsjson--terminal-setup) |
 
-**Most readers want [`claude-code/CLAUDE.md`](claude-code/CLAUDE.md)** - the
+**Most readers want [`claude-code/CLAUDE.md.example`](claude-code/CLAUDE.md.example)** - the
 global rules file. The sections below say what each file is for and why it is
 shaped that way; the files themselves are the thing you copy.
 
@@ -136,11 +136,15 @@ fast-forward `main`. Read `AGENTS.md` before changing anything in the repo.
 Seed verbatim (it imports RTK.md via the trailing `@RTK.md` line, so §6 must
 exist too):
 
-Seed it verbatim from [`claude-code/CLAUDE.md`](claude-code/CLAUDE.md).
+Seed it verbatim from
+[`claude-code/CLAUDE.md.example`](claude-code/CLAUDE.md.example). The `.example`
+suffix is load-bearing: a file named `CLAUDE.md` in a subdirectory is
+auto-loaded as instructions, and a template is not this repo's rules.
 
 ## 6. Global `~/.claude/RTK.md` template
 
-Seed it verbatim from [`claude-code/RTK.md`](claude-code/RTK.md).
+Seed it verbatim from
+[`claude-code/RTK.md.example`](claude-code/RTK.md.example).
 
 ## 7. Global `~/.claude/settings.json` - rules in principle, then the template
 
