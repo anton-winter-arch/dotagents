@@ -22,7 +22,8 @@ bash "$SKILL_DIR/scripts/inbox.sh" --repo .
 ```
 
 No inbox or no top-level files ⇒ no unread mail. Don't announce empty inboxes
-repeatedly.
+repeatedly. `inbox.sh` lists what is there; `sweep.sh` (below) says what is still
+owed - use the sweep to close out, not the listing.
 
 ## Sending
 
@@ -67,7 +68,34 @@ To preview a repo's roots before sending: `send.sh --to-repo <path> --inspect`.
 4. **Reply** if `reply-needed: true` - send `--type response` back to the
    message's `from-repo` with `--in-reply-to <its message-id>`.
 5. **Finish:** `mark.sh --file <path> --status resolved` (or `canceled`) - this
-   moves it into flat `processed/`.
+   moves it into flat `processed/`. Always close through `mark.sh`; hand-editing
+   the `status:` field leaves the file top-level forever.
+
+## Closing sweep - never leave the inbox dirty
+
+Before you finish any turn that touched mail, run the sweep. It is the backstop
+against messages rotting unread or half-processed:
+
+```
+bash "$SKILL_DIR/scripts/sweep.sh" --repo .
+```
+
+Exit 0 means clean. Exit 1 means something is outstanding, and each message is
+bucketed by what it still owes:
+
+| Bucket | Meaning | What you do |
+|---|---|---|
+| `OWES-REPLY` | `reply-needed: true`, not closed | send the response, then mark resolved |
+| `TRIAGE` | unread, or no status at all | read it and act, then mark resolved |
+| `ABANDONED` | left `in-progress` | finish it, or mark canceled |
+| `STRANDED` | closed but never moved | mechanical - rerun with `--fix-stranded` |
+
+`--fix-stranded` is the only bucket a script can clear on its own; the other
+three need you to actually handle the message. `--stale-days N` (default 7) sets
+when an outstanding message is flagged `STALE`.
+
+Do not report an inbox as handled while the sweep still exits 1. If a message is
+outstanding on purpose, say which one and why.
 
 ## Enabling yourself to receive
 

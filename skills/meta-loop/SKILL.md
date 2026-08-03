@@ -60,13 +60,24 @@ Apply the verdict - proceed / revise / stop - before any worker starts.
 
 - One `Agent` call per subtask, in a single message so they run concurrently;
   background by default.
-- **`reader` and `worker` are the generic defaults, not the only choices.**
-  When a subtask matches a specialized subagent, spawn that one instead: it
-  carries a purpose-built prompt and its own pinned tools and model.
-  `researcher` for source-cited research, `my-security-reviewer` for the
-  security checklist, `ai-engineer` for AI and agent builds. Reach for a
-  generic worker when nothing fits, not by default - a specialized definition
-  is strictly more context than a generic prompt can carry.
+- **Check the roster before spawning a generic worker.** `agents/` is the list
+  of record; read it if this is stale. It currently holds:
+  - `reader` - read-only gathering and tracing (sonnet)
+  - `worker` - anything that changes the tree (opus)
+  - `researcher` - source-cited research on one bounded angle, capsule return
+  - `advisor` - strategy, decomposition, risk and taste, off the hot path
+  - `supervisor` - watches in-flight work for drift; pushed, not pulled
+  - `my-security-reviewer` - the agent-tooling security checklist
+  - `ai-engineer` - AI and agent builds
+
+  A specialized definition carries a purpose-built prompt plus its own pinned
+  tools and model, none of which a generic worker prompt can reconstruct. So
+  `reader`/`worker` are the fallback when nothing fits, not the default.
+- **Writing a new subagent is allowed, and it is the last option.** If no
+  existing definition meets the subtask's requirements, author one per
+  `skill-authoring` rather than papering over the gap with a longer prompt.
+  Name which existing agents you rejected and why before doing it: a definition
+  is a durable addition to the repo, not a throwaway for one loop.
 - **The tier comes from the definition, not the call.** `reader` is pinned to
   sonnet and `worker` to opus, so a fan-out cannot silently inherit whatever
   model the session happens to be running. Gathering facts against a cited

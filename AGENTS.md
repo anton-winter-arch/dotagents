@@ -23,6 +23,10 @@ throwaway project. Act accordingly.
 - **Keep `SKILL.md` valid.** Every skill is `skills/<name>/SKILL.md` with YAML
   frontmatter (`name`, `description`). A malformed skill can break discovery.
 - **Test executable skills** before declaring done (e.g. a skill's own `tests/`).
+- **Adding or removing a subagent updates its readers.** `agents/` is the roster
+  of record, but `skills/meta-loop/SKILL.md` lists it so an orchestrator knows
+  what it can delegate to, and `README.md` catalogs it. Change all three, or the
+  loop keeps reaching for a generic worker because it does not know better.
 - **No secrets.** This is a git repo. Never commit tokens,
   keys, or credentials.
 - **Don't sync the per-device view.** `~/.claude/skills` is assembled per machine;

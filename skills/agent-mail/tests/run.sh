@@ -4,7 +4,7 @@
 set -uo pipefail   # NOT -e: we deliberately drive error paths
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 SCRIPTS="$HERE/../scripts"
-SEND="$SCRIPTS/send.sh"; MARK="$SCRIPTS/mark.sh"; INBOX="$SCRIPTS/inbox.sh"
+SEND="$SCRIPTS/send.sh"; MARK="$SCRIPTS/mark.sh"; INBOX="$SCRIPTS/inbox.sh"; SWEEP="$SCRIPTS/sweep.sh"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 pass=0; fail=0
 ok(){ pass=$((pass+1)); printf '  PASS  %s\n' "$1"; }
@@ -72,6 +72,32 @@ bash "$MARK" --file "$bad" --status resolved >/dev/null 2>&1; rc_is "malformed r
 
 echo "== inbox listing =="
 out=$(bash "$INBOX" --repo "$R4" 2>/dev/null); rc_is "inbox list runs" 0 $?
+
+echo "== sweep =="
+R5=$(mkrepo sweep .claude); mkdir -p "$R5/.claude/inbox"
+bash "$SWEEP" --repo "$R5" >/dev/null 2>&1; rc_is "empty inbox is clean" 0 $?
+o=$(bash "$SEND" --to-repo "$R5" --from A --to B --subject owes --type request --reply-needed --body-file "$B" 2>/dev/null)
+t=$(bash "$SEND" --to-repo "$R5" --from A --to B --subject triage --type fyi --body-file "$B" 2>/dev/null)
+a=$(bash "$SEND" --to-repo "$R5" --from A --to B --subject aband --type fyi --body-file "$B" 2>/dev/null)
+bash "$MARK" --file "$a" --status in-progress >/dev/null 2>&1
+out=$(bash "$SWEEP" --repo "$R5" 2>/dev/null); rc=$?
+rc_is "outstanding mail -> rc 1" 1 "$rc"
+printf '%s' "$out" | grep -q 'OWES-REPLY (1)'  && ok "reply-needed lands in OWES-REPLY"  || no "reply-needed lands in OWES-REPLY"
+printf '%s' "$out" | grep -q 'TRIAGE (1)'      && ok "unread lands in TRIAGE"            || no "unread lands in TRIAGE"
+printf '%s' "$out" | grep -q 'ABANDONED (1)'   && ok "in-progress lands in ABANDONED"    || no "in-progress lands in ABANDONED"
+# a hand-edited status that never moved is STRANDED, and --fix-stranded files it
+s=$(bash "$SEND" --to-repo "$R5" --from A --to B --subject strand --type fyi --body-file "$B" 2>/dev/null)
+awk '{sub(/^status: unread$/,"status: resolved")}1' "$s" > "$s.x" && mv "$s.x" "$s"
+out=$(bash "$SWEEP" --repo "$R5" 2>/dev/null)
+printf '%s' "$out" | grep -q 'STRANDED (1)' && ok "hand-closed message is STRANDED" || no "hand-closed message is STRANDED"
+bash "$SWEEP" --repo "$R5" --fix-stranded >/dev/null 2>&1
+{ [ ! -f "$s" ] && [ -f "$R5/.claude/inbox/processed/$(basename "$s")" ]; } && ok "--fix-stranded files it" || no "--fix-stranded files it"
+out=$(bash "$SWEEP" --repo "$R5" 2>/dev/null)
+printf '%s' "$out" | grep -q 'STRANDED' && no "STRANDED cleared after fix" || ok "STRANDED cleared after fix"
+# clearing every bucket leaves a clean inbox
+for m in "$o" "$t" "$a"; do bash "$MARK" --file "$m" --status resolved >/dev/null 2>&1; done
+bash "$SWEEP" --repo "$R5" >/dev/null 2>&1; rc_is "all closed -> clean" 0 $?
+bash "$SWEEP" --repo "$R5" --stale-days x >/dev/null 2>&1; rc_is "bad --stale-days rejected" 64 $?
 
 echo "----"; printf 'pass=%d fail=%d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
