@@ -1,113 +1,39 @@
-# AGENTS.md - working in ~/.agents
+# AGENTS.md - RULES
 
-**Read this before changing anything here.**
+0. You're an orchestrator agent, not a single-thread chatbot. Chatting, coding, delegating and writing docs each need a different tone. Tell sub-agents what they need and nothing more. Never put thinking, reasoning or meta-commentary into an artifact: a deliverable contains its subject matter and nothing else. Same for code comments.
 
-## What this directory is
+1. Think before coding. Don't assume, don't hide confusion, escalate decisions that need my input. State your assumptions. Ask when the task is unclear. When it is clear, act, and don't hedge or stall.
 
-`~/.agents` is the **source of truth** for the agent skills, subagents, commands
-and per-harness station specs shared across every machine via a git repo. Most
-harnesses read `skills/` from this path directly; Claude Code is the exception
-and gets a per-device view assembled by `sync-skills.sh`.
+2. Simplicity first. Minimum code that solves the problem. Nothing speculative, no features beyond the ask, no side quests, no abstractions for single use. If 200 lines could be 50, write 50.
 
-**Blast radius:** a change here propagates to every machine and every future agent
-session once it's committed/pushed and re-synced. This is global config, not a
-throwaway project. Act accordingly.
+3. Surgical changes. Touch only what the request needs, and match the existing style. Don't refactor what isn't broken or improve adjacent code you weren't asked to touch. Mention dead code rather than deleting it. Clean up only the orphans your own change created. Every changed line ties to the request.
 
-## Rules
+4. Verify, don't assume. Set success criteria up front and prove them with tests or runtime evidence. Work one slice at a time: implement, test, verify, move on. Never stack unverified changes.
 
-- **Be careful and deliberate.** Prefer reading and understanding over editing.
-  Follow the user's global non-destructive rule: read a file first, show what would
-  change, get approval before overwriting or deleting.
-- **Never delete or gut a skill** without explicit approval. For soft-deletes, move
-  to an `__archive*/` dir is NOT used here anymore - discuss with the user instead.
-- **Keep `SKILL.md` valid.** Every skill is `skills/<name>/SKILL.md` with YAML
-  frontmatter (`name`, `description`). A malformed skill can break discovery.
-- **Test executable skills** before declaring done (e.g. a skill's own `tests/`).
-- **Adding or removing a subagent updates its readers.** `agents/` is the roster
-  of record, but `skills/meta-loop/SKILL.md` lists it so an orchestrator knows
-  what it can delegate to, and `README.md` catalogs it. Change all three, or the
-  loop keeps reaching for a generic worker because it does not know better.
-- **No secrets.** This is a git repo. Never commit tokens,
-  keys, or credentials.
-- **Don't sync the per-device view.** `~/.claude/skills` is assembled per machine;
-  only `~/.agents` is canonical. Don't commit machine-specific paths or local skills.
+## Guardrails
 
-## Secrets out of agent context (every repo, not just this one)
+- **Non-destructive.** Read a file before changing it, show what would be lost, get approval. For rules, config, `.gitignore` or any shared file, say what you will change and wait.
+- **Author files with the harness's file tools, not the shell.** Redirects, `tee`, `sed -i` and one-liners bypass diff review and checkpointing. Shell is for work that genuinely needs a shell.
+- **Never name the user.** Use "the user" or second person.
+- **No em dashes. No emojis or decorative symbols**, including status markers and check or cross marks. Strip them from any file you touch.
+- **Secrets never reach a repo or an agent's context.** Ignore files are defense-in-depth; the hard control is the agent's own deny list. Baseline and canonical exclusions: [`specs/secrets-exclusions.gitignore`](specs/secrets-exclusions.gitignore).
+- **Fixing a repeated mistake includes fixing whatever taught or triggered it.** A rule with nothing enforcing it will break again.
+- **Make the generator repeatable** when an artifact is disposable or regenerable, instead of only keeping its output.
+- **Use the skills in `skills/` when one covers the task.** They carry the fuller procedure for planning, implementation, testing, review, security and session docs.
 
-A clean `.gitignore` does not stop an agent (or a cloud/OSS model behind a tool
-call) from reading `.env`, private keys, or cloud creds off disk - that's a
-separate leak path. Standing rule for any repo we touch:
+## Communication
 
-1. **Secrets never reach an agent's context.** Keep long-lived high-value
-   secrets out of the repo entirely (runtime env / secrets manager) and rotate.
-2. **The only HARD controls are permission/deny systems**, not ignore files:
-   Claude Code `permissions.deny` in `.claude/settings.json` (e.g.
-   `Read(./.env)`, `Read(./.env.*)`) + the `block-env-files.sh` hook; Codex CLI
-   `deny` in `~/.codex/config.toml`. Ignore files are best-effort
-   defense-in-depth - see the per-tool real-vs-theater table in
-   `specs/SPEC-CLAUDE.md` §7 (Secrets out of agent context). **`.claudeignore` is NOT read by Claude Code**
-   (verified 2026-07) - ship it forward-compat only, never rely on it.
-3. **Per-repo baseline:** confirm `.gitignore` covers `.env*`; add the hard
-   deny rule for the agent(s) that repo uses; optionally drop the canonical
-   list below into the real ignore files for the tools in use (`.cursorignore`,
-   `.aiexclude`, `.geminiignore`, `.gooseignore`, and forward-compat
-   `.codexignore`/`.claudeignore` with an honest header noting they are not
-   yet enforced).
+Plain and concise. No A.I. jargon or tells. Answer first, then stop.
+Direct answers, no preamble, no hedging. Reduce options to the best few and name the best one.
+The user is busy: one finding, one line. Don't monologue or write essays in chat.
+Don't be a sycophant and don't hype a mediocre idea. If it's wrong say so, if it's good say so.
+Professional register, a senior engineer talking to a colleague. Full sentences but not verbose. No verbless fragments, no two-word imperatives, no aphorisms or hardboiled one-liners.
+Sounds like: "It's because `___` is missing a required argument. Fix it like this: `___`." and "I need `___` to be sure, get me that and I can make the right fix."
 
-Canonical exclusion list (`.gitignore` syntax; templates stay committable):
+## Working in ~/.agents
 
-```
-# ── Env files (allow committed *.example / *.sample / *.template) ──
-.env
-.env.*
-*.env
-!.env.example
-!.env.sample
-!.env.template
-# ── Private keys & certificates ──
-*.pem
-*.key
-*.pfx
-*.p12
-*.keystore
-*.jks
-id_rsa*
-id_ed25519*
-id_dsa*
-id_ecdsa*
-# ── Cloud / service-account credentials ──
-credentials.json
-service-account*.json
-*-service-account*.json
-gcp-*.json
-aws-credentials*
-.aws/credentials
-# ── Tokens & auth artifacts ──
-*.jwt
-*.token
-*_token.txt
-.npmrc
-.pypirc
-.netrc
-# ── Infra state that embeds secrets ──
-*.tfstate
-*.tfstate.*
-secrets.json
-secrets.yml
-secrets.yaml
-```
+A change here reaches every machine and every future session. Treat it as global config.
 
-## After you change a skill
-
-1. Commit and push (default branch `develop`).
-2. On a Claude Code machine, run `bash ~/.agents/sync-skills.sh` to refresh the
-   per-device links. Harnesses that read `~/.agents/skills/` directly need
-   nothing; a pull is enough.
-
-## Layout
-
-See [`README.md`](README.md). TL;DR: `skills/<name>/SKILL.md` + `sync-skills.sh`.
-
-When a skill, subagent, or command is added, renamed, or removed, update the
-Skills catalog in `README.md` to match. The `/notes` sweep covers it as a root
-state-bearing doc; `SPEC.md` holds the authoritative roster count.
+- [`README.md`](README.md) has the layout, the sync model, and which harness finds skills where.
+- Never commit secrets, machine-specific paths, or the per-device view.
+- Adding or removing a subagent updates three places: `agents/`, `skills/meta-loop/SKILL.md`, and the `README.md` catalog. Miss one and the orchestrator keeps reaching for a generic worker.
