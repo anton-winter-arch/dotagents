@@ -17,7 +17,7 @@ briefing. **Read-only - this skill never writes, edits, archives, or logs.**
 ## When NOT to use
 
 - Mid-task - this is orientation, not a checkpoint. To *save* state use `/notes`
-  (docs sweep) or `/reflect` (memory + truth reconciliation).
+  (docs sweep) or `/reflect` (memory).
 - It modifies nothing. If you catch yourself wanting to edit, you're past orientation.
 
 ## Procedure

@@ -283,11 +283,11 @@ description is its trigger contract and its body is the workflow.
 | `my-security-review-checklist` | Pre-merge security gate for agent tooling |
 | `code-kg` | Offline symbol-level knowledge graph over a codebase: imports, entry points, framework-aware liveness, subsystem communities, coupling hotspots, agent-tooling layer, data-store inventory, coverage join |
 | `codex-task` | Delegates one bounded task from Claude Code to the local Codex CLI in an isolated worktree, writes confined to a file allowlist, diff reviewed before apply |
-| `notes` | End-of-session documentation sweep into the living docs |
+| `notes` | End-of-session docs sweep, plus correcting any repo text the session made false |
 | `obsidian` | Obsidian markdown standard plus a per-vault authoring workflow |
 | `obsidian-kg` | Offline section-level knowledge graph over a markdown corpus |
 | `project-knowledge-vault` | Seeds and lints a flat, OKF-compatible project vault: the contract, a scaffolder, a conformance linter and obsidian-kg profile rows |
-| `reflect` | End-of-session truth reconciliation into memory |
+| `reflect` | End-of-session memory reconciliation |
 | `repo-device-sync` | Multi-device git sync ritual |
 | `skill-authoring` | House profile for authoring and auditing agent tooling |
 | `sprint-board` | Plans, writes and audits agile backlogs as markdown |
