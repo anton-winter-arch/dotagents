@@ -292,7 +292,7 @@ description is its trigger contract and its body is the workflow.
 | `skill-authoring` | House profile for authoring and auditing agent tooling |
 | `sprint-board` | Plans, writes and audits agile backlogs as markdown |
 | `teach-me` | Teaches a topic and certifies understanding |
-| `wrap-up` | Full session closeout: reflect, then notes, then a gitignore audit, then commit, review and sync |
+| `wrap-up` | Full session closeout: security review alongside inbox and notes, then gitignore audit, commit and sync, then reflect |
 
 ### Subagents (`agents/*.md`)
 
@@ -313,9 +313,9 @@ description is its trigger contract and its body is the workflow.
 | `/agent-mail` | One agent-mail action (send/read/list/reply); "team" points to native Agent Teams |
 | `/cmon` | Restates the last verbose reply in as few words as possible, then holds that register |
 | `/my-security-review` | The agent-tooling security review; dispatches `my-security-reviewer` for depth |
-| `/reflect` | Truth reconciliation (propose -> user gate -> apply), then hands to `/notes` |
+| `/reflect` | Memory reconciliation (propose -> user gate -> apply); in-repo stale claims go to `/notes` |
 | `/supervisor` | Spawns the supervisor peer (alias of `cover-me`) |
-| `/wrap-up` | Full closeout: `/reflect`, then `/notes`, then gitignore audit, commit, review, sync and push |
+| `/wrap-up` | Full closeout: security review alongside inbox and `/notes`, then gitignore audit, commit, sync and push, then `/reflect` |
 | `/spec` `/plan` `/build` `/test` `/review` `/ship` `/code-simplify` | House SOP for each stage, self-contained |
 
 Those seven stage commands each carry the house procedure in full and defer to

@@ -411,9 +411,10 @@ instead), the two identifier guards (`reject_identifiers.py` pre-write,
 (`reject_published_copy_edits.py`, reading a station
 `published-copy-paths.txt` seeded from the `.example.txt`), and the two
 resource gates (`memory_pressure_gate.py`, `daemon_restart_storm.py`).
-Seven are advisory/non-blocking (`read-size-advisory`,
-`cmon_nudge`, `memory-routing`, both `no-meta-commentary` sides,
-`memory_lint`'s judgment checks, and `reject_identifiers`);
+Six are advisory/non-blocking (`read-size-advisory`,
+`cmon_nudge`, both `no-meta-commentary` sides,
+`memory_lint`'s judgment checks, and `reject_identifiers`), and
+`memory-routing` is advisory until a memory folder reaches its cap;
 the rest can block.
 Every script here is wired; retired hooks live under the repo's `__archive/`
 with their tests, not here.
@@ -635,39 +636,56 @@ Script: [`claude-code/hooks/cmon_nudge.py`](hooks/cmon_nudge.py).
 ### `memory-routing.sh`
 
 PreToolUse hook (matcher `Write|Edit|MultiEdit|NotebookEdit|Update|Create`,
-wired in §7) - GLOBAL (fires across every project). Advisory only, NEVER
-blocks. When a **new** file is about to be created under a memory dir
-(`~/.claude/projects/<slug>/memory/*.md`) it injects a routing table that asks
-which category the belief is - (a) repo-specific → memory, (b) universal →
-global CLAUDE.md, (c) invariant → a hook, (d) procedure → a skill, (e) client
-fact → project docs, never memory. Only (a) proceeds. A yes/no "are you sure"
-prompt failed to catch misfiles; naming the category is what exposes them.
-Fires only on new files (an edit to an existing memory is already routed) and
-uses the `permissionDecision:allow` + `additionalContext` channel so the note
-reaches the agent without blocking. Fail-open. Tests:
-`tests/station-hooks/test-memory-routing.sh` (7 cases incl. the never-blocks
-contract).
+wired in §7) - GLOBAL (fires across every project). When a **new** file is
+about to be created under a memory dir (`~/.claude/projects/<slug>/memory/*.md`)
+it injects a routing table that asks which category the belief is - (a)
+repo-specific → memory, (b) universal → global CLAUDE.md, (c) invariant → a
+hook, (d) procedure → a skill, (e) client fact → project docs, never memory.
+Only (a) proceeds. A yes/no "are you sure" prompt failed to catch misfiles;
+naming the category is what exposes them. The table also says each
+`MEMORY.md` line summarizes what the memory holds rather than titling it.
+
+It also caps the folder, keyed on the memory count after the write
+(`MEMORY.md` excluded): from 50 it adds a hygiene prompt (run the `/reflect`
+prune, and look for memories acting as hard rules that belong in a hook or a
+`.claude/rules/` file); from 75, add only what is important and unique and
+extend an existing memory otherwise; at 101 it **denies** the write until a
+removal the user approves frees a slot. The tiers match reflect's prune table. Fires only on
+new files (an edit to an existing memory never changes the count) and uses the
+`permissionDecision:allow` + `additionalContext` channel below the cap.
+Fail-open. Only paths under `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/`
+count, compared as resolved physical paths so a symlinked config dir or
+`projects/`, or a trailing slash, still matches; a repo folder with the same layout, a nested
+folder under `memory/` or a deeper slug passes silently. Tests:
+`tests/station-hooks/test-memory-routing.sh` (23 cases, covering each tier
+boundary).
 
 Script: [`claude-code/hooks/memory-routing.sh`](hooks/memory-routing.sh).
 
 ### `memory_lint.py`
 
 PostToolUse hook (matcher `Write|Edit|MultiEdit|NotebookEdit|Update|Create`,
-wired in §7) - GLOBAL. After a write to a memory file it lints that dir.
+wired in §7) - GLOBAL. After a write to a memory file under
+`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/` it lints that dir.
 Deterministic violations **FAIL LOUD** (exit 2 - returns stderr to the agent so
 it is fixed immediately): a memory file with no `MEMORY.md` pointer, a missing
 index, missing/invalid frontmatter (`name`/`description`/`metadata.type` ∈
 {user, feedback, project, reference}), a `name:` that does not match the
 filename stem, or a dead index pointer. Judgment checks are advisory (exit 0,
 delivered as PostToolUse `additionalContext` on stdout): dangling
-`[[wikilinks]]` (allowed - they mark a memory worth writing later; only
+`[[wikilinks]]` (allowed as forward stubs; the advisory asks for a repoint
+when a memory was just removed or merged; only
 closed single-line links up to 120 characters count, the text is escaped and
-the list capped at ten, because this reaches the model) and a doc-reconcile
-prompt. **Footgun (verified in `skill-authoring`):** exit 2
+the list capped at ten on one line, because this reaches the model), an index
+line that is only a link with no summary (capped at five), an index line over
+220 characters (Claude Code loads only the first 200 lines or 25KB of the index;
+only the written file's line, or every line when `MEMORY.md`
+itself was written, so a folder of long lines never fires on every write), and
+a doc-reconcile prompt. **Footgun (verified in `skill-authoring`):** exit 2
 returns stderr to the agent; exit 1 is swallowed, and so is stderr at exit 0 -
 so fails use 2 and advisories use the context channel.
 Stdlib only; **fails OPEN** (a bug in the lint exits 0, never blocks a write).
-Tests: `tests/station-hooks/test-memory-lint.py` (14 cases).
+Tests: `tests/station-hooks/test-memory-lint.py` (22 cases).
 
 Script: [`claude-code/hooks/memory_lint.py`](hooks/memory_lint.py).
 

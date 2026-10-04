@@ -56,6 +56,18 @@
         "No file under tasks/completed/ is created or modified",
         "The agent returns to (or remains available for) the in-progress migration task rather than starting an end-of-session sweep"
       ]
+    },
+    {
+      "id": 5,
+      "prompt": "Take notes on the session. We renamed the sync script from push.sh to sync.sh today and I'm pretty sure a few docs, a skill and a code comment still say push.sh.",
+      "expected_output": "The notes skill runs its sweep, and in step 6 greps the whole repo for push.sh rather than editing one remembered file. Every hit outside the seven doc paths - a skill body, a comment, a config - is presented as file:line with old and new text and applied only on approval, rewritten in place rather than annotated. Memory is not touched.",
+      "expectations": [
+        "The notes skill is invoked",
+        "The agent runs one repo-wide search (git grep or equivalent) for push.sh",
+        "Hits outside SPEC.md, README.md and tasks/ are presented as file:line with old and proposed new text before any edit",
+        "Those edits are applied only after approval and replace the old name in place without an added update note",
+        "No file in the memory folder is created or edited"
+      ]
     }
   ]
 }

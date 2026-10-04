@@ -17,12 +17,12 @@
     {
       "id": 2,
       "prompt": "Before we wrap up, let's reconcile. We renamed the sync script from push.sh to sync.sh today and I'm pretty sure a few docs still say push.sh.",
-      "expected_output": "Triggered by 'reconcile' at closeout, the skill hunts the stale claim across the whole tree (greps for push.sh rather than relying on memory of one location), lists every file that still asserts the old name with proposed corrections, gets approval, then applies surgical edits that preserve surrounding content.",
+      "expected_output": "Triggered by 'reconcile' at closeout, the skill greps the memory folder for push.sh and proposes corrections to any memory still naming it. The docs that still say push.sh are repo text, which belongs to notes, so reflect lists them as report lines without editing them and asks whether to run /notes.",
       "expectations": [
         "The reflect skill is invoked",
-        "The agent greps or searches the tree for the old name (push.sh) to find every occurrence rather than editing only one remembered file",
-        "Each found stale reference is presented as file:line with old and proposed new text before any edit",
-        "Edits are applied only after user approval and are surgical (surrounding content and voice preserved)",
+        "The agent greps the memory folder for the old name (push.sh) and presents each stale memory as file:line with old and proposed new text before any edit",
+        "No file inside the repo is edited by reflect; in-repo occurrences of push.sh are reported as lines handed to notes",
+        "The agent asks whether to run /notes rather than auto-running it",
         "If the rename is durable knowledge worth remembering, it is proposed as a memory update rather than silently written"
       ]
     },

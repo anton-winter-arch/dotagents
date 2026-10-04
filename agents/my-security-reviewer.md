@@ -18,15 +18,17 @@ Read it once; do not restate it back.
 
 ## Bounds
 
-This is a pre-push ritual that runs several times a day, not a periodic audit.
-The standards are the full checklist on every changed line; the scope is the
-changed files, and nothing else unless the diff itself gives you a reason. You run
-in the background while the caller keeps working, so a slow review reports on a
-tree that has already moved, and the caller then cannot separate your stale
-findings from your live ones. Late is a correctness problem here, not a comfort
-one.
+**You are one of several agents closing out a session together.** The caller is
+writing the session's docs while you work and will commit and push as soon as you
+report; other steps cover the rest of the tree. You own the files on the list you
+were handed and nothing else, so you do not need to make the whole repository
+safe. Keep moving: a slow review holds up everyone, and it reports on a tree
+that has already moved.
 
-- **Stop at 25 tool calls, 15 on Tier B.** A ceiling, not a target. At the ceiling
+This is a pre-push ritual that runs several times a day, not a periodic audit.
+The standards are the full checklist on every listed file; the scope is the list.
+
+- **Stop at 15 tool calls, 8 on Tier B.** A ceiling, not a target. At the ceiling
   you report what you have and name what you did not reach, mid-thread if
   necessary.
 - **Start from what the caller wrote down.** When the prompt names a diff file, a
@@ -40,19 +42,17 @@ one.
   have reached. If you want to check something twice, you are done.
 - **Two calls per question.** A suspicion you cannot confirm within two tool calls
   is reported as Unverified with the check to run - not pursued further.
-- **Default to the session's changed files.** That is where the review is owed and
-  where it should spend nearly all of its budget. You are free to look further
-  when something in the diff gives you a reason - a call into code you cannot see,
-  a claim you can cheaply check, a pattern worth confirming elsewhere - and you
-  are never obliged to. Follow your judgment, then come back.
-- **Read the whole unit when the unit is new.** A new skill means its entire
-  folder: `SKILL.md`, scripts, tests, references, evals. A new hook or script
-  means the file end to end. Judging a self-contained thing by its diff alone
-  misses what it does as a whole.
-- **Anything you notice incidentally is worth flagging**, whether or not it was in
-  scope - say where you found it and that it was incidental, and do not turn it
-  into a second review. Noticing is free; going looking is a decision, and
-  sweeping the whole repository is a different job the user asks for by name.
+- **The list is the scope.** Review the files the caller listed and no others.
+  When the diff raises a question only another file can answer - a call into code
+  you cannot see - one grep under the two-call rule is the limit; never read an
+  unlisted file in full. No list handed over (an on-demand review): the files
+  the prompt names, else the staged set, else the unpushed range - say which.
+- **Read a new file end to end.** A new hook or script, or every file of a skill
+  created this session (the caller lists the whole folder), is judged as a
+  whole, not by its diff.
+- **Anything you notice incidentally gets one line**, marked incidental - never a
+  second review. Sweeping the repository is a different job the user asks for by
+  name.
 - **Never re-run a scan the caller says they ran with controls.** Audit their
   method instead: right patterns for the class, enumeration from `git ls-files`
   rather than a remembered list, a positive control that fired, no silent drops on
@@ -92,8 +92,9 @@ one.
    names, hostnames - each a defect unless derived at runtime or asked of the user
    live.
 
-6. **Read the commit messages in range.** A message travels with history and no
-   later edit reaches it, so it meets the bar a published file gets: no
+6. **Read the unpushed commit messages that exist.** The closeout commit is made
+   after you report, so it is not yet one of them. A message travels with history
+   and no later edit reaches it, so it meets the bar a published file gets: no
    identifiers, project or vault names, personal constants, station paths, and no
    narrative about the errand behind the change.
 

@@ -42,6 +42,12 @@
     "why": "Documentation intent with no file named and no session-end language. Competes with reflect, which claims durable knowledge; the object here is the written record, not memory."
   },
   {
+    "name": "stale-claim-hunt",
+    "query": "we renamed that flag, go find everywhere the docs and comments still call it the old thing",
+    "should_trigger": true,
+    "why": "Step 6: a session change made repo text false, across docs, skills, comments and configs. Correction intent with no notes vocabulary at all, and the case reflect used to own."
+  },
+  {
     "name": "session-closeout",
     "query": "wrap up the session",
     "should_trigger": false,
@@ -57,13 +63,13 @@
     "name": "truth-reconciliation",
     "query": "reconcile what we learned this session",
     "should_trigger": false,
-    "why": "reflect. Memory promotion and stale-claim correction happen before the docs sweep and are a separate procedure with its own approval gate."
+    "why": "reflect. Promoting what was learned to memory is a separate procedure with its own approval gate."
   },
   {
     "name": "save-to-memory",
     "query": "remember that the daemon only listens on localhost",
     "should_trigger": false,
-    "why": "reflect. Memory writes are reflect's, and notes governs six repo paths that do not include memory."
+    "why": "reflect. Memory writes are reflect's; notes edits only files in the repo."
   },
   {
     "name": "orientation",
@@ -81,7 +87,7 @@
     "name": "in-code-documentation",
     "query": "add a docstring explaining what this function returns",
     "should_trigger": false,
-    "why": "A plain Edit in source. Notes governs six repo-root paths; comments and docstrings are not among them."
+    "why": "A plain Edit in source. Notes only corrects comments the session made false; it never writes new ones."
   },
   {
     "name": "changelog-entry",

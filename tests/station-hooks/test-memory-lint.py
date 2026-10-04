@@ -9,14 +9,14 @@ non-memory path is ignored (exit 0); the lint fails OPEN.
 """
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-HOOK = Path(__file__).resolve().parent.parent.parent  # placeholder; set below
-HOOK = Path.home() / ".claude" / "hooks" / "memory_lint.py"
+HOOK = Path(os.environ.get("HOOK_UNDER_TEST", Path.home() / ".claude" / "hooks" / "memory_lint.py"))
 
 GOOD_MEM = """---
 name: sample-fact
@@ -31,11 +31,19 @@ A repo-specific fact. Links to [[sample-fact]] (self, resolves).
 GOOD_INDEX = "# Memory Index\n\n- [Sample](sample-fact.md) - a valid memory\n"
 
 
-def run(file_path: str) -> tuple[int, str]:
+def env_for(file_path: str, root: str | None = None) -> dict:
+    """The hook only lints under the config dir, so point CLAUDE_CONFIG_DIR at the
+    temp tree: <root>/projects/<slug>/memory/<name>.md, root = the 4th parent."""
+    parents = Path(file_path).parents
+    return {**os.environ, "CLAUDE_CONFIG_DIR": root or str(parents[3] if len(parents) > 3 else parents[-1])}
+
+
+def run(file_path: str, root: str | None = None) -> tuple[int, str]:
     """Exit code plus everything the agent could see: stderr, and at exit 0 the
     additionalContext carried on stdout."""
     payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": file_path}})
-    p = subprocess.run([sys.executable, str(HOOK)], input=payload, capture_output=True, text=True)
+    p = subprocess.run([sys.executable, str(HOOK)], input=payload, capture_output=True, text=True,
+                       env=env_for(file_path, root))
     seen = p.stderr
     if p.stdout.strip():
         seen += json.loads(p.stdout)["hookSpecificOutput"]["additionalContext"]
@@ -71,7 +79,8 @@ class TestPasses(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             f = make_dir(Path(t))
             payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(f)}})
-            p = subprocess.run([sys.executable, str(HOOK)], input=payload, capture_output=True, text=True)
+            p = subprocess.run([sys.executable, str(HOOK)], input=payload, capture_output=True, text=True,
+                               env=env_for(str(f)))
             self.assertEqual(p.returncode, 0)
             self.assertEqual(p.stderr, "")
             out = json.loads(p.stdout)["hookSpecificOutput"]
@@ -106,6 +115,54 @@ class TestPasses(unittest.TestCase):
             code, err = run(str(f))
             self.assertEqual(code, 0, err)
             self.assertIn("dangling", err)
+            self.assertIn("repoint links to it to the survivor", err)
+
+    def test_index_line_without_summary_is_advisory(self):
+        index = "# Memory Index\n\n- [Sample](sample-fact.md) —\n"
+        with tempfile.TemporaryDirectory() as t:
+            f = make_dir(Path(t), index=index)
+            code, seen = run(str(f))
+            self.assertEqual(code, 0, seen)
+            self.assertIn("no summary", seen)
+
+    def test_long_index_line_for_written_file_is_advisory(self):
+        index = "# Memory Index\n\n- [Sample](sample-fact.md) - " + "x" * 260 + "\n"
+        with tempfile.TemporaryDirectory() as t:
+            f = make_dir(Path(t), index=index)
+            code, seen = run(str(f))
+            self.assertEqual(code, 0, seen)
+            self.assertIn("keep it under 220", seen)
+            self.assertIn("sample-fact.md", seen)
+
+    def test_writing_the_index_flags_every_long_line_capped(self):
+        lines = "".join(f"- [M{i}](m{i}.md) - " + "x" * 230 + "\n" for i in range(6))
+        index = GOOD_INDEX + lines
+        with tempfile.TemporaryDirectory() as t:
+            f = make_dir(Path(t), index=index)
+            for i in range(6):
+                (f.parent / f"m{i}.md").write_text(GOOD_MEM.replace("sample-fact", f"m{i}"), encoding="utf-8")
+            code, seen = run(str(f.parent / "MEMORY.md"))
+            self.assertEqual(code, 0, seen)
+            self.assertEqual(seen.count("keep it under 220"), 5)
+            self.assertIn("+1 more index lines over 220", seen)
+
+    def test_long_index_line_for_another_file_is_quiet(self):
+        """A folder of long lines must not fire on every write - only the written file's line."""
+        index = GOOD_INDEX + "- [Other](other-fact.md) - " + "x" * 260 + "\n"
+        other = GOOD_MEM.replace("sample-fact", "other-fact")
+        with tempfile.TemporaryDirectory() as t:
+            f = make_dir(Path(t), index=index)
+            (f.parent / "other-fact.md").write_text(other, encoding="utf-8")
+            code, seen = run(str(f))
+            self.assertEqual(code, 0, seen)
+            self.assertNotIn("keep it under", seen)
+
+    def test_index_line_with_summary_is_quiet(self):
+        with tempfile.TemporaryDirectory() as t:
+            f = make_dir(Path(t))
+            code, seen = run(str(f))
+            self.assertEqual(code, 0, seen)
+            self.assertNotIn("no summary", seen)
 
 
 class TestDeterministicFails(unittest.TestCase):
@@ -156,6 +213,22 @@ class TestScopeAndSafety(unittest.TestCase):
             code, err = run(str(f))
             self.assertEqual(code, 0)
             self.assertEqual(err, "")
+
+    def test_memory_layout_outside_config_dir_ignored(self):
+        """A repo folder shaped projects/<x>/memory/ is not the harness's memory."""
+        with tempfile.TemporaryDirectory() as t, tempfile.TemporaryDirectory() as other:
+            f = make_dir(Path(t), index=None)  # would FAIL on the missing index if linted
+            code, seen = run(str(f), root=other)
+            self.assertEqual((code, seen), (0, ""))
+
+    def test_trailing_slash_and_symlinked_config_dir_still_lint(self):
+        """Spelling the config dir differently must not switch the lint off."""
+        with tempfile.TemporaryDirectory() as t, tempfile.TemporaryDirectory() as other:
+            f = make_dir(Path(t), index=None)  # missing index: FAILs when linted
+            link = Path(other) / "cfg-link"
+            os.symlink(t, link)
+            for root in (t + "/", str(link)):
+                self.assertEqual(run(str(f), root=root)[0], 2, root)
 
     def test_garbage_payload_fails_open(self):
         p = subprocess.run([sys.executable, str(HOOK)], input="not json", capture_output=True, text=True)

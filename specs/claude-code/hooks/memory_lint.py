@@ -18,11 +18,15 @@ lint bug can never block a real memory write.
 """
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
 VALID_TYPES = {"user", "feedback", "project", "reference"}
+# Claude Code loads the first 200 lines or 25KB of MEMORY.md. 100 memories x 220
+# chars stays under 25KB with room for the header and section headings.
+INDEX_LINE_CAP = 220
 
 
 def frontmatter(text: str) -> str | None:
@@ -48,8 +52,13 @@ def main() -> int:
         return 0
     p = Path(fp)
 
-    # Only memory files: .../projects/<slug>/memory/<name>.md
-    if p.suffix != ".md" or p.parent.name != "memory" or "projects" not in p.parts:
+    # Only memory files: <config dir>/projects/<slug>/memory/<name>.md, anchored on the
+    # harness config dir so a repo folder with the same layout is never linted as
+    # memory. Both sides resolve, matching memory-routing.sh on symlinks and slashes.
+    root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    if p.suffix != ".md" or p.parent.name != "memory":
+        return 0
+    if p.parent.parent.resolve().parent != (root / "projects").resolve():
         return 0
 
     memdir = p.parent
@@ -102,7 +111,7 @@ def main() -> int:
             errors.append(f"{f.name}: `type: {clean(tm.group(1))}` not in {sorted(VALID_TYPES)}")
 
     # Every index pointer resolves to a file that exists.
-    for link in re.findall(r"\]\(([^)]+\.md)\)", index_text):
+    for link in re.findall(r"\]\(([^)\n]{1,200}\.md)\)", index_text):
         if not (memdir / Path(link).name).exists():
             errors.append(f"MEMORY.md pointer → {link} does not resolve to a file")
 
@@ -113,10 +122,34 @@ def main() -> int:
     link_re = r"\[\[([^\]\|#\n]{1,120})(?:[|#][^\]\n]{0,120})?\]\]"
     dangling = sorted({wl.strip() for wl in re.findall(link_re, "".join(body_all))
                        if wl.strip() not in names})
-    for wl in dangling[:10]:
-        warns.append(f"dangling [[{clean(wl)}]] - allowed; marks a memory worth writing later")
-    if len(dangling) > 10:
-        warns.append(f"+{len(dangling) - 10} more dangling links")
+    if dangling:
+        shown = ", ".join(f"[[{clean(wl)}]]" for wl in dangling[:10])
+        more = f" (+{len(dangling) - 10} more)" if len(dangling) > 10 else ""
+        warns.append(f"dangling {shown}{more} - fine as forward stubs; if a memory was just "
+                     "removed or merged, repoint links to it to the survivor")
+
+    # Advisory: an index line that is only a link carries no summary, so the
+    # index cannot be read on its own. Bounded like the wikilinks above.
+    bare_re = r"\s*[-*]\s*\[[^\]\n]{0,200}\]\([^)\n]{1,200}\.md\)\s*[-:–—]{0,3}"
+    bare = [ln.strip() for ln in index_text.splitlines() if re.fullmatch(bare_re, ln.rstrip())]
+    for ln in bare[:5]:
+        warns.append(f"index line has no summary: {clean(ln)} - say what the memory holds or enforces")
+    if len(bare) > 5:
+        warns.append(f"+{len(bare) - 5} more index lines with no summary")
+
+    # Advisory: the index loads every session, so each line stays under the cap.
+    # Scoped to the line for the file just written (or every line when the index
+    # itself was written), so a folder of long lines never fires on every write.
+    pointer = f"]({p.name})"
+    long_lines = [ln for ln in index_text.splitlines()
+                  if len(ln) >= INDEX_LINE_CAP and (p.name == "MEMORY.md" or pointer in ln)]
+    for ln in long_lines[:5]:
+        stem = re.search(r"\]\(([^)\n]{1,200})\)", ln) if p.name == "MEMORY.md" else None
+        label = stem.group(1) if stem else p.name
+        warns.append(f"index line for {clean(label)} is {len(ln)} chars; "
+                     f"keep it under {INDEX_LINE_CAP}: what the memory holds and when to open it")
+    if len(long_lines) > 5:
+        warns.append(f"+{len(long_lines) - 5} more index lines over {INDEX_LINE_CAP} chars")
 
     warns.append(
         "reconcile: does this repo's own documentation still agree with this memory? "

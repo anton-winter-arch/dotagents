@@ -1,6 +1,6 @@
 ---
 name: notes
-description: End-of-session documentation sweep. Use when the user types /notes, says "take notes", "update the docs", "write up the session", or at the end of ANY work session - including in a fresh repo with no docs yet - to capture everything completed, learned, resolved, decided, planned, implemented, or discovered into the repo's living docs (SPEC.md, README.md, tasks/plan.md, tasks/todo.md, created if missing), enforce the hot-file size budgets, and roll finished work into tasks/completed/, the per-date cold-storage folder. Docs only - it never commits or pushes; a whole-session closeout that also commits belongs to wrap-up, and promoting knowledge to permanent memory belongs to reflect. A dictated one-line edit to a README is a plain edit, not a sweep.
+description: End-of-session documentation sweep. Use when the user types /notes, says "take notes", "update the docs", "write up the session", or at the end of ANY work session - including in a fresh repo with no docs yet - to capture everything completed, learned, decided, planned or discovered into the repo's living docs (SPEC.md, README.md, tasks/plan.md, tasks/todo.md, created if missing), enforce the hot-file size budgets, roll finished work into tasks/completed/, and correct anything in the repo the session made false - a renamed path or flag still cited in a skill, comment or config. Repo text only - it never commits or pushes; a whole-session closeout that also commits belongs to wrap-up, and permanent memory belongs to reflect. A dictated one-line edit to a README is a plain edit, not a sweep.
 ---
 
 # Notes - session documentation sweep
@@ -9,15 +9,16 @@ Fold what the session produced into the living docs so the next session starts
 from current truth.
 
 **The sweep runs once, forward.** Steps 3-5 settle the `tasks/` bundle; step 6
-then checks the root docs and is the only step that touches them. Finish a step
+then corrects false claims, root docs first, and is the only step that touches
+anything outside `tasks/`. Finish a step
 and do not reopen it - if step 6 surfaces something for `plan.md`, add the line
 and keep going. A late trim to a hot file is bounded and fine; reopening
 `README.md` or `SPEC.md` means re-running step 6's heading map.
 
 ## Step 1 - Reconstruct
 
-**If `reflect` just ran, take its reconstruction and skip to step 2.** It walked
-the same session; walking again costs full price and risks the two passes
+**If wrap-up or reflect already reconstructed the session, take it and skip to
+step 2.** Walking it again costs full price and risks the two passes
 disagreeing. Same for a git assessment already run this turn.
 
 Otherwise list concretely: **completed** (with paths), **learned**, **resolved**,
@@ -40,8 +41,8 @@ Seven paths, at the repo root, and no others:
 | `SPEC.md` | What it IS - invariants, boundaries, constraining decisions |
 
 `references/doc-roles.md` has the full roles and the README/SPEC boundary.
-Everything else - `AGENTS.md`, rules files, a published `CHANGELOG.md` - is out of
-scope.
+Everything else - `AGENTS.md`, rules files, skill bodies, code comments, configs -
+is never written into; step 6 only corrects what the session made false there.
 
 **Read each file before editing it.** Create a missing hot file when the work
 warrants one; create today's `plan-completed-YYYY-MM-DD.md` only when something
@@ -130,7 +131,7 @@ Past-date files are immutable. Corrections happen in the living docs.
 - Trims of agent-written entries apply directly; compressing what the user wrote
   by hand is proposed, not applied.
 
-## Step 6 - Root docs: false claims only
+## Step 6 - False claims: root docs, then the rest of the repo
 
 Nothing moves into `README.md` or `SPEC.md`. The only question is whether the
 session made something they assert untrue.
@@ -143,6 +144,13 @@ Heading by heading: did this session invalidate this? A renamed path, a changed
 command, a retired mechanism, a shipped thing still called planned, a count that
 moved. Read and edit only where the answer is yes. Correct what is false and
 nothing else - no session history, no regeneration, no end-to-end read.
+
+**Then the rest of the repo.** For each name, path, flag, value or behavior the
+session changed, one `git grep -n` for the old form finds every file still
+asserting it - skill bodies, `references/`, `AGENTS.md`, specs, code comments,
+configs. Present these as `file:line` → old → new and apply on approval, since a
+config or comment changes what other tools and sessions do. The new text is
+shorter or equal: rewrite in place, never annotate.
 
 ## Step 7 - Re-measure and report
 
@@ -159,7 +167,8 @@ decision it needs - the report is chat output and does not outlive the session.
 - **Non-destructive, except downward.** Read before edit; merge, never gut.
   Relocation is the only sanctioned way hot files shrink, and it is not deletion.
 - **Appending is not maintaining.** A pass that only adds is incomplete.
-- **Seven paths, one pass.** Anything else belongs to another skill.
+- **Writes into seven paths, corrects false claims anywhere in the repo, one
+  pass.** Memory belongs to reflect.
 - **Don't name the user**, and **no secrets** - these files are tracked, so treat
   them as public. Record that a value exists and where it lives, never the value.
 - **Evidence over narrative.** Every claim traces to a real change.

@@ -5,41 +5,42 @@ Numbers are the step numbers used by SKILL.md's headings, so they start at zero.
 
 0. **Fetch before anything.**
    Inbound commits from another machine can change what is true.
-   Reconciling the session against stale state produces memory entries and doc corrections that are wrong on arrival.
+   Documenting the session against stale state produces doc corrections and memory entries that are wrong on arrival.
    This is the one place the obvious order - work first, git last - is wrong.
 
-1. **Security review once, after the commit and before the push.**
-   It reviews everything since the last push, so it sees the commit and what reflect and notes wrote, and it never has to run again because nothing in the chain writes after it.
-   Run early, it fires on every later edit and turns the chain into a loop; run at the gate, a Critical finding is amended into the one commit that exists and the push waits.
-   The push is the exposure boundary, so the gate sits there.
+1. **Security review starts first and runs in the background.**
+   It reads only the files the session created or edited, which the main agent lists for it.
+   The session's code is finished by the time the closeout starts, so the review has nothing to wait for, and starting it first means its verdict is usually in by the time the docs are.
+   A focused list is what keeps it short: a reviewer told to judge "everything since the last push" spends its budget discovering scope and reports on a tree that has already moved.
 
-2. **Inbox before reflect.**
+2. **Inbox before notes.**
    Unprocessed peer mail carries decisions, findings and corrections from other agents.
-   Reflecting before draining it produces memory entries that a message in the inbox already contradicts.
+   Documenting before draining it produces docs that a message in the inbox already contradicts.
 
-3. **Reflect before notes.**
-   Reflect corrects stale claims wherever they live.
-   Notes then documents the session against a record that is already accurate.
-   Reversed, notes writes up claims reflect is about to overturn.
+3. **Notes overlaps the review.**
+   The two own disjoint slices: the reviewer judges the session's files, notes edits the repo's docs and corrects any in-repo text the session made false.
+   Neither reads the other's output until the join, so running them side by side costs nothing in correctness.
 
-4. **Notes before commit.**
-   The docs sweep changes files.
-   Committing first means committing twice or amending.
+4. **One join point, before staging.**
+   The commit needs both the verdict, with its fixes applied, and the finished docs.
+   Notes' edits landed after the reviewer started, so the join lints them mechanically and sends any file outside `tasks/` to the re-review, which keeps the two-round cap: a linter cannot decide whether published prose names something private.
 
-5. **Ignore audit before commit, after notes.**
-   Notes is the last step that creates files, so the audit sees the whole set the commit would stage.
+5. **Ignore audit, then commit, then push, with a second fetch between.**
+   Notes is the last step that creates files in the repo, so the audit sees the whole set the commit would stage.
    Before the commit an uncovered cache or env file is one question and one ignore line; after it, the file is in history and comes out only with a second commit that deletes it from every other clone.
-
-   **Commit before push, with a second fetch between.**
    The fetch from step 0 is stale by now; another machine may have pushed during the session.
 
-6. **Branch parity last**, because it advances a branch to a commit that must already exist on the remote.
+6. **Branch parity**, because it advances a branch to a commit that must already exist on the remote.
+
+7. **Reflect last.**
+   Memory lives in the harness's project folder, outside every repo, so nothing in the git steps depends on it and writing it after the push leaves the tree clean.
+   Everything reflect used to correct inside the repo now belongs to notes, which runs before the commit.
+   Memory is also the slowest step to approve, so putting it last means a long slate review never holds the push.
 
 ## Why step 0 is safe to run before any decision
 
 The four `status`, `symbolic-ref` and `branch` reads are pure reads.
 `git fetch` writes only remote-tracking refs under the git directory, so it cannot touch the working tree, local branches or commits.
-Nothing that can modify the tree happens until after both approval gates.
 
 `origin/HEAD` is often unset, in which case `symbolic-ref` fails and `git branch -vv` is the real evidence of branch shape.
 
@@ -52,8 +53,3 @@ Cheap to remove now, permanent once pushed.
 
 **Changes to the agent tooling itself** - hooks, sync scripts, subagent definitions, settings files - where the blast radius is every future session on every machine rather than this repo.
 That is why the review is not optional when the session touched shared tooling: it is the gate standing between a mistake and a fleet-wide one.
-
-## Why the parallel split is where it is
-
-The security review is a subagent spawned after the commit; the push blocks on its verdict.
-That is the only synchronization point the ordering actually requires.

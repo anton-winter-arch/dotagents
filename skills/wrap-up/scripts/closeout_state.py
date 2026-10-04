@@ -36,7 +36,7 @@ from pathlib import Path
 VERSION = 1
 
 # A fixed vocabulary: a typo must fail, not invent a step nothing will ever read.
-STEPS = ("security-review", "inbox", "reflect", "notes", "commit")
+STEPS = ("inbox", "security-review", "notes", "commit", "reflect")
 
 
 def git(*args: str, cwd: Path | None = None) -> str:

@@ -20,8 +20,8 @@
   {
     "name": "stale-claim-hunt",
     "query": "we renamed that flag, go find everywhere the docs and comments still call it the old thing",
-    "should_trigger": true,
-    "why": "Step 2B: a session change made written statements false, across docs, comments and configs. Reconciliation intent with no reflection vocabulary at all."
+    "should_trigger": false,
+    "why": "notes. Docs and comments are repo text, which notes corrects in its step 6; reflect owns memory only."
   },
   {
     "name": "worth-saving-to-memory",
@@ -33,7 +33,7 @@
     "name": "correct-a-wrong-belief",
     "query": "that assumption you've been working from is wrong, make sure nothing we've written still says it",
     "should_trigger": true,
-    "why": "A correction that has to propagate everywhere it was recorded, including memory. The grep-every-site half of the sweep."
+    "why": "A wrong belief the agent has been working from, which is what memory records. Reflect corrects the memory and hands any in-repo hits to notes."
   },
   {
     "name": "close-out-the-session",
@@ -45,7 +45,7 @@
     "name": "session-closeout-chain",
     "query": "reflect, notes, then push it all up",
     "should_trigger": false,
-    "why": "wrap-up. The word reflect appears, but three chain verbs together is the closeout orchestrator, which runs this skill as its first gate."
+    "why": "wrap-up. The word reflect appears, but three chain verbs together is the closeout orchestrator, which runs this skill last."
   },
   {
     "name": "docs-sweep",
@@ -57,7 +57,7 @@
     "name": "take-notes",
     "query": "take notes before we stop",
     "should_trigger": false,
-    "why": "notes. Same end-of-session timing, but the object is the repo's documentation, not memory or stale claims."
+    "why": "notes. Same end-of-session timing, but the object is the repo's documentation, not memory."
   },
   {
     "name": "orientation",

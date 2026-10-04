@@ -57,5 +57,5 @@
 
   {"name": "wrap-up-the-session", "should_trigger": false,
    "query": "Wrap up the session.",
-   "why": "Belongs to wrap-up, which owns the session closeout chain and calls this skill as one link in it. Firing here would start the sync without the notes and memory steps that precede it."}
+   "why": "Belongs to wrap-up, which owns the session closeout chain and calls this skill as one link in it. Firing here would start the sync without the review and notes steps that precede it."}
 ]

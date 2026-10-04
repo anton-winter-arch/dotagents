@@ -1,6 +1,6 @@
 ---
 name: my-security-review-checklist
-description: Pre-merge security gate for agent tooling - skills, subagents, commands, hooks, scripts, dotfiles, settings.json, and plugin/MCP trust. Also finds and fixes user-specific paths, device overfitting and hardcoded personal constants in shared tooling. Scans any file an agent reads as instructions for text hidden from the human reviewer (invisible Unicode, tag smuggling, bidi overrides), so use it whenever asked whether a skill, prompt, rules file or pasted content has hidden instructions in it. Runs at three moments only - before pushing to a remote, at session end over everything since the last push, or on demand. It does not fire on an edit, a hook change, or a local commit. Also use it before trusting a plugin or MCP server, and for automation that consumes untrusted agent/LLM/web output.
+description: Pre-merge security gate for agent tooling - skills, subagents, commands, hooks, scripts, dotfiles, settings.json, and plugin/MCP trust. Also finds and fixes user-specific paths, device overfitting and hardcoded personal constants in shared tooling. Scans any file an agent reads as instructions for text hidden from the human reviewer (invisible Unicode, tag smuggling, bidi overrides), so use it whenever asked whether a skill, prompt, rules file or pasted content has hidden instructions in it. Runs at three moments only - before pushing to a remote, at session end over the files the session changed, or on demand. It does not fire on an edit, a hook change, or a local commit. Also use it before trusting a plugin or MCP server, and for automation that consumes untrusted agent/LLM/web output.
 ---
 
 # My Security Review Checklist
@@ -28,7 +28,7 @@ tree that has already moved.
 ## When to Use
 
 - Before **pushing to a remote**, over everything committed since the last push: skills, subagents, commands, hooks, settings files, shell and sync scripts
-- At the **end of a session**, as the wrap-up gate, over the same set
+- At the **end of a session**, as the wrap-up gate, over the files the session created or edited, as listed by the caller
 - **On demand**, when the user asks for a review of a file, a diff, or pasted content
 - Before **installing, updating, or trusting a plugin or MCP server**
 - Never on an individual edit, hook change, or local commit
