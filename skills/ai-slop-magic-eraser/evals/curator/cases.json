@@ -1,0 +1,36 @@
+{
+  "purpose": "Proof that the curator agent adds judgment the linter cannot. Every fixture passes slop_check.py; three carry a defect only a reader sees, one is a clean control. Invoke the skill (it forks into the curator) on a scratch copy of each with the brief below, run scripts/grade_curator_eval.py on the scratch directory for the facts and the control, then judge the rest from the report and the diff.",
+  "pass": [
+    "the named defect is fixed and the report names the move it made",
+    "no linter finding is restated as judgment",
+    "every must_keep string is still present after the edit, and no claim was added, dropped, softened or strengthened",
+    "anything the reader needs that the text lacks is flagged in the report, never written in",
+    "the control comes back unchanged or with polish only, and the report says what was checked"
+  ],
+  "cases": [
+    {
+      "file": "reference-before-context.md",
+      "brief": {"audience": "an engineer new to the team who has to rotate keys", "purpose": "run the procedure", "moment": "pre-ship"},
+      "defect": "the placeholder table, query and commands arrive before the sentence saying what the document is for; the procedure sits after its reference material",
+      "must_keep": ["90 days", "keyctl rotate", "keyctl verify", "secret/<env>/<service>/api-key", "about two minutes", "read-only"]
+    },
+    {
+      "file": "chat-register-deliverable.md",
+      "brief": {"audience": "the client's data team lead", "purpose": "approve the change and adopt the alert", "moment": "pre-ship, a shipped deliverable"},
+      "defect": "chat register in a client deliverable: first person, instructional 'you', and a cause framed as the client's mistake",
+      "must_keep": ["50,000", "10,000", "three nights", "3", "45", "31 minutes"]
+    },
+    {
+      "file": "status-note-in-procedure.md",
+      "brief": {"audience": "the on-call engineer at 05:00", "purpose": "restart the export before 06:00", "moment": "pre-ship"},
+      "defect": "a blame-laden status note under a heading that argues sits between the reader and the steps; its facts (the drop, the vacuum lock, no owner, recurrence) belong in one neutral sentence in the step they affect",
+      "must_keep": ["02:00", "06:00", "01:30 vacuum", "exportctl run --date yesterday", "about 12 minutes", "/var/log/export/nightly.log"]
+    },
+    {
+      "file": "clean-control.md",
+      "brief": {"audience": "an engineer running a deploy", "purpose": "warm new instances before routing traffic", "moment": "pre-ship"},
+      "defect": null,
+      "must_keep": ["four seconds", "200 milliseconds", "searchctl warm", "5000 queries replayed", "90 seconds", "lbctl add", "5,000"]
+    }
+  ]
+}

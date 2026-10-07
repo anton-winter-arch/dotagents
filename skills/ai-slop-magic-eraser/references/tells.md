@@ -77,15 +77,16 @@ should be, which reads as diligence and conveys nothing.
 | "It's worth noting that X" | "X" |
 | "It's important to understand that X" | "X" |
 | "It should be noted that X" | "X" |
-| "may or may not" | Which one. Or cut the sentence. |
-| "This is not fully established, but likely" | Verify, or cut. |
+| "may or may not" | Which one, if the source says. Otherwise flag it for the author. |
+| "This is not fully established, but likely" | "Likely", stated once, or flag it for verification. |
 | "Generally speaking", "in most cases", "typically" | Keep only where the exception is real and named |
 | "somewhat", "fairly", "rather", "quite", "arguably" | Cut |
 | "Not established" in a field | The fact, or "None". |
 
 **Three outcomes per claim, no fourth.** Verified goes in as a plain assertion.
-Unverified is cut entirely, no placeholder and no trace. Out of scope is covered
-by the scope statement and never referenced again.
+Unverified is flagged for the author, who verifies or removes it; the rewrite
+never cuts it. Out of scope is covered by the scope statement and never
+referenced again.
 
 **Confirmed absence is a fact and is stated as one.** "There is no automated
 rollback procedure" is resolved, not a gap. Hedging it into "a rollback
@@ -605,8 +606,8 @@ space and the exempt spans are exactly where something hidden would be put.
 
 ## Thought patterns
 
-Failure modes rather than phrasings. These are pass 2 material: they change what
-the document claims, not how it reads.
+Failure modes rather than phrasings. These are pass 2 material: they concern what
+the document claims, so each one is flagged for the author rather than edited.
 
 ### Confabulated negatives
 
@@ -619,8 +620,8 @@ full confidence, and every rule keyed on felt uncertainty fails to fire.
 
 **Trigger on sentence shape, not on doubt.** Any sentence matching that shape
 near a product or capability name gets verified against a dated source, or
-rewritten so the epistemic status leads: "I could not find support for Y" rather
-than "Y does not exist".
+flagged with the rewrite that puts the epistemic status first, for the author to
+accept: "I could not find support for Y" rather than "Y does not exist".
 
 ### Invented specifics
 
@@ -680,5 +681,5 @@ annotates a specific design point rather than demoting the document.
 ### Undated claims about moving targets
 
 Product capabilities, pricing, limits, version support, "currently", "as of
-now", "recently". Date it or cut it. An undated claim about a moving target is
-wrong on a schedule.
+now", "recently". Flag it for a date; the author dates it or removes it. An
+undated claim about a moving target is wrong on a schedule.

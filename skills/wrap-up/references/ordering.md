@@ -8,22 +8,24 @@ Numbers are the step numbers used by SKILL.md's headings, so they start at zero.
    Documenting the session against stale state produces doc corrections and memory entries that are wrong on arrival.
    This is the one place the obvious order - work first, git last - is wrong.
 
-1. **Security review starts first and runs in the background.**
-   It reads only the files the session created or edited, which the main agent lists for it.
+1. **Security review and the curator start first and run in the background.**
+   The reviewer reads only the files the session created or edited, which the main agent lists for it.
    The session's code is finished by the time the closeout starts, so the review has nothing to wait for, and starting it first means its verdict is usually in by the time the docs are.
    A focused list is what keeps it short: a reviewer told to judge "everything since the last push" spends its budget discovering scope and reports on a tree that has already moved.
+   The curator takes the reader-facing files on the same list that notes does not write and rewrites how they read, never what they say, so nothing waits on it either.
 
 2. **Inbox before notes.**
    Unprocessed peer mail carries decisions, findings and corrections from other agents.
    Documenting before draining it produces docs that a message in the inbox already contradicts.
 
-3. **Notes overlaps the review.**
-   The two own disjoint slices: the reviewer judges the session's files, notes edits the repo's docs and corrects any in-repo text the session made false.
-   Neither reads the other's output until the join, so running them side by side costs nothing in correctness.
+3. **Notes overlaps the review and the curator.**
+   The three own disjoint slices: the reviewer judges the session's files, the curator owns how the session's published prose reads, and notes edits the repo's docs and corrects any in-repo text the session made false.
+   A notes correction or a review fix to a file the curator holds waits for the curator's report, so two writers never edit one file at once.
+   The curator also never edits frontmatter, since tools, model and description set privileges and routing for every future session.
 
 4. **One join point, before staging.**
-   The commit needs both the verdict, with its fixes applied, and the finished docs.
-   Notes' edits landed after the reviewer started, so the join lints them mechanically and sends any file outside `tasks/` to the re-review, which keeps the two-round cap: a linter cannot decide whether published prose names something private.
+   The commit needs the verdict with its fixes applied, the curator's edits read as a diff, and the finished docs.
+   Notes' and the curator's edits landed after the reviewer started, so the join lints them mechanically and sends notes' files outside `tasks/` and the curator's diff to the re-review, which keeps the two-round cap: a linter cannot decide whether published prose names something private.
 
 5. **Ignore audit, then commit, then push, with a second fetch between.**
    Notes is the last step that creates files in the repo, so the audit sees the whole set the commit would stage.

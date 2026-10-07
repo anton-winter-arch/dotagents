@@ -1,14 +1,14 @@
 ---
 name: wrap-up
-description: Full session closeout - a security review of the session's files runs in the background while the inbox and notes run, then commit, sync and push, then reflect writes memory last - ending with a clean tree on the branch the repo's own workflow names. MUST be used when the user closes out a SESSION, however phrased - wrap up this session, end the session, close it out, that is everything for today - and whenever they name three or more of security review, inbox, reflect, notes, commit, sync and push together in any order. Session scope is the discriminator. Wrapping up a task, a feature or a bug is not this, a mid-session save is not this, and a single verb alone belongs to its own skill. High or long context is a warning to finish current work, not a reason to fire. Also on /wrap-up.
+description: Full session closeout - a security review and a curator pass over the session's files run in the background while the inbox and notes run, then commit, sync and push, then reflect writes memory last - ending with a clean tree on the right branch. MUST be used when the user closes out a SESSION, however phrased - wrap up this session, end the session, close it out, that is everything for today - and whenever they name three or more of security review, inbox, reflect, notes, commit, sync and push together in any order. Session scope is the discriminator. Wrapping up a task, a feature or a bug is not this, a mid-session save is not this, and a single verb alone belongs to its own skill. High or long context is a warning to finish current work, not a reason to fire. Also on /wrap-up.
 ---
 
 # wrap-up
 
 ```
-fetch → [ security review (background)  ‖  inbox → notes ] → join → ignore audit → commit → push → parity → reflect
-          (my-security-reviewer,           (agent-mail) (docs, and every                (repo-device-sync)        (memory)
-           the session's files only)                     in-repo claim made false)
+fetch → [ security review ‖ curator (background) ‖ inbox → notes ] → join → ignore audit → commit → push → parity → reflect
+          (session's files)  (how its prose reads)   (agent-mail) (docs, and every              (repo-device-sync)        (memory)
+                                                                   in-repo claim made false)
 ```
 
 Sequences existing skills. Owns the order, the handoffs and the cross-cutting
@@ -16,9 +16,9 @@ guards; each sub-skill owns its own procedure and gates.
 [references/ordering.md](references/ordering.md) argues each link - read before
 deviating from the order.
 
-**One team, one closeout.** The main agent, the reviewer and each sub-skill own
-one slice: the reviewer owns the session's files, notes owns the repo's text,
-`repo-device-sync` owns git, reflect owns memory. No step re-checks another's
+**One team, one closeout.** The main agent, the reviewer, the curator and each
+sub-skill own one slice: the reviewer owns the session's files, the curator how
+their prose reads, notes the repo's text, `repo-device-sync` git, reflect memory. No step re-checks another's
 slice or takes responsibility for the whole tree. Finish your slice and hand off;
 every step after it is waiting on you.
 
@@ -99,8 +99,15 @@ it works and commits as soon as it reports.
 
 **Spawn `my-security-reviewer`, do not review inline** - independence comes from
 fresh context. Without subagents, run the checklist directly over the same list
-and say the review was not independent. **Then run steps 2 and 3 while it
-works** - never idle-poll, never re-spawn one still running.
+and say the review was not independent.
+
+**Spawn `curator` beside it** over the list's reader-facing files that notes
+does not write: the body text of skills, references, agent and command files and
+published docs, never frontmatter, `README.md`, `SPEC.md` or `tasks/`. Skip it
+when none changed. Brief: agents and outside readers of a published repo, who
+operate the file; pre-ship; check command `check_descriptions.py` plus the
+skill's own tests, which you run at the join since the curator has no shell.
+**Then run steps 2 and 3 while both work** - never idle-poll or re-spawn one.
 
 **A failing tool fails its step and gets reported** - no third retry, no
 substitute, no silent skip.
@@ -118,39 +125,39 @@ codes and buckets.
   gate, or at reflect's slate when it concerns memory.
 - **Do not report the inbox handled while the sweep exits 1.** Name anything left
   open and why.
-
-Mail needing more than a closeout: reply saying so, leave it open, name it in the
-report.
+- **Mail needing more than a closeout**: reply saying so, leave it open, name it
+  in the report.
 
 ## Step 3 - Notes
 
-Run `notes` in full. It owns every edit to repo text in this chain: the six doc
-paths, the `README.md`/`SPEC.md` check, and its sweep for anything else in the
-repo the session made false.
+Run `notes` in full. It owns every correction to repo text in this chain: the
+six doc paths, the `README.md`/`SPEC.md` check, and its sweep for anything else
+the session made false. A correction to a file the curator holds waits for the
+curator's report.
 
-**Enumerate `tasks/SPEC-*.md` explicitly and rule on each**: shipped ones
-`git mv` into `tasks/completed/` with the date; say which stayed and why. A hot
-file still over budget afterwards is live plan and the user's call - it does not
-block the commit.
+**Enumerate `tasks/SPEC-*.md` and rule on each**: shipped ones `git mv` into
+`tasks/completed/` with the date; say which stayed and why. A hot file still over
+budget is live plan and the user's call, and does not block the commit.
 
 ## Step 4 - Join
 
-Staging waits on two things: the review verdict with its fixes applied, and the
-end of notes. If notes finishes first and the verdict has not arrived, put the
-choice to the user in one line.
+Staging waits on the verdict with its fixes applied, the curator's report and
+the end of notes; if notes finishes first, put the wait to the user in one line.
+Read the curator's diff with `git diff -- <its list>`, never via its report.
 
-Outcomes: **clean** - record and continue. **Fixable** - fix, and if the fix
-changes behavior a notes line describes, correct that line; the re-review gets
+Outcomes: **clean** - record and continue. **Fixable** - fix (a file the curator
+holds waits for its report), and if the fix changes behavior a notes line
+describes, correct that line; the re-review gets
 the fixed files and the prior findings, never the whole diff. **Needs the
 user** - stop; no unresolved finding rides into a commit. **Unverified** - the
 reviewer holds no network tools, so packages, MCP servers, endpoints and pinned
 versions come back named but unchecked; run them or put them to the user, and
 put the list in the report.
 
-**Notes wrote after the reviewer started**, so run `closeout_lint.py` over the
-files notes changed. Any of them outside `tasks/` - published prose, an
-instruction file, a config or script - goes to the reviewer with the re-review,
-as the same second round.
+**Notes and the curator wrote after the reviewer started**, so run
+`closeout_lint.py` over what they changed, and `slop_check.py` plus the brief's
+check command over the curator's files. Notes' files outside `tasks/` and the curator's diff go to the
+reviewer with the re-review, as the same second round.
 
 ## Step 5 - Ignore audit, commit, push
 
@@ -160,18 +167,14 @@ as the same second round.
 python3 "$HOME/.agents/skills/wrap-up/scripts/gitignore_audit.py" audit   # exit 1 on findings
 ```
 
-It lists every tracked or untracked path that looks ignore-worthy (env files,
-caches, build output, logs, local databases, OS and editor litter) and has no
-ignore rule, grouped by the pattern that would cover it, with paths new this
-session marked `[new]`. Put each pattern to the user as one question: add it or
-keep tracking. A keep that should not be asked again gets a `!path/` negation
-line in `.gitignore`; the audit skips anything under one, which is how test
-fixtures that ship a `node_modules/` stay quiet.
-For a yes, run `add` with the agreed patterns, and `git rm -r --cached` any
-`[tracked]` hit under it so the rule takes effect - name those paths, since the
-next push deletes them from every other clone. A `tracked but ignored` list is
-the same question for files a rule already names. Never add a rule or untrack a
-file without the answer.
+It lists ignore-worthy paths with no rule (env files, caches, build output,
+logs, local databases, OS and editor litter), grouped by the covering pattern,
+new ones marked `[new]`. Put each pattern to the user as one question: add it or
+keep tracking; a lasting keep gets a `!path/` negation, which the audit skips.
+For a yes, run `add` with the agreed patterns and `git rm -r --cached` any
+`[tracked]` hit under it, naming those paths, since the next push deletes them
+from every other clone. A `tracked but ignored` list is the same question for
+files a rule already names. Never add a rule or untrack a file without the answer.
 
 `repo-device-sync` from Phase 2 (Phase 1 ran in step 0). Its staged-set
 verification, one-commit default and pre-push re-fetch are not restated here;
@@ -183,10 +186,8 @@ The repo's recorded conventions decide it. Single branch: push it. Paired stable
 branch: push the working branch, advance the stable one **by refspec, never
 checkout**, end on the working branch. Feature branch: push that branch only.
 [references/branch-shapes.md](references/branch-shapes.md). Confirm with
-`git status -sb` and `git branch -vv`; if the session left the tree checked
-out anywhere else - a mid-session detour that was never reverted - switch
-back to that branch before finishing, unless the user directed this session
-to end elsewhere.
+`git status -sb` and `git branch -vv`, and switch back from any mid-session
+detour never reverted, unless the user directed this session to end elsewhere.
 
 ## Step 7 - Reflect
 
@@ -198,18 +199,17 @@ claim that surfaces now goes in the report as follow-up work, not a second commi
 ## Report
 
 One block: tier and what decided it, the verdict, findings fixed or accepted,
-unverified items and what became of them, the inbox result and anything left
-open, what notes moved plus hot-file counts, commit hash, each ref's final
+unverified items and what became of them, the curator's edits and flags, the
+inbox result and anything left open, what notes moved plus hot-file counts,
+commit hash, each ref's final
 position, what reflect wrote and removed, steps the ledger let you skip, anything
 left undone, and every gate the user was asked to approve with their decision.
 
 ## Boundaries
 
 **Always** - security review once, over the session's files, before the commit.
-Fix findings by simplifying: when a sweep turns up something a skill, hook, doc
-or config must change for, the first candidate is the edit that simplifies or
-replaces text, not the clause that gets appended. A chain that adds a line per
-finding is how the chain got long; net growth is a cost the change has to pay for.
+Fix findings by simplifying: the first candidate is the edit that simplifies or
+replaces text, not an appended clause; net growth is a cost the change pays for.
 Leave the inbox at exit 0 or name what is open. Fetch before the docs, re-fetch
 before pushing. Preserve each sub-skill's gates. Report the final branch and a
 clean tree.

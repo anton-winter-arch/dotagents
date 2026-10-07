@@ -10,12 +10,13 @@ the guards; each sub-skill owns its own procedure.
 0. **Assess and fetch first.** Stop and ask if the tree holds changes this session
    did not make, stop if origin has diverged, and say plainly if there is nothing
    to wrap up.
-1. **Start the security review in the background** over the list of files this
-   session created or edited - the main agent builds the list, the reviewer does
-   not go looking.
+1. **Start the security review and the curator in the background** over the list
+   of files this session created or edited - the main agent builds the list, and
+   neither goes looking. The curator rewrites how the list's prose files read,
+   never what they say, and skips notes' files.
 2. **Inbox, then `notes`** while the review runs. Notes updates the living docs and
    corrects anything in the repo the session made false.
-3. **Join** on the verdict and the finished docs, then the ignore audit and
+3. **Join** on the verdict, the curator's diff and the finished docs, then the ignore audit and
    `repo-device-sync`: one commit, re-fetch, push, land on the right branch.
 4. **`reflect` last.** Memory lives outside the repo, so it never dirties the
    pushed tree.

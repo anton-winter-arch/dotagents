@@ -1,6 +1,6 @@
 ---
 name: meta-loop
-description: Orchestration loop - plan, delegate to parallel workers, verify, synthesize - with a premium advisor consulted off the hot path. The session model orchestrates, fan-out runs as Agent calls against two pinned subagents (`reader` for read-only gathering, `worker` for anything that changes the tree), and the advisor agent is pulled in for decomposition critique, risk, and taste. MUST be used whenever the user asks to run something as a loop, orchestrate, fan out, or delegate to workers, whenever a requested task visibly splits into three or more independent subtasks, and for any mid-loop situation - verifying a worker's result against its claims, re-delegating a rejected subtask, or critiquing a decomposition. Also on "/meta-loop". Not for single-step tasks.
+description: Orchestration loop - plan, delegate to parallel workers, verify, synthesize - with a premium advisor consulted off the hot path. The session model orchestrates, fan-out runs as Agent calls against two pinned subagents (`reader` for read-only gathering, `worker` for anything that changes the tree), and the advisor agent is pulled in for decomposition critique, risk, and proportion. MUST be used whenever the user asks to run something as a loop, orchestrate, fan out, or delegate to workers, whenever a requested task visibly splits into three or more independent subtasks, and for any mid-loop situation - verifying a worker's result against its claims, re-delegating a rejected subtask, or critiquing a decomposition. Also on "/meta-loop". Not for single-step tasks.
 ---
 
 # meta-loop
@@ -91,10 +91,11 @@ Apply the verdict - proceed / revise / stop - before any worker starts.
   - `reader` - read-only gathering and tracing (sonnet)
   - `worker` - anything that changes the tree (opus)
   - `researcher` - source-cited research on one bounded angle, capsule return
-  - `advisor` - strategy, decomposition, risk and taste, off the hot path
+  - `advisor` - strategy, decomposition, risk and proportion, off the hot path
   - `supervisor` - watches in-flight work for drift; pushed, not pulled
   - `my-security-reviewer` - the agent-tooling security checklist
   - `ai-engineer` - AI and agent builds
+  - `curator` - how a deliverable reads and looks; edits in place (opus)
 
   A specialized definition carries a purpose-built prompt plus its own pinned
   tools and model, none of which a generic worker prompt can reconstruct. So
@@ -157,9 +158,9 @@ transcript evidence. Never synthesize an unverified claim.
 ## Phase 5 - Synthesize (orchestrator)
 
 One coherent deliverable in the final message - resolved, deduplicated,
-in-voice - not a concatenation of worker reports. For user-facing or
-high-stakes output, an optional advisor taste pass before shipping - within
-the Phase 2 budget, not on top of it.
+in-voice - not a concatenation of worker reports. User-facing output gets its
+reading pass from the `curator`; high-stakes output gets an optional advisor
+proportion pass before shipping - within the Phase 2 budget, not on top of it.
 
 ## When NOT to use
 

@@ -273,7 +273,7 @@ description is its trigger contract and its body is the workflow.
 | `agent-cc-configs-sync` | Seed or reconcile a device's Claude Code station against `specs/claude-code/` |
 | `agent-mail` | Templated markdown messaging between agents via `inbox/` folders |
 | `ai-engineering` | AI/agent stack knowledge in three modes: read (choose from a dated catalog), write (discover, verify, record), build (intake-driven scaffolding) |
-| `ai-slop-magic-eraser` | Strips machine-writing tells from prose, then corrects what was invented |
+| `ai-slop-magic-eraser` | Rewrites prose and layout to the user's voice with meaning fixed, and flags what looks invented; runs forked in `curator` |
 | `cmon` | Restates the last verbose reply in as few words as possible, then holds that register |
 | `cover-me` | Spawns the `supervisor` peer to scrutinize in-flight work |
 | `deep-research` | Multi-angle web research: parallel researchers, cross-validated, cited |
@@ -292,14 +292,15 @@ description is its trigger contract and its body is the workflow.
 | `skill-authoring` | House profile for authoring and auditing agent tooling |
 | `sprint-board` | Plans, writes and audits agile backlogs as markdown |
 | `teach-me` | Teaches a topic and certifies understanding |
-| `wrap-up` | Full session closeout: security review alongside inbox and notes, then gitignore audit, commit and sync, then reflect |
+| `wrap-up` | Full session closeout: security review and curator alongside inbox and notes, then gitignore audit, commit and sync, then reflect |
 
 ### Subagents (`agents/*.md`)
 
 | Subagent | What it does |
 |---|---|
-| `advisor` | Consulted advisor for `meta-loop`: strategy, decomposition, risk, taste |
+| `advisor` | Consulted advisor for `meta-loop`: strategy, decomposition, risk, proportion |
 | `ai-engineer` | Fresh-context builder for heavy delegated AI and agent work |
+| `curator` | Fresh-context owner of how reader-facing work reads and looks; edits in place, driving `ai-slop-magic-eraser` |
 | `my-security-reviewer` | Fresh-context reviewer applying the checklist to staged diffs |
 | `reader` | Read-only fan-out worker: searches one bounded question, returns findings |
 | `researcher` | Source-cited researcher for one bounded angle; the `deep-research` worker |
@@ -315,7 +316,7 @@ description is its trigger contract and its body is the workflow.
 | `/my-security-review` | The agent-tooling security review; dispatches `my-security-reviewer` for depth |
 | `/reflect` | Memory reconciliation (propose -> user gate -> apply); in-repo stale claims go to `/notes` |
 | `/supervisor` | Spawns the supervisor peer (alias of `cover-me`) |
-| `/wrap-up` | Full closeout: security review alongside inbox and `/notes`, then gitignore audit, commit, sync and push, then `/reflect` |
+| `/wrap-up` | Full closeout: security review and curator alongside inbox and `/notes`, then gitignore audit, commit, sync and push, then `/reflect` |
 | `/spec` `/plan` `/build` `/test` `/review` `/ship` `/code-simplify` | House SOP for each stage, self-contained |
 
 Those seven stage commands each carry the house procedure in full and defer to
