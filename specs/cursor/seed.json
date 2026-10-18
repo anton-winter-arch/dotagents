@@ -4,7 +4,7 @@
   "rows": [
     {"element": "Skills", "shape": "NATIVE", "path": "~/.agents/skills/"},
     {"element": "Commands", "shape": "N/A", "note": "no portable command form"},
-    {"element": "Remote control", "shape": "FRAGMENT", "path": "~/.cursor/cli-config.json", "format": "json",
-     "keys": {"privacyCache.ghostMode": true}}
+    {"element": "Remote control", "shape": "N/A",
+     "note": "privacy mode is an account setting; the CLI caches it as privacyCache in ~/.cursor/cli-config.json after login, and harness_probe.py reads that cache"}
   ]
 }

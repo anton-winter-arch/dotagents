@@ -194,6 +194,7 @@ Resolve `--to-repo`, run **Root Resolution** (above) to get `<agent-root>`, then
 | none of `.claude/`,`.agents/`,`.cursor/` | 6 | `NOT_AGENT_REPO` | **back off, talk to user** |
 | more than one root present | 7 | `AMBIGUOUS_ROOT` + report | **show report, ask user to choose**; rerun with `--root` |
 | `--root` names an absent folder | 8 | `ROOT_NOT_PRESENT` | report to user |
+| subject or body holds a secret, personal data or a station term (`sanitize` scan; repo paths and reserved example-domain addresses allowed) | 9 | `SENSITIVE_CONTENT` + classes and counts, never the value | rewrite without the value, resend; nothing was written |
 | `<agent-root>/` present but no `inbox/` | 4 | `NO_INBOX` | **ask user:** "Sure you want to start communicating with {repo} via `<agent-root>/inbox/`?" → on yes, rerun with `--create-inbox` |
 | ok | 0 | written path | report delivered |
 

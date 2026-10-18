@@ -99,5 +99,42 @@ for m in "$o" "$t" "$a"; do bash "$MARK" --file "$m" --status resolved >/dev/nul
 bash "$SWEEP" --repo "$R5" >/dev/null 2>&1; rc_is "all closed -> clean" 0 $?
 bash "$SWEEP" --repo "$R5" --stale-days x >/dev/null 2>&1; rc_is "bad --stale-days rejected" 64 $?
 
+echo "== sensitive content =="
+R6=$(mkrepo sens .claude); mkdir -p "$R6/.claude/inbox"
+fake="ghp_$(printf 'a%.0s' $(seq 36))"   # secret-shaped, built at run time, never real
+S1="$TMP/s1.md"; printf 'the test key is %s\n' "$fake" > "$S1"
+err=$(bash "$SEND" --to-repo "$R6" --from A --to B --subject x --body-file "$S1" 2>&1 >/dev/null); rc=$?
+rc_is "secret in body refused" 9 "$rc"
+printf '%s' "$err" | grep -q 'SENSITIVE_CONTENT' && ok "refusal names the token" || no "refusal names the token"
+printf '%s' "$err" | grep -qF "$fake" && no "refusal never echoes the value" || ok "refusal never echoes the value"
+n=$(find "$R6/.claude/inbox" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')
+[ "$n" -eq 0 ] && ok "refused send writes nothing" || no "refused send writes nothing (got $n)"
+at="@"; real_addr="chef.owner${at}gmail.com"   # assembled at run time, synthetic
+bash "$SEND" --to-repo "$R6" --from A --to B --subject "ask $real_addr" --body-file "$B" >/dev/null 2>&1
+rc_is "real-looking email in subject refused" 9 $?
+S2="$TMP/s2.md"; printf 'log in as qa@example.com, fix in /Users/me/dev/app/views.py\n' > "$S2"
+bash "$SEND" --to-repo "$R6" --from A --to B --subject x --body-file "$S2" >/dev/null 2>&1
+rc_is "reserved example email and repo path allowed" 0 $?
+S3="$TMP/s3.md"; printf 'values: {redacted-email}, {redacted-password}, price_xxxxxxxx; fixture editor@org-1.example.test and qa@example.com.\n' > "$S3"
+bash "$SEND" --to-repo "$R6" --from A --to B --subject x --body-file "$S3" >/dev/null 2>&1
+rc_is "redaction markers and all-x placeholders allowed" 0 $?
+S5="$TMP/s5.md"; printf 'fixed in #53 and #1287; test caller (312) 555-0123 and 555-0199; signup prefix-1729000000@e2e-ab12cd.test\n' > "$S5"
+bash "$SEND" --to-repo "$R6" --from A --to B --subject x --body-file "$S5" >/dev/null 2>&1
+rc_is "PR refs, fictional 555 numbers and .test signups allowed" 0 $?
+bash "$SEND" --to-repo "$R6" --from A --to B --subject "call (312) 867-5309" --body-file "$B" >/dev/null 2>&1
+rc_is "real-shaped phone number refused" 9 $?
+S4="$TMP/s4.md"; printf 'write to boss%smail.example.com.realcorp.io\n' "$at" > "$S4"
+bash "$SEND" --to-repo "$R6" --from A --to B --subject x --body-file "$S4" >/dev/null 2>&1
+rc_is "real domain behind an example label refused" 9 $?
+for kx in "sk_live_$(printf 'a1B2%.0s' $(seq 6))_xxxx" "AKIA$(printf 'Q7%.0s' $(seq 8))_xxxx" "sk-proj-$(printf 'a1B2%.0s' $(seq 6))_xxxx"; do
+  python3 -c "import sys; sys.path.insert(0, sys.argv[1]); import scan_body as s; sys.exit(1 if s.PLACEHOLDER.search(sys.argv[2]) else 0)" "$SCRIPTS" "$kx"
+  rc_is "placeholder rule leaves ${kx%%[0-9]*}... with an x-run suffix to the scan" 0 $?
+done
+bash "$SEND" --to-repo "$R6" --from A --to B --subject "-dash subject" --body-file "$B" >/dev/null 2>&1
+rc_is "subject starting with a dash still sends" 0 $?
+err=$(AGENT_MAIL_SCANNER="$TMP/none.py" bash "$SEND" --to-repo "$R6" --from A --to B --subject x --body-file "$S1" 2>&1 >/dev/null); rc=$?
+rc_is "no scanner installed -> sends" 0 "$rc"
+printf '%s' "$err" | grep -q 'WARNING' && ok "no scanner -> warning" || no "no scanner -> warning"
+
 echo "----"; printf 'pass=%d fail=%d\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

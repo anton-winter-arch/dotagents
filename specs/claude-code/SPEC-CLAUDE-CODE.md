@@ -62,6 +62,7 @@ Every file this spec seeds lives beside it in this folder as a real file rather 
 | [`hooks/`](hooks) and the repository's [`hooks/`](../../hooks) | `~/.claude/hooks/`, flat | [8](#8-hook-scripts-claudehooks) |
 | [`statusline.sh`](statusline.sh) | `~/.claude/statusline.sh` | [9](#9-status-lines-claudestatuslinesh--subagent-statuslinesh) |
 | [`keybindings.json`](keybindings.json) | `~/.claude/keybindings.json` | [10](#10-keybindings-claudekeybindingsjson--terminal-setup) |
+| [`claude-mem/uvx`](claude-mem/uvx), and claude-mem's keys in [`seed.json`](seed.json) | `~/.claude-mem/` | [3.1](#31-claude-mem---disable-its-file-read-interception-required) |
 
 **The rules live in [`../../AGENTS.md`](../../AGENTS.md)**, once, for every
 harness. [`CLAUDE.md.example`](CLAUDE.md.example) is the one-line pointer that
@@ -90,10 +91,13 @@ this table uses no others.
 | Subagents | `LINK` | `~/.claude/agents/` | same script; the only harness reading this tree natively, and Cursor's compatibility path |
 | Commands | `LINK` | `~/.claude/commands/` | markdown; does not port to any other harness |
 | Rules | `POINTER` | `~/.claude/CLAUDE.md` | from `CLAUDE.md.example`, byte parity; the single line `@~/.agents/AGENTS.md`, so the rules body is read from the repo and never copied |
-| Permissions and settings | `FRAGMENT` | `~/.claude/settings.json` | seeded keys ONLY: `permissions`, `env`, `statusLine`, `subagentStatusLine`, `enabledPlugins`, `extraKnownMarketplaces`, `disableRemoteControl`, `attribution`, `autoUpdatesChannel`, plus the managed entries of `hooks`. Station-owned and never touched: `model`, `effortLevel`, `modelSettings`, `theme`, `tui`, `disableDeepLinkRegistration` |
+| Permissions and settings | `FRAGMENT` | `~/.claude/settings.json` | seeded keys ONLY: `permissions`, `env`, the `type` and `command` of `statusLine` and `subagentStatusLine` (a station's own extras in those blocks, such as `padding` or `refreshInterval`, are left alone), `enabledPlugins`, `extraKnownMarketplaces`, `disableRemoteControl`, `attribution`, `autoUpdatesChannel`, plus the managed entries of `hooks`. Station-owned and never touched: `model`, `effortLevel`, `modelSettings`, `theme`, `tui`, `disableDeepLinkRegistration` |
 | Hooks | `COPY` | `~/.claude/hooks/` | scripts from the repository's `hooks/` and this folder's `hooks/`, flat; parity per file, seeded by `seed_hooks.py` |
 | Status lines | `COPY` | `~/.claude/statusline.sh`, `subagent-statusline.sh` | parity |
 | Keybindings | `COPY` | `~/.claude/keybindings.json` | parity |
+| claude-mem settings | `FRAGMENT` | `~/.claude-mem/settings.json` | only when the file exists (claude-mem's first run writes it); keys per §3.1: runtime, provider `claude` on the subscription, empty Gemini and OpenRouter keys (a key that reappears shows as drift), the skip list, the model pins |
+| claude-mem telemetry | `FRAGMENT` | `~/.claude-mem/telemetry.json` | only when the file exists; one key, `enabled: false`, the second layer behind `env.CLAUDE_MEM_TELEMETRY` (§3.1) |
+| claude-mem uvx wrapper | `COPY` | `~/.claude-mem/bin/uvx` | from `claude-mem/uvx`, parity and mode 0755; the chroma-mcp dependency cap (§3.1) |
 | MCP servers | `FRAGMENT` | `~/.claude.json` | one key: `mcpServers`, holding the pinned Playwright entry from §3.2 and nothing else. Never a `COPY` - the same file carries the OAuth account, per-project history and feature caches. Account-level connectors list in every session while being declared nowhere in this file, so the inventory is taken with `claude mcp list` rather than by reading the key. Placement rules: [`../MCP-PLACEMENT.md`](../MCP-PLACEMENT.md) |
 
 This is the only harness carrying every seed file in the repo, and the reason a
@@ -133,7 +137,7 @@ which are per-machine state rather than seeded config.
 | Keybindings | `~/.claude/keybindings.json` | [`keybindings.json`](keybindings.json), §10 |
 | Plugins (4) | installed + enabled in Claude Code | §3 |
 | rtk | `/opt/homebrew/bin/rtk` (or PATH) | `brew install rtk-ai/tap/rtk` |
-| claude-mem daemon | `localhost:37701` | comes with the claude-mem plugin |
+| claude-mem daemon | loopback, the worker port, per machine (`CLAUDE_MEM_WORKER_PORT`, else 37700 plus the uid mod 100; the command that prints it is in `AGENTS.md`) | comes with the claude-mem plugin |
 
 ## 2. CLI dependencies
 
@@ -167,7 +171,7 @@ Add marketplaces, then install, inside Claude Code (`/plugin`):
 
 | Plugin | Marketplace (GitHub) | Purpose |
 |---|---|---|
-| `claude-mem@thedotmack` | `thedotmack/claude-mem` | persistent memory daemon: semantic search, timeline, observation capture; web UI at `http://localhost:37701`; config `~/.claude-mem/settings.json` |
+| `claude-mem@thedotmack` | `thedotmack/claude-mem` | persistent memory daemon: semantic search, timeline, observation capture; web UI at `http://localhost:<worker port>`; config `~/.claude-mem/settings.json` |
 | `agent-skills@addy-agent-skills` | `addyosmani/agent-skills` | senior-engineer workflow skills (`/spec`, `/plan`, `/build`, `/test`, `/review`, `/ship`, …) - mandated for every engineering task by the global CLAUDE.md |
 | `skill-creator@claude-plugins-official` | `anthropics/claude-plugins-official` | scaffolding + evals when authoring new skills (pairs with this repo's `skill-authoring` skill) |
 | `mcp-server-dev@claude-plugins-official` | `anthropics/claude-plugins-official` | first-party (Anthropic) skills for building MCP servers/apps (`build-mcp-server`, `build-mcp-app`, `build-mcpb`) - the deferral target named by this repo's `ai-engineering` skill; pure knowledge plugin, zero deps/hooks/runtime |
@@ -184,42 +188,70 @@ read a file verbatim is a broken agent - this silently blinds it. It is on by
 default the moment you install the plugin.
 
 **The fix** is claude-mem's own `CLAUDE_MEM_SKIP_TOOLS` - the list of tools it
-must leave alone. Seed `~/.claude-mem/settings.json` (claude-mem's config, NOT
-the plugin cache - so it survives auto-update) with **Read/Glob/Grep and the
-retrieval tools added to the skip list**:
-
-```json
-{
-  "CLAUDE_MEM_RUNTIME": "worker",
-  "CLAUDE_MEM_SKIP_TOOLS": "ListMcpResourcesTool,SlashCommand,Skill,TodoWrite,AskUserQuestion,Read,Glob,Grep,ToolSearch,WebSearch,WebFetch",
-  "CLAUDE_MEM_MODEL": "claude-haiku-5-5",
-  "CLAUDE_MEM_TIER_FAST_MODEL": "claude-haiku-5-5",
-  "CLAUDE_MEM_TIER_SIMPLE_MODEL": "claude-haiku-5-5",
-  "CLAUDE_MEM_TIER_SMART_MODEL": "claude-sonnet-5-5"
-}
-```
+must leave alone, with **Read/Glob/Grep and the retrieval tools added**. It
+lives in `~/.claude-mem/settings.json` (claude-mem's config, NOT the plugin
+cache - so it survives auto-update), and the `claude-mem settings` row of
+[`seed.json`](seed.json) holds the seeded keys, so `seed.py` writes and checks
+them like any other fragment. The row applies only once claude-mem's first run
+has created the file.
 
 This keeps everything worth keeping - SessionStart context injection, the MCP
 search (`smart_search`/`smart_outline`/`smart_unfold`), PostToolUse observation
 capture on the tools that stay in scope - while stopping claude-mem from
-standing between the agent and the filesystem. Add more `mcp__*` entries if a
-future claude-mem version starts intercepting other read-shaped tools.
+intercepting the agent's file reads. Add more `mcp__*` entries if a future
+claude-mem version starts intercepting other read-shaped tools.
 
-**The model keys pin the summarizers to current models.** Each value is passed
-verbatim to `claude --model`, and the plugin's own defaults are the dated
-`claude-haiku-4-5-20251001` for `CLAUDE_MEM_MODEL` and the bare aliases
+**Model pins.** The model keys pin the summarizers to current models, and each
+value is passed verbatim to `claude --model`. The plugin's own defaults are the
+dated `claude-haiku-4-5-20251001` for `CLAUDE_MEM_MODEL` and the bare aliases
 `haiku` and `sonnet` for the tiers, which resolve to the 4.5 and 4.6
 generation (§0a of the support-local spec recorded the same alias lag for the
 worker). Models from the 4.6 generation on have dateless IDs that are
-themselves the pinned snapshot, so the full IDs above are the pin. The daemon
-reads this file once at start and caches it, so a change takes effect at its
-next restart (`bun scripts/worker-service.cjs restart` in the plugin's cache
-folder, or `POST /api/admin/restart` on its loopback port).
+themselves the pinned snapshot, so the full IDs in the row are the pin. The
+daemon reads this file once at start and caches it, so a change takes effect at
+its next restart (`bun scripts/worker-service.cjs restart` in the plugin's
+cache folder, or `POST /api/admin/restart` on its loopback port).
 
 **Durability note:** this file is per-machine and unversioned by claude-mem, so
-a fresh install or reinstall reverts to the blinding default. It is a bootstrap
-step (§11) precisely so every station re-seeds it; verify it after any
-claude-mem reinstall.
+a fresh install or reinstall reverts to the default that intercepts reads.
+Re-run the station sync after any claude-mem install or reinstall; the plan
+shows every reverted key.
+
+**Provider: the Claude subscription only, no third-party keys.** The row seeds
+`CLAUDE_MEM_PROVIDER` `claude` with `CLAUDE_MEM_CLAUDE_AUTH_METHOD`
+`subscription`, and the Gemini and OpenRouter key fields empty, so a key that
+reappears shows as drift in the plan. No `~/.claude-mem/.env` exists. The worker
+strips `ANTHROPIC_API_KEY` and its siblings from the environment before it
+spawns `claude`, so summaries run on the signed-in subscription.
+
+**Telemetry off (invariant 7).** claude-mem's telemetry resolves to enabled
+when nothing opts out. Its resolver reads `DO_NOT_TRACK`, then
+`CLAUDE_MEM_TELEMETRY`, then `telemetry.json`. Setting `env.CLAUDE_MEM_TELEMETRY`
+to `"false"` in [`settings.json`](settings.json) therefore reaches every worker
+the plugin's hooks spawn. The `claude-mem telemetry` row writes
+`"enabled": false` into `telemetry.json` as the second layer, for a worker
+started by hand.
+
+**chroma-mcp dependency cap (observed 2026-10-17, claude-mem 13.25.1).**
+claude-mem pins `chroma-mcp==0.2.6` but none of its dependencies, so uv
+resolves the newest `pydantic`. Version 2.14 removed `eval_type_backport`,
+which chroma-mcp's `mcp` 1.6.0 imports, so chroma-mcp exits at start and
+search silently degrades to keyword matching. On macOS the worker always runs
+bare `uvx` and treats `CLAUDE_MEM_CHROMA_UVX_PATH` as a directory to put first
+on `PATH`, reading that variable from its environment only, never from
+`settings.json`. Two seeds apply the cap. The first is the wrapper
+[`claude-mem/uvx`](claude-mem/uvx) (the `claude-mem uvx wrapper` row, mode
+0755), which finds the real `uvx` on `PATH` outside its own folder and adds
+`--with 'pydantic<2.14'`. The second is `env.CLAUDE_MEM_CHROMA_UVX_PATH` set to
+`"~/.claude-mem/bin"`, which `seed.py` expands to the station's absolute path.
+Nothing but `uvx` goes in that folder, because the worker passes its `PATH` to
+every `claude` it spawns. The wrapper's `# cap-for:` line names the claude-mem
+version the cap was set for. `claude_mem_health.py` (§8) reports chroma-mcp
+failures at session start and says when claude-mem has moved past that version;
+that notice is the cue to re-test without the cap and drop both seeds once the
+cap is no longer needed. The other options are worse: `UV_CONSTRAINT` in `env`
+would cap every uv run under Claude Code, `uv.toml` constraints do not reach
+`uvx --from`, and the plugin has no extra-arguments setting.
 
 ### 3.2 MCP servers - Playwright (standard, user scope)
 
@@ -314,7 +346,8 @@ No longer seeded. The model-facing rtk guidance is the `rtk` bullet in
 The principles each block enforces:
 
 1. **Privacy/telemetry off** - no telemetry, error reporting, feedback
-   surveys, or non-essential model calls.
+   surveys or `/feedback` command, non-essential network traffic, or
+   non-essential model calls.
 2. **No AI attribution** - empty `attribution` strings keep commits and PRs
    free of generated-by lines.
 3. **Secrets are unreachable** - `permissions.deny` blocks every file tool
@@ -453,7 +486,7 @@ use. The canonical list and the honest per-tool header conventions live in
 
 The hook scripts live in two repository folders and are copied flat into
 `~/.claude/hooks/`. The repository's `hooks/`, with `hooks/manifest.json`,
-holds the sixteen scripts that enforce rules about the repository, the machine
+holds the seventeen scripts that enforce rules about the repository, the machine
 or the content (every guard, gate and content check this section lists, the
 chat-register pair included) and their four companion files, `_require.sh`,
 `reject-words.toml`, `no-meta-commentary.patterns` and the published-copy
@@ -468,7 +501,7 @@ key of [`settings.json`](settings.json) from the two manifests, and
 entries only. The build plan and the hook-input captures are in
 `tasks/SPEC-HARNESS-SEEDING.md`.
 
-Twenty-one wired hooks: three Bash-write/delete guards (`deny-bash-file-writes.sh`,
+Twenty-two wired hooks: three Bash-write/delete guards (`deny-bash-file-writes.sh`,
 `guard-rm.sh`, `block-env-files.sh`), the `~/.claude`-edit prompt
 (`ask-before-claude-folder-edits.sh`), the SessionStart inbox check
 (`agent-mail-check.sh`), the reply-length nudge (`cmon_nudge.py`), the
@@ -482,14 +515,16 @@ the chat-register pair (`no-meta-commentary.sh` pre-write +
 (`reject_words.py`, reading `reject-words.toml`), the invisible-character guard
 (`reject_invisibles.py`), the private-folder guard
 (`guard-private.sh`, closing the shell path to `~/.claude/private` and
-`~/.claude/state`; the file tools are denied on both in settings.json
-instead), the two identifier guards (`reject_identifiers.py` pre-write,
+`~/.claude/state` and file placement in `~/.claude-mem/bin`; the file tools
+are denied on all three in settings.json instead), the two identifier guards (`reject_identifiers.py` pre-write,
 `reject_bad_commit_message.py` pre-commit), the published-copy guard
 (`reject_published_copy_edits.py`, reading a station
-`published-copy-paths.txt` seeded from the `.example.txt`), and the two
-resource gates (`memory_pressure_gate.py`, `daemon_restart_storm.py`).
-Seven are advisory/non-blocking (`read-size-advisory`,
-`cmon_nudge`, `harness_version_check`, both `no-meta-commentary` sides,
+`published-copy-paths.txt` seeded from the `.example.txt`), the two
+resource gates (`memory_pressure_gate.py`, `daemon_restart_storm.py`), the
+claude-mem health notice (`claude_mem_health.py`), and the cross-repo git
+warning (`warn_cross_repo_git.py`).
+Nine are advisory/non-blocking (`read-size-advisory`,
+`cmon_nudge`, `harness_version_check`, `claude_mem_health`, `warn_cross_repo_git`, both `no-meta-commentary` sides,
 `memory_lint`'s judgment checks, and `reject_identifiers`), and
 `memory-routing` is advisory until a memory folder reaches its cap;
 the rest can block.
@@ -955,14 +990,24 @@ Script: [`claude-code/hooks/_require.sh`](hooks/_require.sh).
 
 ### `guard-private.sh`
 
-PreToolUse guard (matcher `Bash`) - **blocking** (exit 2). Refuses any shell
-command naming `~/.claude/private`, which holds the station identifier term
-list, or `~/.claude/state`, which holds the gate ack files. The file tools are
-denied on both in settings.json; this closes the shell path (`cat`, `sed`,
-`python -c`, `cp`). It matches the literal path fragment only, so a command
-reaching the folder through a variable or a symlink is not caught - the honest-
-case guard, not a sandbox. Easing a gate by touching an ack file is the user's
-call from a real shell, never an agent's. Requires `jq` via `_require.sh`.
+PreToolUse guard (matcher `Bash`) - **blocking** (exit 2). It refuses any
+shell command naming `~/.claude/private`, which holds the station identifier
+term list, or `~/.claude/state`, which holds the gate ack files. It also
+refuses any command that places or re-modes a file in `~/.claude-mem/bin`
+(`cp`, `mv`, `install`, `ln`, `chmod`, `chown`, `touch`, `rsync`, `tar`,
+`unzip`, `curl`, `wget`), the folder claude-mem puts first on `PATH` for its
+worker and every `claude` it spawns (§3.1). Reads and running the wrapper stay
+allowed, and `seed.py` writes the wrapper without naming the folder on the
+command line. The file tools are denied on all three folders in settings.json
+(for the claude-mem folder, `Edit(**/.claude-mem/bin/**)` is the
+probe-confirmed form); this hook closes the shell path (`cat`, `sed`,
+`python -c`, `cp`). For the claude-mem folder it covers the placing verbs only;
+redirects, `tee`, `sed -i`, `dd` and interpreter writes are refused by
+`deny-bash-file-writes.sh`, so both hooks stay wired. It matches the literal path fragment only, so a command
+that reaches the folder through a variable or a symlink is not caught: it guards
+the honest case and is not a sandbox. Easing a gate by touching an ack file is
+the user's call from a real shell, never an agent's. Requires `jq` via
+`_require.sh`.
 
 Script: [`claude-code/hooks/guard-private.sh`](hooks/guard-private.sh).
 
@@ -1100,6 +1145,46 @@ Overrides: `DAEMON_STORM_LOG_DIR` (default `~/.claude-mem/logs`),
 `~/.claude/state/daemon-storm-ack`), same ack rule as the memory gate.
 
 Script: [`claude-code/hooks/daemon_restart_storm.py`](hooks/daemon_restart_storm.py).
+
+### `claude_mem_health.py`
+
+SessionStart (startup, resume) - **advisory**. claude-mem degrades quietly: a
+chroma-mcp that fails to start leaves search on keyword matching, with only a
+WARN line in the worker's log, so a breakage can go unnoticed for days. The hook
+asks the worker at the host and port in claude-mem's `settings.json`. It prints
+one line to user and model when `/api/health` gives no answer after one short
+retry or a status other than `ok`, or when `/api/chroma/status` is explicitly
+not `healthy` once the worker is past a two-minute warm-up. The line quotes the
+newest `[CHROMA_MCP]` warning from the newest log; the worker names logs by UTC
+date, so the hook picks the file by modification time. When chroma gives no
+answer and no such warning is logged, chroma-mcp is still connecting and the
+hook stays silent. It also reports three conditions: anything besides the §3.1
+uvx wrapper (and its seed backup) in the wrapper's folder, which the worker
+puts first on `PATH`; a wrapper that is not executable; and, while search is
+healthy, a worker version that differs from the wrapper's `# cap-for:` line.
+When everything is healthy, or when there is no claude-mem settings file, the
+hook is silent. Exit 0 on every path.
+
+Overrides: `CLAUDE_MEM_HEALTH_HOME` (default `$CLAUDE_MEM_DATA_DIR`, then
+`~/.claude-mem`), `CLAUDE_MEM_HEALTH_BASE` (worker URL),
+`CLAUDE_MEM_HEALTH_RETRY` (default 3s).
+
+Script: [`../../hooks/claude_mem_health.py`](../../hooks/claude_mem_health.py).
+
+### `warn_cross_repo_git.py`
+
+PreToolUse on Bash - **advisory**.
+Several sessions run at the same time, each in its own repo, and a commit or push into another session's repo writes into work that session owns.
+When a `git commit` or `git push` targets a repo whose top level differs from the session's home repo, the hook prints one line to the user and the model asking whether that is intended.
+It never blocks.
+
+The home repo is the git top level of `AGENT_HOME_REPO` when that is set (an explicit pin, meant for the `env` block of a project's `.claude/settings.json`).
+Without it, the hook uses `CLAUDE_PROJECT_DIR` (the folder the session started in, which Claude Code passes to every hook and which does not follow the shell's `cd`), and without that, the payload's `cwd`.
+The hook reads the target repo from the command text: a leading `cd <dir>`, `git -C <dir>`, `--git-dir` and `--work-tree`.
+It does not see a path held in a variable or passed inside a `bash -c` string, and it checks at most three target folders per command, saying how many more it skipped.
+The hook exits 0 on every code path and stays silent on its own errors.
+
+Script: [`../../hooks/warn_cross_repo_git.py`](../../hooks/warn_cross_repo_git.py).
 
 ## 9. Status lines (`~/.claude/statusline.sh` + `subagent-statusline.sh`)
 

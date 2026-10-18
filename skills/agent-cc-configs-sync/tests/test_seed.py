@@ -264,11 +264,11 @@ class EndToEnd(unittest.TestCase):
         self.assertFalse((self.home / "ide").exists())
 
     def test_broken_station_file_reports_and_continues(self):
-        (self.home / ".cursor").mkdir()
-        (self.home / ".cursor" / "cli-config.json").write_text("{not json")
-        r = run("plan", "--harness", "cursor", "--force", *self.home_arg)
+        (self.home / ".codex").mkdir()
+        (self.home / ".codex" / "config.toml").write_text("[not toml")
+        r = run("plan", "--harness", "codex", "--force", *self.home_arg)
         self.assertEqual(r.returncode, 1)
-        self.assertIn("error    Remote control", r.stdout)
+        self.assertIn("error    Privacy and hygiene", r.stdout)
         self.assertIn("native   Skills", r.stdout)
 
     def test_not_installed_is_skipped(self):
@@ -340,11 +340,48 @@ class StationStateIsNeverLostSilently(unittest.TestCase):
 
     def test_json_fragment_diff_shows_seeded_keys_only(self):
         home = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, home)
-        (home / ".cursor").mkdir()
-        (home / ".cursor" / "cli-config.json").write_text(json.dumps({"authInfo": {"token": "SECRETVALUE"}, "privacyCache": {"ghostMode": False}}))
-        r = run("plan", "--harness", "cursor", "--force", "--home", str(home))
-        self.assertIn("ghostMode", r.stdout)
+        (home / ".claude").mkdir()
+        (home / ".claude" / "settings.json").write_text(json.dumps({"apiKeyHelper": "SECRETVALUE", "autoUpdatesChannel": "stable"}))
+        r = run("plan", "--harness", "claude-code", "--force", "--key", "autoUpdatesChannel", "--home", str(home))
+        self.assertIn("autoUpdatesChannel", r.stdout)
         self.assertNotIn("SECRETVALUE", r.stdout)
+
+    def test_home_relative_fragment_values_land_absolute(self):
+        home = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, home)
+        (home / ".claude").mkdir()
+        (home / ".claude" / "settings.json").write_text("{}")
+        r = run("apply", "--harness", "claude-code", "--force", "--key", "env", "--home", str(home))
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        env = json.loads((home / ".claude" / "settings.json").read_text())["env"]
+        self.assertEqual(env["CLAUDE_MEM_CHROMA_UVX_PATH"], str(home.resolve() / ".claude-mem" / "bin"))
+        r = run("plan", "--harness", "claude-code", "--force", "--key", "env", "--home", str(home))
+        self.assertIn("keys in parity", r.stdout)
+
+    def test_copy_mode_is_set_and_checked(self):
+        home = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, home)
+        (home / ".claude").mkdir()
+        el = "claude-mem uvx wrapper"
+        r = run("apply", "--harness", "claude-code", "--force", "--element", el, "--home", str(home))
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        w = home / ".claude-mem" / "bin" / "uvx"
+        self.assertEqual(w.stat().st_mode & 0o777, 0o755)
+        w.chmod(0o644)
+        r = run("plan", "--harness", "claude-code", "--force", "--element", el, "--home", str(home))
+        self.assertIn("in parity but mode 0644, seed sets 0755", r.stdout)
+        run("apply", "--harness", "claude-code", "--force", "--element", el, "--home", str(home))
+        self.assertEqual(w.stat().st_mode & 0o777, 0o755)
+
+    def test_mode_outside_a_copy_row_is_refused(self):
+        bad = {"element": "x", "shape": "FRAGMENT", "path": "~/x.json", "format": "json", "keys": {"a": 1}, "mode": "0755"}
+        d = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, d)
+        (d / "specs" / "codex").mkdir(parents=True)
+        (d / "specs" / "codex" / "seed.json").write_text(json.dumps({"schema": 1, "harness": "codex", "rows": [bad]}))
+        with self.assertRaises(seed.SeedError):
+            seed.load_table(d, "codex")
+        writable = {"element": "x", "shape": "COPY", "path": "~/x", "source": "specs/codex/seed.json", "mode": "0777"}
+        (d / "specs" / "codex" / "seed.json").write_text(json.dumps({"schema": 1, "harness": "codex", "rows": [writable]}))
+        with self.assertRaises(seed.SeedError):
+            seed.load_table(d, "codex")
 
     def test_symlink_edges_are_refused_and_shown(self):
         home = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, home)

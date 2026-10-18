@@ -100,27 +100,22 @@ why this needs saying out loud.
 1. **Re-fetch immediately before pushing.** Phase 1's fetch is stale. If origin
    moved, loop back to Phase 2 or 3.
 2. Push, then verify: `git fetch origin && git status -sb` shows in-sync.
-3. **Branch parity.** Where a repo keeps two branches equal (`develop == main`),
-   advance the trailing one **by refspec, never by checkout**:
+3. **Branch parity.** Where a repo keeps `develop == main`, new commits go to `develop` and `main` only fast-forwards from it.
+   Advance `main` **by refspec, never by checkout**:
 
    ```bash
-   git log --oneline origin/develop..develop   # MUST be empty
-   git push origin main:develop                # advances origin, no checkout
-   git fetch origin develop:develop            # advances the local ref
+   git log --oneline origin/main..main         # MUST be empty
+   git push origin develop:main                # advances origin, no checkout
+   git fetch origin main:main                  # advances the local ref
    ```
 
-   Both refuse a non-fast-forward rather than forcing one, and `fetch <src>:<dst>`
-   also refuses while `dst` is checked out anywhere (git 2.35+). **That refusal is
-   the safety property - never reach for `git branch -f` or `push --force` to get
-   past it.**
+   Both refuse a non-fast-forward rather than forcing one, and `fetch <src>:<dst>` also refuses while `dst` is checked out anywhere (git 2.35+).
+   **The refusal is what keeps this safe, so never use `git branch -f` or `push --force` to get past it.**
 
-   Read the rejection before routing it: *non-fast-forward* means the trailing
-   branch has its own commits, which is Phase 3. Anything else - pre-receive hook,
-   protected branch, permissions - is policy, not divergence: surface it verbatim
-   and stop.
+   Read the rejection before routing it: *non-fast-forward* means the trailing branch has its own commits, which is Phase 3.
+   Anything else (a pre-receive hook, a protected branch, permissions) is policy rather than divergence, so surface it verbatim and stop.
 
-   Confirm all four refs match:
-   `git rev-parse develop main origin/develop origin/main`.
+   Confirm all four refs match with `git rev-parse develop main origin/develop origin/main`.
 
 ### Never check out across a commit that deletes tracked files
 

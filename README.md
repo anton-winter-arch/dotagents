@@ -497,7 +497,7 @@ view = `~/.claude/skills`.
 ### Branch model
 
 - `develop` - default / working branch. All changes land here first.
-- `main` - stable. Fast-forwarded from `develop` (`git merge develop --ff-only`).
+- `main` - stable. Fast-forwarded from `develop` by refspec (`git push origin develop:main`), never by checkout.
 - Remote: `origin` - a GitHub repo.
 
 ### Ownership and isolation

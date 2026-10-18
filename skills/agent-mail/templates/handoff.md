@@ -12,3 +12,5 @@
 
 **Watch out for:**
 <gotchas, partial changes, anything unverified>
+
+<!-- No credentials, personal data, client identifiers or production data: name where a value lives, never the value. -->

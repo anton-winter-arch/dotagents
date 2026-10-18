@@ -1,0 +1,21 @@
+#!/bin/sh
+# cap-for: claude-mem 13.25.1
+# claude-mem puts this folder first on PATH when it launches chroma-mcp
+# (CLAUDE_MEM_CHROMA_UVX_PATH). It pins chroma-mcp==0.2.6 but none of its
+# dependencies; pydantic 2.14 removed eval_type_backport, which chroma-mcp's
+# mcp 1.6.0 imports. This caps pydantic and hands off to the real uvx.
+# Keep nothing else in this folder: the worker passes its PATH to every
+# claude process it spawns. claude_mem_health.py says when claude-mem moves
+# past the version above, which is the cue to re-test without the cap.
+set -f
+self_dir=$(cd "$(dirname "$0")" && pwd -P)
+IFS=:
+for d in $PATH; do
+  [ -n "$d" ] || continue
+  [ "$(cd "$d" 2>/dev/null && pwd -P)" = "$self_dir" ] && continue
+  if [ -x "$d/uvx" ]; then
+    exec "$d/uvx" --with 'pydantic<2.14' "$@"
+  fi
+done
+echo "claude-mem uvx wrapper: no uvx on PATH outside $self_dir" >&2
+exit 127

@@ -60,6 +60,12 @@
       "bindings": [{"event": "PreToolUse", "matcher": ["shell"], "timeout": 10}]
     },
     {
+      "script": "warn_cross_repo_git.py",
+      "harnesses": ["claude-code"],
+      "advisory": true,
+      "bindings": [{"event": "PreToolUse", "matcher": ["shell"], "timeout": 10}]
+    },
+    {
       "script": "memory_pressure_gate.py",
       "harnesses": ["claude-code"],
       "bindings": [
@@ -100,6 +106,12 @@
         {"event": "SessionStart", "sources": ["startup", "resume", "clear", "compact"], "timeout": 10},
         {"event": "UserPromptSubmit", "timeout": 10}
       ]
+    },
+    {
+      "script": "claude_mem_health.py",
+      "harnesses": ["claude-code"],
+      "advisory": true,
+      "bindings": [{"event": "SessionStart", "sources": ["startup", "resume"], "timeout": 15}]
     }
   ]
 }

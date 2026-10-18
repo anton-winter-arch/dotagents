@@ -94,6 +94,10 @@ def load_table(repo: Path, harness: str) -> list[dict]:
             raise SeedError(f"{where} pointer needs a source file or format json-entries with a target")
         if r["shape"] == "COPY" and not (r.get("source") or r.get("via")):
             raise SeedError(f"{where} copy needs a source file")
+        if r.get("mode") is not None and not (r["shape"] == "COPY" and re.fullmatch(r"0?[0-7]{3}", str(r["mode"]))
+                                               and not int(str(r["mode"]), 8) & 0o022):
+            raise SeedError(f"{where} mode is an octal string such as \"0755\", on a COPY row only, "
+                            "never group- or other-writable")
         for k in ("source",):
             if r.get(k) and not (repo / r[k]).is_file():
                 raise SeedError(f"{where} names a missing seed file {r[k]}")
@@ -115,6 +119,18 @@ def detected(row: harness_probe.Row, home: Path) -> tuple[bool, str]:
 
 def expand(path_str: str, home: Path) -> Path:
     return Path(path_str.replace("~", str(home), 1)) if path_str.startswith("~") else Path(path_str)
+
+
+def expand_values(v, home: Path):
+    """A FRAGMENT value written as "~/..." lands as the station's absolute path,
+    so a spec can seed a home-relative path without naming any machine."""
+    if isinstance(v, str) and v.startswith("~/"):
+        return str(expand(v, home))
+    if isinstance(v, dict):
+        return {k: expand_values(x, home) for k, x in v.items()}
+    if isinstance(v, list):
+        return [expand_values(x, home) for x in v]
+    return v
 
 
 # --- literals and merges ------------------------------------------------------
@@ -411,7 +427,7 @@ def write_target(path: Path, home: Path) -> Path:
     return target
 
 
-def write_text_atomic(path: Path, text: str, home: Path) -> str:
+def write_text_atomic(path: Path, text: str, home: Path, mode: int | None = None) -> str:
     """Write through a symlink to its target (a dotfiles-managed ~/.zshrc stays
     managed), keep one rolling backup of an existing file, and swap in a temp
     file created in the target's folder with an unguessable name. Returns a
@@ -429,6 +445,8 @@ def write_text_atomic(path: Path, text: str, home: Path) -> str:
         f.write(text)
     if target.exists():
         shutil.copymode(target, tmp)
+    if mode is not None:
+        os.chmod(tmp, mode)
     os.replace(tmp, target)
     return note
 
@@ -469,15 +487,21 @@ def plan_row(row: dict, home: Path, repo: Path, harness: str, write: bool, only_
         src = repo / row["source"]
         seed = src.read_text(encoding="utf-8")
         cur = read_text(path)
+        mode = int(str(row["mode"]), 8) if row.get("mode") is not None else None
         if not path.exists():
             out["lines"].append(f"{label}: absent, copy {row['source']}")
-            out["writes"].append((path, seed))
+            out["writes"].append((path, seed, mode))
         elif cur == seed:
-            out["lines"].append(f"{label}: in parity")
+            have = path.stat().st_mode & 0o777
+            if mode is not None and have != mode:
+                out["lines"].append(f"{label}: in parity but mode {have:04o}, seed sets {mode:04o}")
+                out["writes"].append((path, seed, mode))
+            else:
+                out["lines"].append(f"{label}: in parity")
         else:
             out["lines"].append(f"{label}: differs from {row['source']}, seed replaces it")
             out["diff"] = udiff(cur, seed, label)
-            out["writes"].append((path, seed))
+            out["writes"].append((path, seed, mode))
     elif shape == "POINTER":
         if row.get("format") == "json-entries":
             target = str((repo / row["target"]).resolve())
@@ -507,7 +531,7 @@ def plan_row(row: dict, home: Path, repo: Path, harness: str, write: bool, only_
         if row.get("if_present") and not path.exists():
             out["lines"].append(f"{label}: not present, skipped (the seed does not create this file)")
             return out
-        keys = fragment_keys(row, repo)
+        keys = expand_values(fragment_keys(row, repo), home)
         if only_keys:
             unknown = [k for k in only_keys if k not in keys]
             if unknown:
@@ -584,7 +608,12 @@ def seed_harness(harness: str, home: Path, repo: Path, write: bool, elements: li
         return 0
     rows = [r for r in table if not elements or r["element"] in elements]
     if only_keys:
-        rows = [r for r in rows if r["shape"] == "FRAGMENT"]   # --key names keys, so only key-bearing rows run
+        # --key names keys, so only the fragment rows that seed one of them run.
+        rows = [r for r in rows if r["shape"] == "FRAGMENT" and not r.get("via")
+                and set(only_keys) & set(r.get("keys") or ())]
+        if not rows:
+            print(f"  error    --key: {harness} does not seed: {', '.join(only_keys)}")
+            return 1
     print(f"seed {harness} ({version}, ~/{row.config_home}): {len(rows)} rows" + (" [apply]" if write else ""))
     rc = 0
     for r in rows:
@@ -610,8 +639,8 @@ def seed_harness(harness: str, home: Path, repo: Path, write: bool, elements: li
         if p["diff"]:
             print(p["diff"], end="")
         if write:
-            for path, text in p["writes"]:
-                note = write_text_atomic(path, text, home)
+            for path, text, *mode in p["writes"]:
+                note = write_text_atomic(path, text, home, mode[0] if mode else None)
                 print(f"           wrote {path.name}{note}")
     return rc
 

@@ -81,7 +81,7 @@ says about itself. For claude-mem:
 
 ```bash
 jq -r .version ~/.claude/plugins/cache/thedotmack/claude-mem/VERSION/.claude-plugin/plugin.json
-curl -s -m 3 http://127.0.0.1:37701/api/version
+curl -s -m 3 "http://127.0.0.1:$(jq -r '.CLAUDE_MEM_WORKER_PORT // empty' ~/.claude-mem/settings.json 2>/dev/null | grep -E '^[0-9]+$' || echo $((37700 + $(id -u) % 100)))/api/version"
 grep -c '"PREVIOUS_VERSION"' ~/.claude/plugins/cache/thedotmack/claude-mem/VERSION/scripts/worker-service.cjs
 ```
 

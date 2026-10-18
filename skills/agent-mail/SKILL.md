@@ -39,6 +39,34 @@ bash "$SKILL_DIR/scripts/send.sh" \
 Compose the body first (start from `templates/<type>.md` if useful). Preview a
 repo's roots with `send.sh --to-repo <path> --inspect`.
 
+### Never put sensitive information in a message
+
+A message is a plain file in someone else's repo: it sits on disk, other agents
+read it, and it can be committed. The subject, the body and any received mail
+you quote in a reply never hold:
+
+- credentials - API keys, tokens, passwords, private keys, connection strings
+  with credentials, `.env` values
+- personal data - names, emails, phone numbers or addresses of real people
+  (customers, staff, users)
+- account or customer IDs, client or engagement identifiers, or copies of
+  production data
+
+Name where the thing lives instead - a file path, an env var name, a settings
+key - and never the value. If a peer truly needs a sensitive value, send it
+over direct session messaging (`SendMessage`), which writes no file, or don't
+send it and ask the user to hand it over.
+
+`send.sh` enforces this: it scans the subject and body with the `sanitize`
+skill before writing anything and refuses a hit with exit 9
+`SENSITIVE_CONTENT`, naming the classes found but never the value. Repo and
+file paths are allowed, and so are addresses at the reserved example domains
+(`example.com`, `.test`, `.invalid`), fictional 555 phone numbers,
+`{redacted-*}` markers and all-x placeholders such as `price_xxxxxxxx`. After a
+refusal, rewrite and resend; never work around it by splitting, encoding or
+paraphrasing the value. Without `sanitize` installed the send goes through with
+a warning, and the rule still applies.
+
 **Handle the guard exit codes; do NOT brute-force past them:**
 
 | Exit / token | Meaning | Do |
@@ -47,6 +75,7 @@ repo's roots with `send.sh --to-repo <path> --inspect`.
 | 6 `NOT_AGENT_REPO` | no `.claude`/`.agents`/`.cursor` | **stop, tell the user** |
 | 7 `AMBIGUOUS_ROOT` | several roots | **show the report, let them choose**, rerun with `--root` |
 | 8 `ROOT_NOT_PRESENT` | `--root` absent | pick a present root |
+| 9 `SENSITIVE_CONTENT` | subject or body holds a secret, personal data or a station identifier term; nothing is written | **rewrite without the value, resend** |
 | 4 `NO_INBOX` | root has no `inbox/` | **ask** "start communicating with {repo} via `<root>/inbox/`?" → on yes, rerun with `--create-inbox` |
 | 0 | delivered | report the written path |
 

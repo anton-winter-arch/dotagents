@@ -59,8 +59,8 @@ defined in `specs/SEEDING-SHAPES.md`.
 |---|---|
 | `LINK` | runs `sync-skills.sh` |
 | `POINTER` | writes a file only when it is absent (Claude Code's `CLAUDE.md`, Antigravity's `skills.json`) |
-| `COPY` | shows the diff, and replaces the station file on apply |
-| `FRAGMENT` | merges only the named keys into a station-owned file (`settings.json`, Codex's `config.toml`, Cursor's `cli-config.json`, goose's `config.yaml`, the shell profile for pi) and re-reads the result before writing it |
+| `COPY` | shows the diff and, on apply, replaces the station file; it also sets and checks a row's `mode` |
+| `FRAGMENT` | merges only the named keys into a station-owned file (`settings.json`, claude-mem's `settings.json`, Codex's `config.toml`, goose's `config.yaml`, the shell profile for pi) and re-reads the result before writing it; a `~/...` value is written as the station's absolute path |
 | `NATIVE`, `N/A` | reports only |
 
 A harness with no binary on PATH and no config home is skipped as not
@@ -72,10 +72,12 @@ and the plan names the station-only entries that drops, except that a
 permissions deny list is always the union. An existing file is kept once as
 `<name>.seed-bak`. Every persistent invariant 7 switch (Claude Code's
 `disableRemoteControl` and telemetry env, Codex's daemon and analytics keys,
-Cursor's privacy mode, goose's and pi's telemetry) is one of these fragments;
-what no file holds stays by hand: a running `codex app-server` daemon is
-killed, Copilot's `--no-remote-export` rides each session, and Antigravity's
-remote-control daemon is never started. After an apply the remote-control
+goose's and pi's telemetry) is one of these fragments.
+Switches that no file holds are handled by hand: Cursor's privacy mode is an
+account setting that the probe reads from the CLI's cache, a running
+`codex app-server` daemon is killed, Copilot's `--no-remote-export` flag is
+passed to each session, and Antigravity's remote-control daemon is never
+started. After an apply the remote-control
 column of `harness_probe.py` reads `off`.
 
 The `LINK` row runs `sync-skills.sh`, which creates the Claude Code symlinks and
@@ -152,11 +154,11 @@ Check and report; install nothing in this phase:
 claude plugin list
 rtk --version && rtk gain >/dev/null && echo rtk-ok
 jq --version; node --version; python3 --version
-curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:37701 || true
+curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://localhost:$(jq -r '.CLAUDE_MEM_WORKER_PORT // empty' ~/.claude-mem/settings.json 2>/dev/null | grep -E '^[0-9]+$' || echo $((37700 + $(id -u) % 100)))" || true
 ```
 
-Compare against the spec's sections 2 and 3 (four plugins, jq, rtk, node,
-python3, claude-mem daemon on 37701). Report what is missing or disabled.
+Compare against the spec's sections 2 and 3 (four plugins, jq, rtk, node, python3, claude-mem daemon on its worker port).
+Report what is missing or disabled.
 
 ## Phase 5 - External installs (opt-in only)
 

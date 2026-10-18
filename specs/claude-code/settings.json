@@ -2,9 +2,13 @@
   "env": {
     "DISABLE_AUTOUPDATER": "1",
     "DISABLE_TELEMETRY": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "DISABLE_ERROR_REPORTING": "1",
+    "DISABLE_FEEDBACK_COMMAND": "1",
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
-    "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1"
+    "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
+    "CLAUDE_MEM_TELEMETRY": "false",
+    "CLAUDE_MEM_CHROMA_UVX_PATH": "~/.claude-mem/bin"
   },
   "attribution": {
     "commit": "",
@@ -57,6 +61,7 @@
       "Edit(/private/**)",
       "Edit(~/.claude/state/**)",
       "Edit(/state/**)",
+      "Edit(**/.claude-mem/bin/**)",
       "mcp__playwright__browser_run_code_unsafe"
     ]
   },
@@ -186,6 +191,11 @@
           },
           {
             "type": "command",
+            "command": "python3 ~/.claude/hooks/claude_mem_health.py",
+            "timeout": 15
+          },
+          {
+            "type": "command",
             "command": "python3 ~/.claude/hooks/cmon_nudge.py",
             "timeout": 5
           }
@@ -266,6 +276,12 @@
       "source": {
         "source": "github",
         "repo": "addyosmani/agent-skills"
+      }
+    },
+    "thedotmack": {
+      "source": {
+        "source": "github",
+        "repo": "thedotmack/claude-mem"
       }
     }
   },

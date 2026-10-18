@@ -6,6 +6,7 @@
 #   no recognized root       -> NOT_AGENT_REPO   (6)   .claude/.agents/.cursor
 #   >1 root, no --root       -> AMBIGUOUS_ROOT   (7)   + report
 #   --root names absent dir  -> ROOT_NOT_PRESENT (8)
+#   sensitive subject/body    -> SENSITIVE_CONTENT (9)  secrets, personal data, station terms
 #   root present, no inbox/   -> NO_INBOX         (4)   unless --create-inbox
 #   ok                        -> exit 0, prints written path
 set -euo pipefail
@@ -63,6 +64,15 @@ fi
 [ -L "$repo/$root" ] && am_die 8 ROOT_NOT_PRESENT "$root is a symlink in $repo - refusing"
 inbox="$repo/$root/inbox"
 
+# Body: explicit file, else the type template as a skeleton.
+body_src="$body_file"; [ -n "$body_src" ] || body_src="$TPL_DIR/${type}.md"
+[ -f "$body_src" ] || am_die 64 BAD_ARG "body source not found: $body_src"
+
+# Sensitive-content gate: agent mail never holds credentials, personal data,
+# client identifiers or production data. Runs before anything is written.
+python3 "$SELF_DIR/scan_body.py" --subject="$subject" --body="$body_src" \
+  || am_die 9 SENSITIVE_CONTENT "message not sent - the reason is above"
+
 if [ ! -d "$inbox" ]; then
   [ -n "$create_inbox" ] || am_die 4 NO_INBOX \
     "$root/inbox/ does not exist in $repo - confirm with the user, then rerun with --create-inbox"
@@ -80,10 +90,6 @@ am_valid_name "$from" || am_die 64 BAD_ARG "bad --from name: $from"
 am_valid_name "$to"   || am_die 64 BAD_ARG "bad --to name: $to"
 from_repo_c=$(am_canon "$from_repo" 2>/dev/null || printf '%s' "$from_repo")
 subj_y=$(am_yaml_escape "$subject") || exit $?    # propagate INVALID_FIELD out of the subshell
-
-# Body: explicit file, else the type template as a skeleton.
-body_src="$body_file"; [ -n "$body_src" ] || body_src="$TPL_DIR/${type}.md"
-[ -f "$body_src" ] || am_die 64 BAD_ARG "body source not found: $body_src"
 
 # Atomic, race-safe create: render per attempt, ln() fails if the dest exists.
 slug=$(am_slug "$subject"); [ -n "$slug" ] || slug="message"
