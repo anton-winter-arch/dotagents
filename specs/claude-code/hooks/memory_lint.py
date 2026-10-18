@@ -27,6 +27,8 @@ VALID_TYPES = {"user", "feedback", "project", "reference"}
 # Claude Code loads the first 200 lines or 25KB of MEMORY.md. 100 memories x 220
 # chars stays under 25KB with room for the header and section headings.
 INDEX_LINE_CAP = 220
+# Below this many words after the link, an index line is a title, not a summary.
+MIN_SUMMARY_WORDS = 6
 
 
 def frontmatter(text: str) -> str | None:
@@ -128,19 +130,33 @@ def main() -> int:
         warns.append(f"dangling {shown}{more} - fine as forward stubs; if a memory was just "
                      "removed or merged, repoint links to it to the survivor")
 
-    # Advisory: an index line that is only a link carries no summary, so the
-    # index cannot be read on its own. Bounded like the wikilinks above.
-    bare_re = r"\s*[-*]\s*\[[^\]\n]{0,200}\]\([^)\n]{1,200}\.md\)\s*[-:–—]{0,3}"
-    bare = [ln.strip() for ln in index_text.splitlines() if re.fullmatch(bare_re, ln.rstrip())]
-    for ln in bare[:5]:
-        warns.append(f"index line has no summary: {clean(ln)} - say what the memory holds or enforces")
-    if len(bare) > 5:
-        warns.append(f"+{len(bare) - 5} more index lines with no summary")
+    # The two index-line checks below are scoped to the line for the file just
+    # written (or every line when the index itself was written), so a folder of
+    # weak lines never fires on every write.
+    pointer = f"]({p.name})"
+
+    # Advisory: the index is the only memory text loaded every session, so a line
+    # that is a link plus a title recalls nothing. It must say what the memory
+    # holds and when to open it. Bounded like the wikilinks above.
+    line_re = r"\s*[-*]\s*\[([^\]\n]{0,200})\]\(([^)\n]{1,200}\.md)\)(.*)"
+    thin = []
+    for ln in index_text.splitlines():
+        m = re.fullmatch(line_re, ln)
+        if not m or (p.name != "MEMORY.md" and Path(m.group(2)).name != p.name):
+            continue
+        summary = m.group(3).strip().lstrip("-:–—").strip()
+        if (len(summary.split()) < MIN_SUMMARY_WORDS
+                or summary.lower().rstrip(".") == m.group(1).strip().lower().rstrip(".")):
+            thin.append(ln.strip())
+    for ln in thin[:5]:
+        warns.append(f"index line reads as a title: {clean(ln)} - say what the memory holds and when to open it")
+    if len(thin) > 5:
+        warns.append(f"+{len(thin) - 5} more index lines that read as titles")
+    if thin:
+        warns.append('"No framing openers in chat" is a title; "No framing openers in chat - start with '
+                     'the first finding; applies to every reply" is an index line')
 
     # Advisory: the index loads every session, so each line stays under the cap.
-    # Scoped to the line for the file just written (or every line when the index
-    # itself was written), so a folder of long lines never fires on every write.
-    pointer = f"]({p.name})"
     long_lines = [ln for ln in index_text.splitlines()
                   if len(ln) >= INDEX_LINE_CAP and (p.name == "MEMORY.md" or pointer in ln)]
     for ln in long_lines[:5]:

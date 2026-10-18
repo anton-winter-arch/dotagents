@@ -817,15 +817,17 @@ delivered as PostToolUse `additionalContext` on stdout): dangling
 when a memory was just removed or merged; only
 closed single-line links up to 120 characters count, the text is escaped and
 the list capped at ten on one line, because this reaches the model), an index
-line that is only a link with no summary (capped at five), an index line over
-220 characters (Claude Code loads only the first 200 lines or 25KB of the index;
-only the written file's line, or every line when `MEMORY.md`
-itself was written, so a folder of long lines never fires on every write), and
+line that reads as a title (fewer than six words after the link, or a repeat of
+the link text; capped at five, with the reflect skill's title-versus-index-line
+example), an index line over 220 characters (Claude Code loads only the first
+200 lines or 25KB of the index) - both index checks read only the written file's
+line, or every line when `MEMORY.md` itself was written, so a folder of weak
+lines never fires on every write - and
 a doc-reconcile prompt. **Footgun (verified in `skill-authoring`):** exit 2
 returns stderr to the agent; exit 1 is swallowed, and so is stderr at exit 0 -
 so fails use 2 and advisories use the context channel.
 Stdlib only; **fails OPEN** (a bug in the lint exits 0, never blocks a write).
-Tests: `tests/station-hooks/test-memory-lint.py` (22 cases).
+Tests: `tests/station-hooks/test-memory-lint.py` (27 cases).
 
 Script: [`claude-code/hooks/memory_lint.py`](hooks/memory_lint.py).
 

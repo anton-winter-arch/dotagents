@@ -29,7 +29,7 @@ metadata:
 A repo-specific fact. Links to [[sample-fact]] (self, resolves).
 """
 
-GOOD_INDEX = "# Memory Index\n\n- [Sample](sample-fact.md) - a valid memory\n"
+GOOD_INDEX = "# Memory Index\n\n- [Sample](sample-fact.md) - when the lint tests run: a valid memory with a full summary\n"
 
 
 def env_for(file_path: str, root: str | None = None) -> dict:
@@ -118,13 +118,54 @@ class TestPasses(unittest.TestCase):
             self.assertIn("dangling", err)
             self.assertIn("repoint links to it to the survivor", err)
 
+    def _seen_for_index(self, index: str) -> tuple[int, str]:
+        with tempfile.TemporaryDirectory() as t:
+            return run(str(make_dir(Path(t), index=index)))
+
     def test_index_line_without_summary_is_advisory(self):
-        index = "# Memory Index\n\n- [Sample](sample-fact.md) —\n"
+        code, seen = self._seen_for_index("# Memory Index\n\n- [Sample](sample-fact.md) —\n")
+        self.assertEqual(code, 0, seen)
+        self.assertIn("reads as a title", seen)
+
+    def test_index_line_with_only_a_label_is_advisory(self):
+        code, seen = self._seen_for_index("# Memory Index\n\n- [Sample](sample-fact.md) - sample fact notes\n")
+        self.assertEqual(code, 0, seen)
+        self.assertIn("reads as a title", seen)
+        self.assertIn("is an index line", seen)
+
+    def test_index_line_repeating_its_title_is_advisory(self):
+        title = "Linting runs on every memory write"
+        code, seen = self._seen_for_index(f"# Memory Index\n\n- [{title}](sample-fact.md) - {title}.\n")
+        self.assertEqual(code, 0, seen)
+        self.assertIn("reads as a title", seen)
+
+    def test_index_line_that_summarizes_is_quiet(self):
+        code, seen = self._seen_for_index(
+            "# Memory Index\n\n- [No framing openers in chat](sample-fact.md) - "
+            "start with the first finding; applies to every reply\n")
+        self.assertEqual(code, 0, seen)
+        self.assertNotIn("reads as a title", seen)
+
+    def test_thin_index_line_for_another_file_is_quiet(self):
+        index = GOOD_INDEX + "- [Other](other-fact.md) - other\n"
         with tempfile.TemporaryDirectory() as t:
             f = make_dir(Path(t), index=index)
+            (f.parent / "other-fact.md").write_text(GOOD_MEM.replace("sample-fact", "other-fact"), encoding="utf-8")
             code, seen = run(str(f))
             self.assertEqual(code, 0, seen)
-            self.assertIn("no summary", seen)
+            self.assertNotIn("reads as a title", seen)
+
+    def test_writing_the_index_flags_every_thin_line_capped(self):
+        index = GOOD_INDEX + "".join(f"- [M{i}](m{i}.md) - m{i}\n" for i in range(6))
+        with tempfile.TemporaryDirectory() as t:
+            f = make_dir(Path(t), index=index)
+            for i in range(6):
+                (f.parent / f"m{i}.md").write_text(GOOD_MEM.replace("sample-fact", f"m{i}"), encoding="utf-8")
+            code, seen = run(str(f.parent / "MEMORY.md"))
+            self.assertEqual(code, 0, seen)
+            self.assertEqual(seen.count("reads as a title"), 5)
+            self.assertIn("+1 more index lines that read as titles", seen)
+            self.assertEqual(seen.count("is an index line"), 1)
 
     def test_long_index_line_for_written_file_is_advisory(self):
         index = "# Memory Index\n\n- [Sample](sample-fact.md) - " + "x" * 260 + "\n"
@@ -163,7 +204,7 @@ class TestPasses(unittest.TestCase):
             f = make_dir(Path(t))
             code, seen = run(str(f))
             self.assertEqual(code, 0, seen)
-            self.assertNotIn("no summary", seen)
+            self.assertNotIn("reads as a title", seen)
 
 
 class TestDeterministicFails(unittest.TestCase):
