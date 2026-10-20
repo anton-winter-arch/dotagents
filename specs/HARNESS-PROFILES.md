@@ -52,12 +52,12 @@ As a conference answerer it ranked third and fourth; its role there is the chair
 Spec: [`claude-code/SPEC-CLAUDE-CODE.md`](claude-code/SPEC-CLAUDE-CODE.md).
 
 **Codex** is the strongest second opinion on reasoning questions, ranked first of five valid members on 2026-10-13 and third of six on 2026-10-12 (observed).
-`codex-task` runs it headless in a detached worktree with the sandboxed shell, network off and edits as `apply_patch`, and effort is a per-model dial that reaches `ultra` on the `sol` and `astra` models and `gpt-5.6-terra` (observed).
+`/task codex` runs it headless in a detached worktree with the sandboxed shell, network off and edits as `apply_patch`, and effort is a per-model dial that reaches `ultra` on the `sol` and `astra` models and `gpt-5.6-terra` (observed).
 The user's sense that it drafts frontend and component work well is an impression with no bench task behind it yet.
 Spec: [`codex/SPEC-CODEX.md`](codex/SPEC-CODEX.md).
 
 **Cursor** is the editor lane and a reliable second model, ranked second in both conferences on `grok-4.7` (observed).
-`cursor-task` bounds it with a per-run `sandbox-exec` profile, so the write bound is the operating system's rather than the agent's flag, and one seat reaches many vendors' models with effort encoded in the model name (observed).
+`/task cursor` bounds it with a per-run `sandbox-exec` profile, so the write bound is the operating system's rather than the agent's flag, and one seat reaches many vendors' models with effort encoded in the model name (observed).
 Its hooks are documented for six events but the CLI is reported to send only the shell events (doc-derived, partly disproved).
 Spec: [`cursor/SPEC-CURSOR.md`](cursor/SPEC-CURSOR.md).
 

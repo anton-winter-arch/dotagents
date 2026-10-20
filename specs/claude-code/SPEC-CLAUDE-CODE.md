@@ -27,8 +27,8 @@ documentation) or **ruling** (a decision in `SPEC.md`, not a measurement).
   in use: skills, subagents, slash commands, hooks on four events, plugins and
   the claude-mem memory daemon. Everything in this spec seeds it; every other
   harness seeds a subset.
-- **The delegating end of every task skill - observed.** `codex-task`,
-  `cursor-task` and `antigravity-task` run from a Claude Code session and hand
+- **The delegating end of every task harness - observed.** `/task codex`,
+  `/task cursor` and `/task antigravity` run from a Claude Code session and hand
   the diff back here for review; `agent-conference` chairs from here. No other
   harness drives the others.
 - **Anthropic-direct, so the only lane for work that matters - ruling.**
@@ -396,13 +396,20 @@ If a `settings.json` already exists on the device, **merge, don't replace** -
 diff against this template, show the delta, get approval (non-destructive
 rule + §7.6's own hook both apply).
 
-**Delegation to Codex** goes only through
-`~/.agents/skills/codex-task/scripts/codex_task.py`, which runs Codex headless
-in an isolated worktree and `CODEX_HOME` with writes confined to a file
-allowlist. The user approves every Codex run, so the seed includes the ask rule
-`Bash(*codex_task.py run*)`, which matches any interpreter spelling. A headless
-probe showed it overrides a matching allow entry, so a stray "don't ask again"
-cannot silence it. Any other `codex`
+**Delegation to Codex** goes only through `/task codex`, whose dispatcher
+`~/.agents/skills/task/scripts/task.py` hands off to
+`~/.agents/skills/task/harnesses/codex/scripts/codex_task.py`, which runs Codex
+headless in an isolated worktree and `CODEX_HOME` with writes confined to a file
+allowlist. The user approves every Codex run, so the seed includes two ask
+rules: `Bash(*task.py*codex*)` for the dispatcher and `Bash(*codex_task.py*run*)`
+for the script called directly. Both catch interpreter, spacing and quoting
+variants, at the cost of a prompt when another command's arguments mention
+`codex`. A headless probe showed an ask rule overrides a matching allow entry, so
+a stray "don't ask again" cannot silence it. The rules fire only when the command's
+text holds `task.py` followed later by `codex`, or `codex_task.py` followed later
+by `run`; a glob, an escape, a variable or a copied script can reach Codex without
+matching, and only a hook that parses the command the way the shell does would
+close that gap. Any other `codex`
 invocation from a session keeps prompting too. Facts and boundaries in
 [`../codex/SPEC-CODEX.md`](../codex/SPEC-CODEX.md).
 
@@ -521,8 +528,9 @@ are denied on all three in settings.json instead), the two identifier guards (`r
 (`reject_published_copy_edits.py`, reading a station
 `published-copy-paths.txt` seeded from the `.example.txt`), the two
 resource gates (`memory_pressure_gate.py`, `daemon_restart_storm.py`), the
-claude-mem health notice (`claude_mem_health.py`), and the cross-repo git
-warning (`warn_cross_repo_git.py`).
+claude-mem health notice (`claude_mem_health.py`), the cross-repo git
+warning (`warn_cross_repo_git.py`), and the git-hook bypass guard
+(`guard_git_bypass.py`, refusing an agent's `--no-verify` and hooks-path overrides).
 Nine are advisory/non-blocking (`read-size-advisory`,
 `cmon_nudge`, `harness_version_check`, `claude_mem_health`, `warn_cross_repo_git`, both `no-meta-commentary` sides,
 `memory_lint`'s judgment checks, and `reject_identifiers`), and
@@ -750,23 +758,23 @@ Script: [`claude-code/hooks/cmon_nudge.py`](hooks/cmon_nudge.py).
 
 SessionStart (matcher `startup` only) - advisory, never blocks. It tells the user once a
 day when an agent harness the bench uses has a newer release. It fires only in the
-repository that holds the `harness-bench` skill: the session's `CLAUDE_PROJECT_DIR` must
-equal that repository's root, which the hook derives from the skill's own path. In any
+repository that holds the `task` skill's tryout bench: the session's `CLAUDE_PROJECT_DIR`
+must equal that repository's root, which the hook derives from the bench script's own path. In any
 other project it exits at once without touching the stamp. The user wants the hook in
 this repo only, and this repo's `.claude/` is gitignored, so the definition stays in this
 station seed. In the right repo it then compares the date in its stamp file
 (`~/.local/state/harness-bench/version-check.stamp`) with today and exits silently on a
 match, so every session after the first that day costs one file read and no network
-call. On the first session of the day it writes the stamp, then runs the
-`harness-bench` skill's `versions --quiet`. That command compares the installed goose,
+call. On the first session of the day it writes the stamp, then runs the bench's
+`versions --quiet` (`task.py tryout versions --quiet`). That command compares the installed goose,
 pi, dsh and deepagents-code against their latest published release (Homebrew, npm's
 `latest` tag, PyPI), never follows alpha or beta tracks, accepts only well-formed
 version strings, and prints one line only when something is newer. The hook passes that
 line to the user as a `systemMessage` and to the model as `additionalContext`, with
 non-printable characters stripped and the length capped. It never upgrades: an upgrade
 is the user's call, followed by a re-run of the egress audit and a new pinned version
-for the bench. The release list and the check live in the skill
-(`skills/harness-bench/scripts/harness_bench.py`, `RELEASES`) rather than in the hook,
+for the bench. The release list and the check live in the bench
+(`skills/task/tryout/scripts/harness_bench.py`, `RELEASES`) rather than in the hook,
 so any harness can run the same command. A missing skill, a timeout or a network
 failure is silent, and the hook does not retry until the next day. Tests at
 `tests/station-hooks/test-harness-version-check.py` (8 cases).
@@ -950,16 +958,18 @@ reproducing whatever is already there, so the guard blocks introduction, not
 removal.
 
 Allowed whitespace is exactly space, tab, LF, CR. Everything that renders as
-nothing or as a look-alike space is rejected by Unicode category (`Cf` format
-controls incl. zero-widths/bidi/BOM/soft hyphen, `Co` private use, `Cc`
-controls beyond the allowed four, `Zs` spaces other than U+0020) plus an
-explicit set the categories miss: CGJ, Khmer inherent vowels, Hangul fillers,
-Mongolian and standard variation selectors plus the U+E0100 supplement plane
-(the highest-bandwidth invisible channel - each selector encodes a byte), the
-blank braille filler U+2800, and the `Zl`/`Zp` line and paragraph
-separators. This is the write-side enforcement of the invisible-
-instruction threat the `my-security-review-checklist` skill scans for: text
-an agent authors can never smuggle characters the human reviewer cannot see.
+nothing or as a look-alike space is rejected: every row of the one codepoint
+table in `skills/sanitize/scripts/detect.py` (`Cf` format controls incl.
+zero-widths/bidi/BOM/soft hyphen, `Co` private use, `Cc` controls beyond the
+allowed four, `Zs` spaces other than U+0020, the TAG plane, plus explicit rows
+the categories miss: CGJ, Khmer inherent vowels, Hangul fillers, Mongolian and
+standard variation selectors plus the U+E0100 supplement plane, the blank
+braille filler U+2800, and the `Zl`/`Zp` line and paragraph separators). The
+hook imports that table from the skills folder beside its own. When the table
+cannot load, the write proceeds and the model is told the check did not run.
+This is the write-side enforcement of the invisible-instruction threat the
+`my-security-review-checklist` skill scans for: text an agent authors can never
+smuggle characters the human reviewer cannot see.
 The rejection message names each codepoint with up to five offsets, steering
 the agent to replace or drop the character. Stdlib python3; malformed stdin
 or a non-string payload passes (fail-open on harness quirks, closed on
@@ -967,9 +977,9 @@ content). One consequence to know: a file that legitimately needs such bytes
 (a Unicode fixture, an exploit test) cannot be authored through Write/Edit -
 build those bytes at runtime from `chr()` escapes instead, which is also the
 rule this script itself follows internally. Tests:
-`tests/station-hooks/test-reject-invisibles.py` (22 cases: 13 codepoint
+`tests/station-hooks/test-reject-invisibles.py` (23 cases: 13 codepoint
 denials across every rejected class, old_string/MultiEdit exemption and
-coverage, clean-pass and fail-open contracts); run after any edit. Live
+coverage, clean-pass and fail-open contracts, and the missing-table note); run after any edit. Live
 canary verified 2026-08-29: an in-session Write carrying planted invisibles
 was denied with all twelve codepoints reported.
 
@@ -1018,12 +1028,16 @@ Script: [`claude-code/hooks/guard-private.sh`](hooks/guard-private.sh).
 PreToolUse guard (matcher `Write|Edit|MultiEdit|NotebookEdit`) - **advisory,
 never blocks**. Surfaces project identifiers in NEW content written to files
 that travel: `**/.claude/skills/`, `**/.agents/skills/`, `**/.claude/hooks/`,
-`tools/`, `agents/`, `commands/`, `**/_RESEARCH/`, `**/LEARNING/`,
-`**/KNOWLEDGE-BASE/` and `**/specs/`, with `PROJECTS/`, `_PROJECTS/`,
-`tasks/`, `DRAFTS/` and `__archive/` exempt because identifiers belong there.
-Four detectors: a project alias from the station term list, a person's
-initials with a role code, an environment-prefixed catalog name, and a
-work-item id whose digits are not a synthetic run. Every hit returns as
+`tools/`, `agents/`, `commands/` (under `.claude/`, and this repo's own
+`.agents/hooks/`, `.agents/agents/` and `.agents/commands/`), `**/_RESEARCH/`,
+`**/LEARNING/`, `**/KNOWLEDGE-BASE/` and `**/specs/`, with `PROJECTS/`,
+`_PROJECTS/`, `tasks/`, `DRAFTS/` and `__archive/` exempt because identifiers
+belong there. It runs four detectors, all from the sanitize skill
+(`skills/sanitize/scripts/detect.py`, imported from the skills folder beside the
+hook's own): a project alias from the station term list by the shared term rule, a
+person's initials with a role code, an environment-prefixed catalog name, and a
+work-item id whose digits are not a synthetic run. `sanitize gate` warns on the same
+content again at commit. Every hit returns as
 PreToolUse `additionalContext` and the write proceeds, so the model or the
 user rules on it - a gate that refuses ordinary prose because a term is also a
 dictionary word gets muted, and a muted gate is worse than none.
@@ -1063,9 +1077,10 @@ catches the thing itself, importing
 the synthetic-id rule and the no-echo report have one implementation and both
 gates match the same way. Any internal error allows the commit and says so.
 
-Known gap, recorded rather than papered over: `git commit -F <file>` and the
-editor path are uninspectable at hook time, and a commit-time git hook
-(`core.hooksPath`) is the layer that closes it.
+The hook has one known gap: `git commit -F <file>` and the editor path are
+uninspectable at hook time. The station git hooks close it: their `commit-msg` runs
+the same rules, which live in `detect.py`, for every harness and the editor path,
+and this hook retires once that runs on both stations.
 
 Script: [`claude-code/hooks/reject_bad_commit_message.py`](hooks/reject_bad_commit_message.py).
 
@@ -1187,6 +1202,31 @@ It does not see a path held in a variable or passed inside a `bash -c` string, a
 The hook exits 0 on every code path and stays silent on its own errors.
 
 Script: [`../../hooks/warn_cross_repo_git.py`](../../hooks/warn_cross_repo_git.py).
+
+### `guard_git_bypass.py`
+
+PreToolUse guard (matcher `Bash`) - **blocking** (exit 2).
+It refuses an agent's bypass of the station git hooks: `--no-verify` (or an unambiguous abbreviation) on commit, push or merge, a short-flag cluster holding `n` on commit, a `-c core.hooksPath=`, `include.path` or `--config-env=` override on any git command, `GIT_CONFIG_*`, `HOME` or `XDG_CONFIG_HOME` set, exported or cleared (`env -i`, `env -u`) on a commit, push or merge, a `git config` write to `core.hooksPath` (reads pass), and `hooks/git/install.sh --uninstall` or `--force`.
+It tokenizes the command with quotes respected, cuts it at shell control tokens, and unwraps groups, `!`, shell keywords, `env`, `command`, `exec`, `sudo`, `nice`, `time`, `nohup` and `xargs`, so a command that only mentions these strings passes.
+The user runs the same commands from their own terminal, where no PreToolUse hook exists.
+That terminal is the whole escape hatch, and it needs no state file.
+The hook does not see an alias, a variable, `bash -c`, `$(...)` or backticks: it guards the honest case.
+Tests: `tests/station-hooks/test-guard-git-bypass.py`.
+
+Script: [`../../hooks/guard_git_bypass.py`](../../hooks/guard_git_bypass.py).
+
+### The station git hooks (`~/.agents/hooks/git/`, not seeded)
+
+This folder is git's own hooks folder rather than a Claude Code hook.
+Git uses it in place through the global `core.hooksPath`, so every harness and the user's terminal pass through it.
+`sh ~/.agents/hooks/git/install.sh` shows the current value and sets it, and it refuses to replace a different value without `--force`.
+`--check` reports the setting, and `--uninstall` removes it only when it points here.
+Every hook name in githooks(5) except `push-to-checkout` and `proc-receive` (git changes its own behavior when those exist) links to `dispatch`, which chains each event to the repo's own hook at `$(git rev-parse --git-common-dir)/hooks/<name>`, so repo hooks and linked worktrees keep working.
+After the repo's hook, `pre-commit`, `commit-msg` and `pre-push` run `sanitize gate` from the sanitize skill.
+Secrets, hidden-character attacks and a message that describes sensitivity block the operation, and identifier-shaped content warns.
+A repo that sets its own `core.hooksPath` (husky, lefthook) keeps it, and the gate does not run there.
+A missing `python3` or gate lets the operation through with one stderr line.
+Tests: `tests/station-hooks/test-git-dispatch.py` (throwaway repos, never the station's own config).
 
 ## 9. Status lines (`~/.claude/statusline.sh` + `subagent-statusline.sh`)
 

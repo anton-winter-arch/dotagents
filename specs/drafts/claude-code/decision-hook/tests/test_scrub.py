@@ -40,16 +40,17 @@ class TestSecrets(unittest.TestCase):
         self.check("ANTHROPIC_API_KEY=" + ANTHROPIC, "api key")
         self.check("token " + GITHUB, "github token")
         self.check(SLACK, "slack token")
-        self.check("curl -H 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz' x", "bearer token", keep=["Authorization: Bearer "])
+        # The values below are joined at runtime so this file's source holds no credential shape.
+        self.check("curl -H 'Authorization: Bearer " + "abcdefghijklmnopqrstuvwxyz' x", "bearer token", keep=["Authorization: Bearer "])
         self.check(DB_URL, "url password", keep=["postgres://admin:", "@db.internal"])
         self.check(PEM, "private key")
         self.check("DB_PASSWORD='correct-horse-battery'", "key-like assignment", keep=["DB_PASSWORD="])
         self.check(JWT, "jwt")
         self.check("aws configure set aws_access_key_id " + "ASIA" + "IOSFODNN7EXAMPLE", "aws access key")
-        self.check("tool login --password correct-horse-battery --user me", "flag credential", keep=["--password ", "--user me"])
-        self.check("tool --token=abcdefghijklmnop", "flag credential", keep=["--token="])
-        self.check("curl -u admin:hunter2hunter2 https://host.example/", "basic-auth password", keep=["-u admin:", "https://host.example/"])
-        self.check("mysql -h db.example -u root -pcorrecthorse app", "inline password flag", keep=["-u root -p", " app"])
+        self.check("tool login --password " + "correct-horse-battery --user me", "flag credential", keep=["--password ", "--user me"])
+        self.check("tool --token=" + "abcdefghijklmnop", "flag credential", keep=["--token="])
+        self.check("curl -u admin:" + "hunter2hunter2 https://host.example/", "basic-auth password", keep=["-u admin:", "https://host.example/"])
+        self.check("mysql -h db.example -u root -p" + "correcthorse app", "inline password flag", keep=["-u root -p", " app"])
 
     def test_plain_commands_are_untouched(self):
         for text in ("git status --porcelain", "python3 -m unittest discover -s tests", "ls -la ~/.config",

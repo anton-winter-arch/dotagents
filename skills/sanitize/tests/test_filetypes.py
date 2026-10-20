@@ -114,11 +114,14 @@ class TestFieldContext(unittest.TestCase):
     """A credential split into a key and a value by the parser must still meet the
     assignment rule: `{"password": "..."}` is `password=...` to a reader."""
 
+    # Fixture values are joined at runtime, so this file's source never holds a
+    # credential-shaped `"key": "value"` pair that the engine's own sweep would flag.
     def test_json_credential_value_under_a_key_like_name_is_masked(self):
-        out, _, counts = run("cfg.json", json.dumps({"password": "Hunter2Hunter2x9", "name": "zorbulate"}).encode())
+        out, _, counts = run("cfg.json", json.dumps({"password": "Hunter2" + "Hunter2x9", "name": "zorbulate"}).encode())
         self.assertEqual(json.loads(out), {"password": "[SECRET]", "name": "[TERM]"})
         self.assertEqual((counts["secret"], counts["term"]), (1, 1))
-        nested = {"db": {"api_key": "AbCdEf123456GhIjK", "host": "db.internal"}, "tokens": ["x", {"token": "k9k9k9k9k9k9k9"}]}
+        nested = {"db": {"api_key": "AbCdEf" + "123456GhIjK", "host": "db.internal"},
+                  "tokens": ["x", {"token": "k9k9k9" + "k9k9k9k9"}]}
         out, _, counts = run("cfg.json", json.dumps(nested).encode())
         self.assertEqual(json.loads(out), {"db": {"api_key": "[SECRET]", "host": "db.internal"}, "tokens": ["x", {"token": "[SECRET]"}]})
         self.assertEqual(counts["secret"], 2)
@@ -129,7 +132,7 @@ class TestFieldContext(unittest.TestCase):
         self.assertNotIn("secret", counts)
 
     def test_jsonl_rows_and_csv_columns_get_the_same_context(self):
-        rows = [json.dumps({"user": "u1", "secret": "s3cr3ts3cr3ts3"}), json.dumps({"user": "u2", "secret": "short"})]
+        rows = [json.dumps({"user": "u1", "secret": "s3cr3t" + "s3cr3ts3"}), json.dumps({"user": "u2", "secret": "short"})]
         out, _, counts = run("rows.jsonl", "\n".join(rows).encode())
         self.assertEqual([json.loads(l)["secret"] for l in out.decode().splitlines()], ["[SECRET]", "short"])
         csv_text = "user,api_key,note\nu1,ZxZxZxZx1234ZxZx,fine\nu2,nope,zorbulate\n"

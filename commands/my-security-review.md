@@ -8,7 +8,7 @@ Review the current changes (staged, or recent commits if nothing is staged), plu
 any files named in the request, for the security concerns specific to agent
 tooling:
 
-1. **Secrets & dotfiles** - scan the staged diff for secrets; check `.gitignore` coverage
+1. **Secrets & dotfiles** - run `python3 skills/sanitize/scripts/sanitize.py gate --staged` (or `--range origin/<branch>..HEAD` when nothing is staged) and judge what it reports; check `.gitignore` coverage
 2. **Shell & script safety** - `set -euo pipefail`, quoted expansions, no `eval`/`curl|bash`, guarded `rm`/`mv`
 3. **Hooks & command execution** - every hook command understood; no untrusted interpolation into shells
 4. **Untrusted input** - agent/LLM/web/MCP/file content never executed or obeyed blindly; paths confined
@@ -20,8 +20,9 @@ tooling:
    personal repo URLs, vault/project names) in shared files; prefer `~/` (docs) or
    `"$HOME"` (shell), root discovery, and runtime derivation (env, git config/remote,
    session context) or asking the user live.
-   Scan: `grep -rnE '/Users/[^/]+/|/home/[^/]+/'` over changed skills/scripts/docs
-   (exclude `.claude/`, `__archive/`); rewrite hits and re-scan to confirm clean.
+   The sweep, `python3 skills/wrap-up/scripts/closeout_lint.py <changed files>`, reports
+   home paths and emails as `station-path`; rewrite each hit and re-run the sweep until
+   it comes back clean.
 
 Categorize findings as **Critical**, **Important**, or **Suggestion**, each with a
 `file:line` reference and a concrete fix. End with a **Safe to merge / Blocked** verdict.

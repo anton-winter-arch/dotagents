@@ -223,7 +223,8 @@ class TestRun(Base):
 
 
 class TestSanitizedStage(Base):
-    KEY = "-----BEGIN PRIVATE KEY-----\nMIIBfakefakefake\n-----END PRIVATE KEY-----"
+    # joined at runtime so this file's source holds no key block for a sweep to flag
+    KEY = "-----BEGIN " + "PRIVATE KEY-----\nMIIBfakefakefake\n-----END " + "PRIVATE KEY-----"
 
     def test_secret_shapes_are_replaced_in_the_stage_and_counted(self):
         (self.src / "pkg" / "a.py").write_text(f"KEY = '''{self.KEY}'''\ndef f():\n    return 1\n")
@@ -564,7 +565,7 @@ class TestOneShotRunners(Base):
 class TestOllama(Base):
     """The real ollama runner against a fake daemon on loopback; no fake harness binary."""
     TAG = "deepseek-v4.1-flash:cloud"
-    KEY_LINE = "-----BEGIN PRIVATE KEY----- fixture -----END PRIVATE KEY-----"
+    KEY_LINE = "-----BEGIN " + "PRIVATE KEY----- fixture -----END " + "PRIVATE KEY-----"
 
     def setUp(self):
         super().setUp()

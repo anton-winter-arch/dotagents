@@ -49,5 +49,8 @@
 
   {"name": "refresh-the-tooling-corpus", "should_trigger": false,
    "query": "Refresh the AI tooling catalog and fold in anything new you find.",
-   "why": "Belongs to ai-engineering's write mode, which owns the discovery pass and calls this skill as one of its tools. The deliverable is an updated catalog, not a brief."}
+   "why": "Belongs to ai-engineering's write mode, which owns the discovery pass and calls this skill as one of its tools. The deliverable is an updated catalog, not a brief."},
+  {"name": "ai-tooling-research-starts-in-ai-engineering", "should_trigger": false,
+   "query": "Research the current state of open-source agent memory frameworks thoroughly and tell me which ones are still maintained.",
+   "why": "A question about AI or agent tooling starts in ai-engineering, which answers from its dated catalog first and hands web research to this skill only where the catalog is stale."}
 ]

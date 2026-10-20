@@ -1,6 +1,7 @@
 ---
 name: agent-review
 description: One outside model reviews a fixed set of files read-only and hands its text back - `/agent-review <harness> [model] [effort]` with harness claude (Fable), codex (GPT-6 Astra), cursor (Grok 4.7), antigravity (Gemini 4 Argon) or ollama (a `:cloud` tag such as deepseek-v4.1-flash or glm-5.3-flash, files inlined). Claude shapes the ask with the user, proposes the file list, waits for approval, then runs one headless call with the cleaned files inlined and no tools, and summarizes the review. Use when the user wants a second opinion, a review, a critique or a take on specific files from one named harness or model - "ask codex to review", "get grok's take", "have deepseek look at the spec". The panel with blind ranking is agent-conference; an edit task for one harness is its *-task skill.
+disable-model-invocation: true
 ---
 
 # agent-review

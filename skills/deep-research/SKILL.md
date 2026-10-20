@@ -4,8 +4,8 @@ description: >-
   Expanded, multi-angle web research - an upgrade over a single WebSearch. Decomposes a
   topic into angles, runs parallel researcher subagents (one per angle, source-cited and
   dated), cross-validates their findings for contradictions and source authority, then
-  synthesizes one confidence-rated, source-cited brief. Provider- and project-agnostic;
-  writes nothing outside its output unless asked. Use for "deep research", "research X
+  synthesizes one confidence-rated, source-cited brief. Questions about AI or agent
+  tooling start in ai-engineering. Use for "deep research", "research X
   thoroughly", "multi-angle", "what's the current state of X", "is X still true", any request for an answer
   that is "verified, not guessed" (--inline covers quick verified lookups), or any
   question where a single search is too shallow and accuracy matters.

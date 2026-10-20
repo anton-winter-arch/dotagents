@@ -17,7 +17,7 @@ What this harness is for on this station. Each claim is marked **observed**
 working sense, not yet measured).
 
 - **The open-source lane that completes the bench - observed.** On
-  `harness-bench` with `glm-5.3-flash:cloud` at thinking `low`, goose passed
+  the tryout bench (`/task tryout`) with `glm-5.3-flash:cloud` at thinking `low`, goose passed
   33 of 33 task runs (eleven tasks, three reps) on 2026-10-13; the result table is
   in `tasks/SPEC-HARNESS-BENCH.md`.
 - **Keeps large tool output in check - observed.** goose truncates large tool

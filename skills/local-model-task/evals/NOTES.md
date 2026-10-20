@@ -15,7 +15,7 @@ replay of the qwen extraction case with the skill installed and an
 ## Consequences
 
 - The should-NOT cases are the enforceable half. They check that the skill
-  does not trigger on requests for codex-task, plain summaries, model-install
+  does not trigger on requests for `/task codex`, plain summaries, model-install
   advice or Ollama debugging, and they need to keep passing.
 - Judge recall by replaying a case with its material present and reading the
   tool sequence from stream-json, rather than from this harness's

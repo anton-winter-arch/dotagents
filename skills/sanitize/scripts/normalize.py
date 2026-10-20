@@ -20,9 +20,16 @@ import re
 import unicodedata
 import urllib.parse
 
-# Characters with no width that hide inside a word: zero-width space, non-joiner,
-# joiner, word joiner, byte-order mark, soft hyphen, Mongolian vowel separator.
-ZERO_WIDTH = {chr(c) for c in (0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x00AD, 0x180E)}
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from detect import FOLD_CHARS  # noqa: E402
+
+# Characters with no width that hide inside a word (zero-width space, non-joiner, joiner,
+# word joiner, byte-order mark, soft hyphen, Mongolian vowel separator): the rows of the
+# one codepoint table in detect.py that are marked to fold.
+ZERO_WIDTH = FOLD_CHARS
 
 # Letters that look like ASCII and are not. NFKC does not fold these, so a table does.
 CONFUSABLES = {

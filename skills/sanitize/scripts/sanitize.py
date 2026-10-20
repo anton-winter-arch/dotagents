@@ -34,8 +34,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import detect  # noqa: E402
 import filetypes as ft  # noqa: E402
 import normalize as nz  # noqa: E402
+# The detector tables live in detect.py, the one rule source; these names stay here for
+# the modes below and for callers that read them from this module.
+from detect import (CUSTOM_CHECKS, SECRET_PATTERNS, SHORT_TERM, read_term_file,  # noqa: E402,F401
+                    term_pattern, terms_file)
 
 SECRET = "[SECRET]"
 TERM = "[TERM]"
@@ -50,37 +55,11 @@ class SanitizeError(Exception):
 
 
 # ---------------------------------------------------------------- secrets
-# Each pattern masks group 1 when it has one, else the whole match.
-
-SECRET_PATTERNS = [
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"),
-    re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
-    re.compile(r"(?:^|\s)--?(?:password|passwd|pwd|token|secret|api[-_]?key)[=\s]+[\"']?([^\s\"'`;&|]{6,})", re.I),
-    re.compile(r"(?<!\S)-u\s+[^\s:]+:([^\s\"'`;&|]+)"),
-    re.compile(r"\s-p([^\s\"'`;&|-]{6,})"),
-    re.compile(r"\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}\b"),
-    re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
-    re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}\b"),
-    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
-    re.compile(r"\bAIza[0-9A-Za-z_-]{30,}\b"),
-    re.compile(r"\bsk_(?:live|test)_[A-Za-z0-9]{16,}\b"),
-    re.compile(r"\b(?:npm|hf)_[A-Za-z0-9]{30,}\b"),
-    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
-    re.compile(r"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:([^/\s@]+)@", re.I),
-    re.compile(r"\bbearer\s+([A-Za-z0-9._~+/=-]{16,})", re.I),
-    # HTTP basic credentials are a secret whatever the decoded pair looks like
-    re.compile(r"\bauthorization\s*[:=]\s*[\"']?basic\s+([A-Za-z0-9+/=_-]{8,})", re.I),
-    re.compile(r"\b(?:authorization|x-api-key|api[-_]?key)\s*[:=]\s*[\"']?((?=[A-Za-z0-9._~+/=-]*\d)[A-Za-z0-9._~+/=-]{12,})(?![\w(])", re.I),
-    # A key-like name assigned a credential-shaped value: 12 or more key characters holding at
-    # least one digit, so `key = parts[0]`, `tokens = text.split()` and `TOKEN = "[SECRET]"`
-    # in code are left alone while `API_TOKEN=9f3k...` is caught.
-    re.compile(r"\b[A-Za-z0-9_]*(?:key|token|secret|password|passwd|pwd|credential)[A-Za-z0-9_]*\s*[=:]\s*[\"']?((?=[A-Za-z0-9_\-+/=~]*\d)[A-Za-z0-9_\-+/=~]{12,})(?![\w(.\[])", re.I),
-]
 
 # A parsed file hands the scrubber a key and a value apart, so `{"password": "..."}` never
 # reaches the assignment rule as `password=...`. Field-aware scrubbing rejoins them.
-CREDENTIAL_KEY_RE = re.compile(r"(?:key|token|secret|password|passwd|pwd|credential|authorization)", re.I)
-KEY_VALUE_RULE = SECRET_PATTERNS[-1]
+CREDENTIAL_KEY_RE = detect.CREDENTIAL_KEY
+KEY_VALUE_RULE = detect.KEY_VALUE_RULE
 
 
 def scrub_field(key: str, value: str, counts: dict, scrub) -> str:
@@ -96,36 +75,7 @@ def scrub_field(key: str, value: str, counts: dict, scrub) -> str:
     return scrub(value, counts)
 
 
-# ---------------------------------------------------------------- custom shape checks
-# (class, placeholder, pattern). Group 1, when present, is the part replaced.
-
-CUSTOM_CHECKS = [
-    ("email", "[EMAIL]", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")),
-    # International or national phone: optional +CC, then 3 groups separated by space, dot or dash,
-    # 10 to 11 digits in all. Dotted version strings and bare ports have fewer digits and no separators.
-    ("phone", "[PHONE]", re.compile(r"(?<![\w.])(?:\+\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}(?![\w.])")),
-    # Built from two pieces so the pattern's own source does not form the shape it matches.
-    ("home_path", "[HOME]", re.compile(r"(?<![\w/])(" + "/" + r"(?:Users|home)/[^/\s\"'`]+)(?=/|\s|$|[\"'`)])")),
-    ("role_code", "[ROLE]", re.compile(r"\b[A-Z]{1,4}\s*\((?:DE|DA|ITL|BA|PM|QA|SA|SO)\d+\)")),
-    ("catalog", "[CATALOG]", re.compile(r"\b(?:prod|uat|dev|test|stg)[-_]?(?:bronze|silver|gold|raw|landing)\b", re.I)),
-]
-
 # ---------------------------------------------------------------- the term list
-
-
-def terms_file() -> Path:
-    return Path(os.environ.get("IDENTIFIER_TERMS_FILE") or Path.home() / ".claude" / "private" / "identifier-terms.txt")
-
-
-def read_term_file(path: Path) -> set[str]:
-    """One term per line; a line that is `#` or starts with `# ` is a comment, `#tag` is a term."""
-    lines = path.read_text(encoding="utf-8").splitlines()
-    out = set()
-    for ln in lines:
-        s = ln.strip()
-        if s and not (s == "#" or s.startswith("# ")):
-            out.add(s)
-    return out
 
 
 def station_terms() -> set[str]:
@@ -143,20 +93,6 @@ def station_terms() -> set[str]:
     return terms
 
 
-SHORT_TERM = 4   # below this length a term matches as typed only; the normalized view skips it already
-
-
-def term_pattern(term: str) -> re.Pattern:
-    """The identifier hook's rule: a single-case term matches any case, a mixed-case term
-    matches as typed, and the edges are 'no word character on either side' so a
-    symbol-edged term still matches whole. A term shorter than SHORT_TERM matches as
-    typed whatever its case: an all-caps two-letter term under the any-case rule is the
-    common word it spells."""
-    short = len(term) < SHORT_TERM
-    flags = re.I if (not short and (term == term.upper() or term == term.lower())) else 0
-    return re.compile(r"(?<!\w)" + re.escape(term) + r"(?!\w)", flags)
-
-
 # ---------------------------------------------------------------- the passes
 
 
@@ -169,37 +105,20 @@ def _sub_counting(regex: re.Pattern, text: str, placeholder: str, counts: dict, 
     return regex.sub(repl, text)
 
 
-def _raw_term_hit(text: str, terms: set[str]) -> bool:
-    return any(term_pattern(t).search(text) for t in terms)
+_raw_term_hit = detect.raw_term_hit
 
 
 def _term_pass(text: str, terms: set[str], counts: dict, cls: str) -> str:
-    """One term set, three views, all computed on the same original text: raw matches by
-    the matching rule (counted as cls), the normalized view for split tokens, punctuation,
-    confusables and zero-width characters (cls-normalized), and base64 or hex runs whose
-    decoded text holds a term (cls-encoded). The spans are merged and replaced once, so a
-    placeholder written for one view can neither be re-matched by the next nor hide a hit
-    the next would have found (a council finding, 2026-10-10). Where spans overlap the
-    longest wins, and at equal length the raw view, so the result is deterministic."""
-    if not terms:
-        return text
-    raw: list[tuple[int, int]] = []
-    for term in terms:
-        raw += [(m.start(), m.end()) for m in term_pattern(term).finditer(text)]
-    normalized = nz.normalized_hits(text, terms)
-    encoded = nz.encoded_hits(text, lambda decoded: _raw_term_hit(decoded, terms)
-                              or bool(nz.normalized_hits(decoded, terms)))
-    candidates = ([(s, e, 0, cls) for s, e in nz.merge_spans(raw)]
-                  + [(s, e, 1, f"{cls}-normalized") for s, e in normalized]
-                  + [(s, e, 2, f"{cls}-encoded") for s, e in encoded])
-    candidates.sort(key=lambda c: (-(c[1] - c[0]), c[0], c[2]))
-    taken: list[tuple[int, int]] = []
-    for s, e, _, key in candidates:
-        if any(s < te and ts < e for ts, te in taken):
-            continue
-        taken.append((s, e))
+    """One term set, three views (detect.term_spans): raw matches counted as cls, the
+    normalized view for split tokens, punctuation, confusables and zero-width characters
+    (cls-normalized), and encoded runs whose decoded text holds a term (cls-encoded). The
+    spans are merged and replaced once, so a placeholder written for one view can neither
+    be re-matched by the next nor hide a hit the next would have found."""
+    spans = detect.term_spans(text, terms)
+    for _s, _e, view in spans:
+        key = cls if view == "raw" else f"{cls}-{view}"
         counts[key] = counts.get(key, 0) + 1
-    return nz.replace_spans(text, taken, TERM) if taken else text
+    return nz.replace_spans(text, [(s, e) for s, e, _ in spans], TERM) if spans else text
 
 
 def _encoded_shape_pass(text: str, counts: dict) -> str:
@@ -652,10 +571,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     d = sub.add_parser("doctor", help="station list present, normalization self-test, masker status")
     d.set_defaults(fn=cmd_doctor)
+
+    # Listed for --help only; main() hands `gate` to gate.py before this parser runs.
+    sub.add_parser("gate", help="the commit and push check behind the git hooks: --staged, --refs, --range, --message, --files")
     return ap
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["gate"]:
+        # The commit and push check has its own parser, failure mode and exit codes (gate.py).
+        import gate
+        return gate.main(argv[1:])
     ap = build_parser()
     try:
         args = ap.parse_args(argv)

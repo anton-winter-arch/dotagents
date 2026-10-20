@@ -1,15 +1,20 @@
 ---
 name: sanitize
-description: Deterministic scrubbing engine that writes a cleaned copy of any file or folder (text, code, Markdown, JSON, CSV, Word), scans a repo tree without editing it, or gates one answer on stdin - secrets by shape, emails, phones, home paths, the station term list on raw and normalized text (split tokens, confusables, zero-width, base64, hex), plus per-run terms, patterns and ban lists. No model runs inside it; the report holds counts and paths, never a value. Use when a folder, document or export must be cleaned before a model or another person sees it, when a training staging folder needs its cleaning report, when a repo needs a pre-publish scan for identifiers or secrets, or when a vault answer must be checked against protected terms. Not for web input sanitizing or git history rewrites.
+description: Deterministic scrubbing engine and the station's one detector source - writes a cleaned copy of any file or folder, scans a repo tree without editing it, gates one answer on stdin, or checks the added lines of a commit or push for secrets by shape, emails, phones, home paths and the station term list. No model inside; output never holds a value. Use when a folder, document or export must be cleaned before a model or another person sees it, when a training staging folder needs its cleaning report, when a repo, a staged change or an unpushed range needs a scan for identifiers or secrets, or when a vault answer must be checked against protected terms. Not for web input sanitizing, git history rewrites, or a full security review, which is my-security-review-checklist.
 ---
 
 # sanitize
 
-One engine runs three modes, with no model inside it. The original is read by the script and nothing
-else; what comes out is a copy with every hit replaced by a class placeholder
+The skill is one engine with no model inside it. The original is read by the script
+and nothing else; what comes out is a copy with every hit replaced by a class placeholder
 (`[SECRET]`, `[TERM]`, `[EMAIL]`, `[PHONE]`, `[HOME]`, `[ROLE]`, `[CATALOG]`,
 `[PATTERN]`) and a report of counts and paths. Any model pass, local or cloud, is
 something you run afterwards over the copy.
+
+`scripts/detect.py` is the station's one rule source: every content detector, allowance,
+codepoint table and severity table lives there. The `gate` command, the wrap-up lint,
+agent-mail's send-time check, the hidden-character scanner and the write-time hooks all
+import it, so a detector is fixed once and every consumer gets the fix.
 
 ## Commands
 
@@ -96,6 +101,29 @@ sanitize.py answer [--config <vault.json>] < answer.txt
 `doctor` prints whether the station term list is present (its count, never its contents),
 runs a normalization self-test, and states that the recall layer is off. Exits `2`
 when the list is missing.
+
+### gate
+
+```
+sanitize.py gate --staged | --refs [--remote R] | --range A..B | --message FILE | --files PATH... [--json]
+```
+
+`gate` is the commit and push check behind the station's git hooks (`hooks/git/`,
+installed with `sh hooks/git/install.sh`). It reports on added lines only: every detector
+runs over each touched file's full post-image, and a finding counts when it touches an
+added line. A range (and a pre-push ref list) is scanned commit by commit, reading each
+commit's diff and message, so a secret added and then removed still counts.
+Secrets, hidden-character attacks (tag, bidi, zero-width) and a commit message that
+describes sensitivity block with exit `3`. Everything identifier-shaped (terms, emails,
+home paths, work items, GUIDs) warns and exits `0`. `--files` reads whole files at the
+review severity the wrap-up lint uses. Output is `path:line  class  tier` and never
+includes the value.
+
+A missing term list skips the term class with one note. A git object the gate cannot
+read blocks. A bug in the gate exits `0` with a stderr line, so a gate bug never stops
+every commit on the machine. Lockfiles, minified bundles and binaries are skipped. The
+only escape hatch is the user's: `--no-verify` on commit and push from their own
+terminal. `hooks/guard_git_bypass.py` refuses the same flag when an agent passes it.
 
 ## What gets replaced, in order
 

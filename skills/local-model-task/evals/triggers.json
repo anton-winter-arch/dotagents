@@ -27,7 +27,7 @@
     "name": "codex-boundary",
     "query": "give this refactor of the auth module to codex and show me the diff",
     "should_trigger": false,
-    "why": "Handing work to Codex is codex-task."
+    "why": "Handing work to Codex is /task codex."
   },
   {
     "name": "plain-summary",

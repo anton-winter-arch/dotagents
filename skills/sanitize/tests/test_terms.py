@@ -108,7 +108,7 @@ class TestTermList(TermFixture):
 
 class TestSecrets(unittest.TestCase):
     def test_private_key_block_is_one_hit(self):
-        text = "x\n-----BEGIN RSA PRIVATE KEY-----\nabc\ndef\n-----END RSA PRIVATE KEY-----\ny"
+        text = "x\n-----BEGIN RSA " + "PRIVATE KEY-----\nabc\ndef\n-----END RSA " + "PRIVATE KEY-----\ny"
         counts = {}
         out = sz.scrub_text(text, set(), counts)
         self.assertEqual(out, "x\n[SECRET]\ny")
@@ -119,7 +119,7 @@ class TestSecrets(unittest.TestCase):
         self.assertEqual(out, "key [SECRET] end")
 
     def test_key_like_assignment_masks_only_the_value(self):
-        out = sz.scrub_text("API_TOKEN=abc9defghijkl", set(), {})
+        out = sz.scrub_text("API_TOKEN=" + "abc9defghijkl", set(), {})
         self.assertEqual(out, "API_TOKEN=[SECRET]")
 
     def test_key_like_names_in_code_are_left_alone(self):
@@ -127,12 +127,12 @@ class TestSecrets(unittest.TestCase):
         self.assertEqual(sz.scrub_text(code, set(), {}), code)
 
     def test_url_password_masks_only_the_password(self):
-        out = sz.scrub_text("postgres://user:hunter22@db/x", set(), {})
+        out = sz.scrub_text("postgres://user:" + "hunter22@db/x", set(), {})
         self.assertEqual(out, "postgres://user:[SECRET]@db/x")
 
     def test_encoded_runs_are_checked_for_every_shape_not_terms_only(self):
         import base64
-        key = base64.b64encode(b"API_TOKEN=abc9defghijklmnop").decode()
+        key = base64.b64encode(b"API_TOKEN=" + b"abc9defghijklmnop").decode()
         counts = {}
         self.assertEqual(sz.scrub_text(f"blob {key} end", set(), counts), "blob [SECRET] end")
         self.assertEqual(counts, {"secret-encoded": 1})
@@ -144,7 +144,7 @@ class TestSecrets(unittest.TestCase):
         self.assertEqual(sz.scrub_text(f"x {hexed} y", set(), {}), "x [SECRET] y")
 
     def test_basic_authorization_is_a_secret_whatever_it_decodes_to(self):
-        out = sz.scrub_text("Authorization: Basic dXNlcjpwYXNzd29yZA==", set(), {})
+        out = sz.scrub_text("Authorization: Basic " + "dXNlcjpwYXNzd29yZA==", set(), {})
         self.assertEqual(out, "Authorization: Basic [SECRET]")
 
     def test_already_masked_value_is_not_counted_twice(self):

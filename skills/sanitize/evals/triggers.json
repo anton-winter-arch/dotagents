@@ -70,5 +70,11 @@
     "query": "delete the old exports folder, we don't need it anymore",
     "should_trigger": false,
     "why": "A deletion is not a cleaned copy."
+  },
+  {
+    "name": "full-security-review",
+    "query": "do a full security review of the hooks and settings I changed today before I push them",
+    "should_trigger": false,
+    "why": "A full review of hooks and settings is my-security-review-checklist; a scan for identifiers or secrets alone is this skill."
   }
 ]

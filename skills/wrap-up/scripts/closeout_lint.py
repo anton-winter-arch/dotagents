@@ -13,26 +13,36 @@ mirrors, "three rules" standing above four bullets, a station path in a file
 bound for publication. Those classes are decidable without a model, so they are
 decided here.
 
-Seven checks, one per class:
+Two kinds of check. The content checks are the sanitize skill's detectors
+(skills/sanitize/scripts/detect.py, the one rule source) read through its review
+severity table; this file holds no content pattern of its own:
+
+  - station-path         an absolute home directory or an email address, which
+                         is a personal constant in anything published
+  - credential-shape     a secret shape (FAIL), or a private-key header with no
+                         key material under it (WARN)
+  - work-item-id, role-code, env-catalog
+                         identifier shapes, surfaced as candidates (WARN) for the
+                         reviewer to rule on, since whether a token names
+                         something real needs context this tool does not have;
+                         stand-in values (repdigits, sequences) are filtered out
+  - identifier-term      a station term-list entry; FAIL in a file that travels,
+                         WARN under PROJECTS/, tasks/, DRAFTS/ and __archive/
+  - invisible-unicode    a character that hides or reorders text (FAIL), or a
+                         variation selector (WARN)
+
+The prose checks are this file's own:
 
   - undefined-shell-var  a fenced shell block references a variable no block in
                          the file assigns, so the documented command cannot run
-  - station-path         an absolute home directory or an email address, which
-                         is a personal constant in anything published
-  - identifier           a work-item id, role-coded initials, an environment
-                         catalog name or a credential marker. Surfaced as
-                         candidates for the reviewer to rule on, since whether a
-                         token names something real needs context this tool does
-                         not have; values whose digits are an obvious stand-in
-                         are filtered out here so the list stays readable
-  - invisible-unicode    delegated to the sibling unicode_smuggle_check.py, so
-                         the codepoint tables live in one place
   - ordinal-mismatch     an ordered list whose numbering is not contiguous, or
                          which disagrees with the Step/Phase headings it counts
   - count-mismatch       "N <things>:" standing above a list or table that does
                          not hold N of them
   - dead-xref            a relative markdown link pointing at a file that does
                          not exist
+
+A content finding names the line and the class, never the matched value.
 
 This tool never edits. It reports, and the operator rules on what it found.
 
@@ -76,10 +86,8 @@ TEXT_SUFFIXES = {
     ".zsh", ".py", ".js", ".ts", ".tsx", ".jsx", ".rs", ".go", ".rb", ".ps1",
 }
 
-UNICODE_SCANNER = (
-    Path(__file__).resolve().parents[2]
-    / "my-security-review-checklist" / "scripts" / "unicode_smuggle_check.py"
-)
+SANITIZE_SCRIPTS = Path(__file__).resolve().parents[2] / "sanitize" / "scripts"
+MAX_FILE_BYTES = 5_000_000
 
 
 @dataclass(frozen=True)
@@ -227,184 +235,65 @@ def check_shell_vars(lines: list[str], path: str) -> list[Finding]:
 
 
 # --------------------------------------------------------------------------
-# check 2 - station paths and personal constants
+# content checks - the sanitize skill's detectors at the review severity
 
-HOME_PATH = re.compile(r"(?:/Users/|/home/|[Cc]:\\Users\\)([A-Za-z0-9._-]+)[/\\]")
-EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+RULES = {
+    "home_path": ("station-path", "an absolute home directory - a personal constant that does not "
+                                  "survive publication or another machine; use $HOME or a neutral placeholder"),
+    "email": ("station-path", "an email address is a personal constant"),
+    "secret": ("credential-shape", "a credential shape - treat it as issued until proven otherwise, and "
+                                   "rotate it if it ever reached a remote"),
+    "key_header": ("credential-shape", "a private-key header with no key material under it - benign in a "
+                                       "fixture or a rule table, a leak anywhere else"),
+    "work_item": ("work-item-id", "a live tracker item's shape with digits that are not an obvious "
+                                  "stand-in - confirm it names nothing real, or use a repdigit, a "
+                                  "sequential run or an NNNNnn placeholder"),
+    "role_code": ("role-code", "reads as a person's initials with a role code"),
+    "catalog": ("env-catalog", "reads as an environment-prefixed catalog name"),
+    "term": ("identifier-term", "a station term-list entry - a private project, client or person "
+                                "identifier unless it is an ordinary word here"),
+}
 
-PLACEHOLDER_NAMES = frozenset({
-    "me", "you", "user", "username", "name", "someone", "example", "test",
-    "alice", "bob", "foo", "bar", "runner", "your-name", "yourname", "owner",
-})
-# RFC 2606 and RFC 6761 reserve these for documentation and fixtures
-PLACEHOLDER_DOMAINS = (
-    "example.com", "example.org", "example.net", "noreply.github.com",
-    ".test", ".invalid", ".localhost", ".local", ".example",
-)
 
+class Engine:
+    """The sanitize detectors, loaded once. `error` is set when the engine is missing, and
+    a missing engine is reported as a FAIL: a check that did not run is not a clean result."""
 
-def check_station_paths(lines: list[str], path: str) -> list[Finding]:
-    findings: list[Finding] = []
-    for lineno, line in enumerate(lines, start=1):
-        for owner in HOME_PATH.findall(line):
-            if owner.lower() in PLACEHOLDER_NAMES or len(owner) <= 2:
+    def __init__(self, root: Path):
+        self.error = ""
+        self.detect = None
+        self.terms: set[str] = set()
+        self.terms_skipped = False
+        try:
+            sys.path.insert(0, str(SANITIZE_SCRIPTS))
+            import detect
+        except Exception as exc:                          # missing or broken engine
+            self.error = f"{type(exc).__name__}"
+            return
+        self.detect = detect
+        listed = detect.station_terms_lenient()
+        self.terms_skipped = listed is None
+        self.terms = set(listed or ()) | detect.project_aliases(root)
+
+    def check(self, text: str, path: str) -> list[Finding]:
+        if self.detect is None:
+            return []
+        findings: list[Finding] = []
+        for hit in self.detect.find(text, self.terms):
+            level = self.detect.severity("review", hit, path)
+            if level is None:
                 continue
-            findings.append(Finding(
-                path, lineno, FAIL, "station-path",
-                f"absolute home directory of '{owner}' - a personal constant that "
-                "does not survive publication or another machine; use $HOME or a "
-                "neutral placeholder",
-            ))
-        for address in EMAIL.findall(line):
-            if address.lower().endswith(PLACEHOLDER_DOMAINS):
+            severity = FAIL if level == self.detect.BLOCK else WARN
+            line = self.detect.line_of(text, hit.start)
+            if hit.cls == "invisible":
+                ch = text[hit.start]
+                why = self.detect.codepoint_rule(ch)[2]
+                findings.append(Finding(path, line, severity, "invisible-unicode",
+                                        f"U+{ord(ch):04X} [{hit.rule}] {why}"))
                 continue
-            findings.append(Finding(
-                path, lineno, FAIL, "station-path",
-                f"email address '{address}' is a personal constant",
-            ))
-    return findings
-
-
-# --------------------------------------------------------------------------
-# check 3 - identifiers, role codes, catalogs and credential markers
-#
-# These are surfaced as candidates, not verdicts. Whether a token names something
-# real is a judgment the reviewer makes with context this tool does not have, and
-# a sweep that called every identifier-shaped string a leak would be muted inside
-# a week. What is decidable here is the opposite direction: a value whose digits
-# are an obvious stand-in is not a leak, and saying so keeps the candidate list
-# short enough to read.
-
-# The prefix set is a station allowlist inherited from the identifier hook, NOT a
-# general detector for the class. A board using a prefix absent from this list
-# produces a silent zero, so widen it when a new spelling appears rather than
-# reading a clean run as proof there is nothing to find. It is kept as an explicit
-# list instead of a generic `[A-Z]{2,6}[-_]\d{4,}` arm because the generic form
-# fires on ISO-8601, UTF-8 and RFC-1234, and a sweep that does that gets muted.
-WORK_ITEM = re.compile(
-    r"\b(?:STORY|TASK|BUG|FEATURE|EPIC|DEF|WI)[-_](\d{3,})\b", re.I)
-ROLE_CODE = re.compile(r"\b[A-Z]{1,4}\s*\((?:DE|DA|ITL|BA|PM|QA|SA|SO)\d+\)")
-ENV_CATALOG = re.compile(
-    r"\b(?:prod|uat|dev|test|stg)[-_]?(?:bronze|silver|gold|raw|landing)\b", re.I)
-
-# Two tiers, because the evidence differs. A live-credential prefix is
-# near-zero-false-positive on its own and never needs corroboration; a PEM header
-# is ordinary text in a fixture or a rule table until key material follows it.
-CREDENTIAL_CERTAIN = re.compile(
-    r"\bAKIA[0-9A-Z]{16}\b"
-    # All five GitHub token classes, not just the personal one.
-    r"|\bgh[pousr]_[A-Za-z0-9]{36}\b"
-    r"|\bgithub_pat_[A-Za-z0-9_]{22,}\b"
-    r"|\bxox[baeprs]-[A-Za-z0-9-]{10,}\b"
-    # Hyphens inside the body, or `sk-ant-api03-...` fails on the segment after
-    # `sk-` being three characters long - the key most likely to sit in a dotfile
-    # on this station would not have matched.
-    r"|\bsk-[A-Za-z0-9_-]{20,}\b")
-CREDENTIAL_MARKER = re.compile(
-    r"BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY")
-KEY_BODY = re.compile(r"^[A-Za-z0-9+/=]{40,}$")
-# Skipped when looking for key material: PEM metadata headers and blank lines sit
-# between an encrypted key's header and its body, and counting them as content is
-# how an encrypted PEM slips through as a mere marker.
-PEM_FILLER = re.compile(r"^\s*(?:$|[A-Za-z-]+:\s|-{5})")
-
-
-def synthetic_id(digits: str) -> bool:
-    """True for a run no tracker would issue: every digit the same, a consecutive
-    ascending or descending run, or a zero-padded counter under three digits."""
-    if len(set(digits)) == 1:
-        return True
-    stripped = digits.lstrip("0")
-    if stripped != digits and len(stripped) <= 2:
-        return True
-    seq = [int(c) for c in digits]
-    steps = {b - a for a, b in zip(seq, seq[1:])}
-    return steps in ({1}, {-1})
-
-
-def check_identifiers(lines: list[str], path: str) -> list[Finding]:
-    findings: list[Finding] = []
-    for lineno, line in enumerate(lines, start=1):
-        for match in WORK_ITEM.finditer(line):
-            if synthetic_id(match.group(1)):
-                continue
-            findings.append(Finding(
-                path, lineno, WARN, "work-item-id",
-                f"'{match.group(0)}' has the shape of a live tracker item and its "
-                "digits are not an obvious stand-in - confirm it names nothing "
-                "real, or swap it for a repdigit, a sequential run, or an NNNNnn "
-                "placeholder",
-            ))
-        for match in ROLE_CODE.finditer(line):
-            findings.append(Finding(
-                path, lineno, WARN, "role-code",
-                f"'{match.group(0)}' reads as a person's initials with a role code",
-            ))
-        for match in ENV_CATALOG.finditer(line):
-            findings.append(Finding(
-                path, lineno, WARN, "env-catalog",
-                f"'{match.group(0)}' reads as an environment-prefixed catalog name",
-            ))
-        for match in CREDENTIAL_CERTAIN.finditer(line):
-            findings.append(Finding(
-                path, lineno, FAIL, "credential-shape",
-                f"'{match.group(0)[:12]}...' is a live-credential prefix - these "
-                "are not a shape anything else takes, so treat it as issued until "
-                "proven otherwise and rotate it if it ever reached a remote",
-            ))
-        for match in CREDENTIAL_MARKER.finditer(line):
-            # A bare header is usually a fixture or a detector's own rule table.
-            # Key material near it is not - and an encrypted key puts metadata
-            # headers and a blank line in between, so those are skipped rather
-            # than counted as the three lines of lookahead.
-            body, examined = False, 0
-            for nxt in lines[lineno:]:
-                if PEM_FILLER.match(nxt):
-                    continue          # filler does not consume the window
-                examined += 1
-                body = bool(KEY_BODY.match(nxt.strip()))
-                if body or examined >= 8:
-                    break
-            findings.append(Finding(
-                path, lineno, FAIL if body else WARN, "credential-shape",
-                f"'{match.group(0)[:28]}' is a private-key header"
-                + (" followed by what looks like key material" if body
-                   else " with no key material under it - benign in a fixture or a "
-                        "rule table, a leak anywhere else"),
-            ))
-    return findings
-
-
-# --------------------------------------------------------------------------
-# check 4 - invisible unicode, delegated to the sibling scanner
-
-def check_invisible(paths: list[Path]) -> list[Finding]:
-    if not paths:
-        return []
-    if not UNICODE_SCANNER.is_file():
-        return [Finding(
-            str(UNICODE_SCANNER), 0, FAIL, "scanner-missing",
-            "the unicode smuggling scanner is not where this script expects it, so "
-            "the invisible-character class was NOT checked - a step that did not "
-            "run is not a clean result",
-        )]
-    proc = subprocess.run(
-        [sys.executable, str(UNICODE_SCANNER), "--json", *[str(p) for p in paths]],
-        capture_output=True, text=True,
-    )
-    try:
-        raw = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        return [Finding(
-            str(UNICODE_SCANNER), 0, FAIL, "scanner-missing",
-            f"the unicode scanner returned unreadable output (exit {proc.returncode}): "
-            f"{proc.stderr.strip()[:200]}",
-        )]
-    return [
-        Finding(f["path"], f["line"], f["severity"], "invisible-unicode",
-                f"{f['codepoint']} {f['message']}")
-        for f in raw
-    ]
+            rule, message = RULES.get(hit.cls, (hit.cls, "flagged by the sanitize detectors"))
+            findings.append(Finding(path, line, severity, rule, message))
+        return findings
 
 
 # --------------------------------------------------------------------------
@@ -670,15 +559,24 @@ def expand(paths: list[str]) -> list[Path]:
     return targets
 
 
-def scan_file(path: Path, root: Path) -> list[Finding]:
+def scan_file(path: Path, root: Path, engine: Engine) -> list[Finding]:
     display = str(path)
     try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        return [Finding(display, 0, WARN, "unreadable", f"skipped: {exc}")]
+        raw = path.read_bytes()
+    except OSError as exc:
+        return [Finding(display, 0, WARN, "unreadable", f"skipped: {exc.strerror or type(exc).__name__}")]
+    # Oversize and undecodable files fail rather than skip: a padded or re-encoded file
+    # must not walk past the hidden-character check.
+    if len(raw) > MAX_FILE_BYTES:
+        return [Finding(display, 0, FAIL, "oversize", f"{len(raw)} bytes, over the {MAX_FILE_BYTES} "
+                                                        "cap - review it by hand rather than skipping it")]
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return [Finding(display, 0, FAIL, "undecodable", f"not valid UTF-8 ({exc.reason}) - a re-encoded "
+                                                           "file can hide codepoints from this check")]
     lines = text.splitlines()
-    findings = check_station_paths(lines, display)
-    findings += check_identifiers(lines, display)
+    findings = engine.check(text, display)
     if path.suffix.lower() in {".md", ".mdx"}:
         findings += check_shell_vars(lines, display)
         findings += check_ordinals(lines, display)
@@ -711,18 +609,27 @@ def main(argv: list[str] | None = None) -> int:
             print(describe_tier(tier, deciders, len(changed), command_files))
         return 0
 
+    engine = Engine(root)
     findings: list[Finding] = []
+    if engine.error and targets:
+        findings.append(Finding(
+            str(SANITIZE_SCRIPTS / "detect.py"), 0, FAIL, "engine-missing",
+            f"the sanitize detectors did not load ({engine.error}), so secrets, station paths, "
+            "identifiers and hidden characters were NOT checked - a step that did not run is "
+            "not a clean result"))
     for target in targets:
-        findings.extend(scan_file(target, root))
-    findings.extend(check_invisible(targets))
+        findings.extend(scan_file(target, root, engine))
     findings.sort(key=lambda f: (f.path, f.line))
+    terms = "skipped" if engine.terms_skipped else "checked"
 
     if args.json:
         print(json.dumps({"tier": tier, "deciders": deciders,
-                          "command_files": command_files,
+                          "command_files": command_files, "terms": terms,
                           "findings": [asdict(f) for f in findings]}, indent=2))
     else:
         print(describe_tier(tier, deciders, len(changed), command_files))
+        if engine.terms_skipped and targets:
+            print("  the station term list is not readable here, so the term check was skipped")
         print()
         for f in findings:
             location = f"{f.path}:{f.line}" if f.line else f.path

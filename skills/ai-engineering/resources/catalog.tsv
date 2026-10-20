@@ -16,16 +16,26 @@ https://arxiv.org/abs/2405.17357	papers	active	ingest	2026-10-09
 https://arxiv.org/abs/2408.09869	papers|ingestion	active	ingest	2026-09-18			manual
 https://arxiv.org/abs/2501.01880	papers	active	ingest	2026-09-18			
 https://arxiv.org/abs/2503.00455	papers|media|map	active	ingest	2026-09-18			manual
+https://arxiv.org/abs/2505.22954	papers	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19			
 https://arxiv.org/abs/2509.21865	papers	active	ingest	2026-09-18			
 https://arxiv.org/abs/2510.00485	papers|media|eval	active	ingest	2026-09-18			manual
 https://arxiv.org/abs/2510.08373	papers|media	active	ingest	2026-09-18			manual
 https://arxiv.org/abs/2510.23541	papers|media	active	ingest	2026-09-18			manual
 https://arxiv.org/abs/2512.03262	papers	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://arxiv.org/abs/2603.19739	papers	active	ingest	2026-09-18			
+https://arxiv.org/abs/2603.28052	papers	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19			
 https://arxiv.org/abs/2604.04978	papers	active	ingest	2026-10-09			
 https://arxiv.org/abs/2606.08919	papers	active	ingest	2026-10-09			
+https://arxiv.org/abs/2607.13285	papers	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19			
+https://arxiv.org/abs/2607.15524	papers|map	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19		2026-10-19	
 https://arxiv.org/abs/2608.07520	papers	active	ingest	2026-10-09			
+https://arxiv.org/abs/2608.08466	papers	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19			
 https://arxiv.org/abs/2608.22228	papers	active	ingest	2026-10-09			
+https://arxiv.org/abs/2609.14857	papers|map	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19		2026-10-19	
+https://arxiv.org/abs/2609.24972	papers	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19			
+https://arxiv.org/abs/2610.13025	papers|map	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19		2026-10-19	
+https://arxiv.org/abs/2610.14224	papers	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19			
+https://arxiv.org/abs/2610.22196	papers	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19			
 https://arxiv.org/html/2509.15464v1	papers	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://arxiv.org/html/2603.27277v1	papers|map	active	phase0-map-reconcile	2026-07-27			
 https://aws.amazon.com/blogs/opensource/introducing-strands-agents-an-open-source-ai-agents-sdk	docs|frameworks	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
@@ -364,11 +374,16 @@ https://github.com/OpenHands/OpenHands	harnesses|map	active	AI-AGENT-DEV-TOOLS-M
 https://github.com/OpenHands/software-agent-sdk	harnesses	active	ai-tooling-refresh-2026-07	2026-07-01			
 https://github.com/OpenMOSS/MOSS-TTSD	media|models|map	active	ingest	2026-09-18			
 https://github.com/OpenPipe/ART	tuning|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
+https://github.com/Ruhan-Wang/Harness_Handbook	harnesses|codeintel	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19			
 https://github.com/Shubhamsaboo/awesome-llm-apps	learning	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/SonarSource/sonarqube-cli	codeintel|security|harnesses	active	ingest	2026-08-14			manual
 https://github.com/Sumanth077/Hands-On-AI-Engineering	learning	active	ingest	2026-07-31			
 https://github.com/Sumanth077/ai-engineering-toolkit	learning	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/TableProApp/TablePro	triage	triage	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
+https://github.com/TailinZhou/hsi	harnesses|tuning|map	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19		2026-10-19	
+https://github.com/Tencent-Hunyuan/Hy-Memory	memory|models|map	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19		2026-10-19	
+https://github.com/TencentCloud/TencentDB-Agent-Memory	memory|map	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19		2026-10-19	
+https://github.com/TencentCloudADP/youtu-agent	frameworks	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19			
 https://github.com/Untrivial-ai/agent-orchestrator	harnesses|frameworks|adjacent|map	active	ingest	2026-09-02		2026-09-02	manual
 https://github.com/VILA-Lab/Dive-into-Claude-Code	skills	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/VectifyAI/OpenKB	rag|ingestion|memory	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29		2026-09-02	manual
@@ -440,6 +455,8 @@ https://github.com/gboeing/osmnx	adjacent	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026
 https://github.com/getzep/graphiti	memory|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/github/spec-kit	learning	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/google-gemini/gemini-cli	harnesses|map	active	ai-tooling-refresh-2026-07	2026-07-01			
+https://github.com/google-research/harness2	harnesses|tuning|map	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19		2026-10-19	
+https://github.com/google-research/rrsi	harnesses|tuning|map	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19		2026-10-19	
 https://github.com/google/adk-python	frameworks|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/google/adk-samples	frameworks|memory|rag	active	ingest	2026-08-14			manual
 https://github.com/google/agents-cli	frameworks|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
@@ -456,6 +473,7 @@ https://github.com/huggingface/trl	tuning|map	active	phase0-map-reconcile	2026-0
 https://github.com/iOfficeAI/OfficeCLI	ingestion|adjacent	active	2026-07-14 firehose paste	2026-07-14			
 https://github.com/infiniflow/ragflow	rag|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/instructor-ai/instructor	ingestion|map	active	langextract-spanner-refresh	2026-07-27			
+https://github.com/jennyzzt/dgm	harnesses|tuning|map	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19		2026-10-19	
 https://github.com/jsvine/pdfplumber	ingestion|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/karpathy/llm-council	frameworks|adjacent	active	ingest	2026-09-02		2026-09-02	manual
 https://github.com/koala73/worldmonitor	triage	triage	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
@@ -558,6 +576,7 @@ https://github.com/souzatharsis/podcastfy/issues/19	media|learning|map	active	in
 https://github.com/souzatharsis/podcastfy/issues/221	media|learning	active	ingest	2026-09-18			
 https://github.com/souzatharsis/podcastfy/issues/48	media|learning	active	ingest	2026-09-18			
 https://github.com/sst/opencode	harnesses|map	active	ai-tooling-refresh-2026-07	2026-07-01			
+https://github.com/stanford-iris-lab/meta-harness	harnesses|tuning|map	active	2026-10-19 harness self-improvement + Tencent memory research	2026-10-19		2026-10-19	
 https://github.com/stanford-oval/storm	rag	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/stanfordnlp/dspy	frameworks	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			
 https://github.com/strands-agents/sdk-python	frameworks|map	active	AI-AGENT-DEV-TOOLS-MAIN.md	2026-06-29			

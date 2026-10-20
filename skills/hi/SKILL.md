@@ -1,6 +1,7 @@
 ---
 name: hi
 description: Session-start orientation ritual. Reads this workspace's state - living docs (README/SPEC/tasks-plan/tasks-todo), memory (file-based MEMORY.md + recent claude-mem activity), changelog, and git status - then reports a concise current-state briefing ending in the single next action. Read-only, writes nothing. Portable across any repo (discovers the workspace root). Triggers on "/hi", "get up to speed", "orient", "where are we", "catch up", "repo status" - but NOT for the status of an in-flight command, background task, or test run in the current session (answer those directly from session context).
+disable-model-invocation: true
 ---
 
 # /hi - session-start orientation

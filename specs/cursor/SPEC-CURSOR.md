@@ -20,7 +20,7 @@ documentation) or **impression** (the user's working sense, not yet measured).
   member of `agent-conference` on `grok-4.7`, it ranked second of five valid
   members on 2026-10-13 and second of six on 2026-10-12
   (`tasks/reviews/*/tally.md`).
-- **Bounded delegation under the operating system - observed.** `cursor-task`
+- **Bounded delegation under the operating system - observed.** `/task cursor`
   runs it headless in a detached worktree under a per-run `sandbox-exec`
   profile that denies every write outside that worktree, so the bound does not
   depend on the agent's own flag. It accepts any model from

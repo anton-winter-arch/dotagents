@@ -12,36 +12,38 @@ bidi controls, BOM, word joiners, line/paragraph separators, exotic Unicode
 spaces, variation selectors, interlinear annotation marks, private use.
 
 Exit 2 blocks the tool call and feeds stderr back to the model.
+
+The codepoint table is the sanitize skill's (skills/sanitize/scripts/detect.py, the one
+rule source), found beside this hook's folder (SANITIZE_SCRIPTS overrides, for tests).
+This hook blocks every row of it, a BOM at offset 0 included. When the table cannot
+load, the write proceeds and the model is told the check did not run.
 """
+import importlib.util
 import json
+import os
 import sys
-import unicodedata
-
-ALLOWED_WS = {'\t', '\n', '\r', ' '}
-# Codepoint escapes only: literal invisibles in this file would trip the rule
-# this hook enforces. Mn oddballs (CGJ, Khmer inherent vowels, Mongolian and
-# variation selectors incl. the supplement plane), the blank braille filler,
-# Lo Hangul fillers, and Zl/Zp line separators; the Cf/Co/Zs/Cc classes are
-# caught by category below.
-EXPLICIT = (
-    {chr(c) for c in (0x034F, 0x17B4, 0x17B5, 0x115F, 0x1160,
-                      0x3164, 0xFFA0, 0x2028, 0x2029, 0x2800)}
-    | {chr(c) for c in range(0x180B, 0x180F)}
-    | {chr(c) for c in range(0xFE00, 0xFE10)}
-    | {chr(c) for c in range(0xE0100, 0xE01F0)}
-)
+from pathlib import Path
 
 
-def bad_chars(text):
+def load_detect():
+    """The engine by exact file path: a missing folder must not import some other
+    module that happens to be named `detect`."""
+    base = Path(os.environ.get("SANITIZE_SCRIPTS") or
+                Path(__file__).resolve().parent.parent / "skills" / "sanitize" / "scripts")
+    path = base / "detect.py"
+    if not path.is_file():
+        raise FileNotFoundError("detect.py")
+    spec = importlib.util.spec_from_file_location("detect", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["detect"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def bad_chars(text, detect):
     hits = {}
-    for i, ch in enumerate(text):
-        if ch in ALLOWED_WS:
-            continue
-        cat = unicodedata.category(ch)
-        if (ch in EXPLICIT
-                or cat in ('Cf', 'Co', 'Cc')
-                or (cat == 'Zs' and ch != ' ')):
-            hits.setdefault(f'U+{ord(ch):04X}', []).append(i)
+    for i, _rule in detect.hidden_chars(text, skip_leading_bom=False):
+        hits.setdefault(f'U+{ord(text[i]):04X}', []).append(i)
     return hits
 
 
@@ -66,7 +68,15 @@ def main():
         return 0
     if not isinstance(text, str):
         return 0
-    hits = bad_chars(text)
+    try:
+        detect = load_detect()
+    except Exception as exc:
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": f"reject_invisibles: the shared codepoint table did not load "
+                                 f"({type(exc).__name__}), so hidden characters in this write were not checked."}}))
+        return 0
+    hits = bad_chars(text, detect)
     if not hits:
         return 0
     detail = '; '.join(

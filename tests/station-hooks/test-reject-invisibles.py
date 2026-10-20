@@ -80,7 +80,16 @@ def main() -> int:
         if not ok:
             fails += 1
         print(f"{'PASS' if ok else 'FAIL'}  {name}: exit {code} (want {want})")
-    print(f"\n{len(CASES) - fails}/{len(CASES)} passed")
+    # The table lives in the sanitize skill; when it cannot load, the write proceeds and the
+    # model is told the check did not run.
+    p = subprocess.run([sys.executable, str(HOOK)], capture_output=True, text=True,
+                       input=json.dumps({"tool_name": "Write", "tool_input": {"content": "a" + ZWSP}}),
+                       env=dict(os.environ, SANITIZE_SCRIPTS="/nonexistent/sanitize/scripts"))
+    ok = p.returncode == 0 and "did not load" in p.stdout
+    fails += 0 if ok else 1
+    print(f"{'PASS' if ok else 'FAIL'}  missing table fails open with a note: exit {p.returncode} (want 0)")
+    total = len(CASES) + 1
+    print(f"\n{total - fails}/{total} passed")
     return 1 if fails else 0
 
 

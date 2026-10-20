@@ -45,7 +45,7 @@ or destructive file ops as Critical until proven otherwise.
 - [ ] No secrets (API keys, tokens, passwords) in any committed file - skills, hooks, scripts, configs
 - [ ] `.gitignore` covers `.env`, `.env.*`, `*.pem`, `*.key`, and any local secret stores
 - [ ] No secrets echoed into logs, command output, or agent messages
-- [ ] Staged diff scanned before commit: `git diff --cached | grep -iE 'password|secret|api[_-]?key|token|bearer'`
+- [ ] Staged content checked before commit: the station's git hooks run `sanitize gate` on every commit and push. On demand, run `python3 skills/sanitize/scripts/sanitize.py gate --staged` (or `--range origin/<branch>..HEAD` for committed work) and judge each finding it reports
 - [ ] Secrets read from environment, never hardcoded - and missing-secret paths fail loudly, not silently
 - [ ] **Secrets on disk cannot reach agent context.** A clean `.gitignore` does not stop a tool call from reading `.env`, `~/.aws/credentials`, or a private key. The only hard controls are deny rules (`permissions.deny` in `settings.json`, the `block-env-files.sh` hook); ignore files are best-effort. Confirm the deny rule exists for the agents this repo uses (`AGENTS.md`, Secrets out of agent context).
 
@@ -182,9 +182,8 @@ project names, hostnames - must be discovered live (session context, env vars, `
 `git config`/`git remote`, workspace metadata) or asked of the user in real time, never
 baked into shared tooling.
 
-- [ ] **No user-specific absolute paths.** Scan (BSD grep - use `-E`/`-e`, not `\|`):
-      `grep -rnE '/Users/[^/]+/|/home/[^/]+/' . --include='*.md' --include='*.sh' --include='*.py'`
-      (exclude runtime/inbox dirs like `.claude/`, `__archive/`).
+- [ ] **No user-specific absolute paths.** The sweep (`python3 skills/wrap-up/scripts/closeout_lint.py <paths>`)
+      reports home directories and email addresses as `station-path`; rewrite each hit and re-run it.
 - [ ] **No device/vault overfitting.** No hardcoded hostname, single-vault path, or absolute
       path to one repo in something meant to be shared/global. A global skill/script must
       **discover** its context (`git rev-parse --show-toplevel`, CWD, `$HOME`), not assume one location.
@@ -294,7 +293,7 @@ sections above stay organized by artifact, because that is how a review is actua
 
 Before you call the change safe:
 
-- [ ] Staged diff scanned for secrets - clean
+- [ ] `sanitize gate` clean on the staged set or the unpushed range, or each finding judged
 - [ ] Every new/changed command, hook, and script reviewed line-by-line
 - [ ] All untrusted-input paths validated and never executed/obeyed blindly
 - [ ] Hidden-character scan clean - `unicode_smuggle_check.py` exits 0 on the changed files, and any variation-selector warnings were confirmed to sit on real emoji

@@ -127,9 +127,13 @@ S4="$TMP/s4.md"; printf 'write to boss%smail.example.com.realcorp.io\n' "$at" > 
 bash "$SEND" --to-repo "$R6" --from A --to B --subject x --body-file "$S4" >/dev/null 2>&1
 rc_is "real domain behind an example label refused" 9 $?
 for kx in "sk_live_$(printf 'a1B2%.0s' $(seq 6))_xxxx" "AKIA$(printf 'Q7%.0s' $(seq 8))_xxxx" "sk-proj-$(printf 'a1B2%.0s' $(seq 6))_xxxx"; do
-  python3 -c "import sys; sys.path.insert(0, sys.argv[1]); import scan_body as s; sys.exit(1 if s.PLACEHOLDER.search(sys.argv[2]) else 0)" "$SCRIPTS" "$kx"
-  rc_is "placeholder rule leaves ${kx%%[0-9]*}... with an x-run suffix to the scan" 0 $?
+  SK="$TMP/sk.md"; printf 'the key is %s\n' "$kx" > "$SK"
+  bash "$SEND" --to-repo "$R6" --from A --to B --subject x --body-file "$SK" >/dev/null 2>&1
+  rc_is "a key with an x-run suffix (${kx%%[0-9]*}...) is still refused" 9 $?
 done
+S6="$TMP/s6.md"; printf 'see STORY-%s and the hidden %b here\n' "583920" '\0342\0200\0256' > "$S6"
+bash "$SEND" --to-repo "$R6" --from A --to B --subject x --body-file "$S6" >/dev/null 2>&1
+rc_is "a real-shaped work item and a bidi override are refused" 9 $?
 bash "$SEND" --to-repo "$R6" --from A --to B --subject "-dash subject" --body-file "$B" >/dev/null 2>&1
 rc_is "subject starting with a dash still sends" 0 $?
 err=$(AGENT_MAIL_SCANNER="$TMP/none.py" bash "$SEND" --to-repo "$R6" --from A --to B --subject x --body-file "$S1" 2>&1 >/dev/null); rc=$?

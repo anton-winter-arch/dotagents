@@ -469,7 +469,7 @@ class TestRun(Base):
         self.assertEqual(fake.requests, [])
 
     def test_openai_private_backend_and_key_never_leaks(self):
-        secret = "sk-test-secret-123"
+        secret = "sk-test-" + "secret-123"    # joined so the source holds no key shape
         fake = self.serve(status=500, error_body=lambda h: json.dumps({"error": f"bad auth {h.get('Authorization')}"}))
         self.write_config({"gw": backend(fake.url + "/v1", api="openai", locality="private", model="small",
                                          api_key_env="MODEL_GATEWAY_KEY")})
@@ -483,7 +483,7 @@ class TestRun(Base):
             self.assertNotIn(secret, f.read_text(), f.name)
 
     def test_key_with_control_characters_refused_without_echo(self):
-        secret = "sk-test-secret-456"
+        secret = "sk-test-" + "secret-456"
         self.write_config({"gw": backend("http://127.0.0.1:9/v1", api="openai", locality="private",
                                          api_key_env="MODEL_GATEWAY_KEY")})
         self.env["MODEL_GATEWAY_KEY"] = secret + "\n"

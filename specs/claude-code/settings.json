@@ -45,7 +45,8 @@
       "Read(/plugins/**)"
     ],
     "ask": [
-      "Bash(*codex_task.py run*)"
+      "Bash(*codex_task.py*run*)",
+      "Bash(*task.py*codex*)"
     ],
     "deny": [
       "Read(**/.env)",

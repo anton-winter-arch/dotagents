@@ -16,7 +16,7 @@ What this harness is for on this station. Each claim is marked **observed**
 (seen in a run or a bench here), **doc-derived** (from pi.dev's documentation)
 or **impression** (the user's working sense, not yet measured).
 
-- **The leanest harness on the bench - observed.** On `harness-bench` with
+- **The leanest harness on the bench - observed.** On the tryout bench (`/task tryout`) with
   `glm-5.3-flash:cloud` at thinking `low`, pi passed 33 of 33 task runs on
   2026-10-13 and spent 25 to 60 percent fewer input tokens than goose on ten of
   eleven tasks; its system prompt is about 1,000 tokens smaller. The

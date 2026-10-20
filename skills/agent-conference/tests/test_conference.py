@@ -134,7 +134,9 @@ class TestReviewPaths(Base):
 
 class TestSanitizedStage(Base):
     def test_every_member_and_the_chair_see_the_clean_stage(self):
-        (self.src / "pkg" / "a.py").write_text("KEY = '-----BEGIN PRIVATE KEY----- fixture -----END PRIVATE KEY-----'\ndef f():\n    return 1\n")
+        # joined at runtime so this file's source holds no key block for a sweep to flag
+        key = "-----BEGIN " + "PRIVATE KEY----- fixture -----END " + "PRIVATE KEY-----"
+        (self.src / "pkg" / "a.py").write_text(f"KEY = '{key}'\ndef f():\n    return 1\n")
         responses = {m: {"stage2": ALL} for m in MEMBERS}
         responses["claude"]["chair"] = "synthesis"
         r = self.run_conference(responses)

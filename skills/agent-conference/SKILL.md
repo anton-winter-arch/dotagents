@@ -1,6 +1,7 @@
 ---
 name: agent-conference
 description: Panel review for the highest-stakes reasoning - a question about a fixed set of files goes to six members (Claude Code on Fable, Codex on GPT-6 Astra, Cursor on Grok 4.7, Antigravity on Gemini 4 Argon, DeepSeek V4.1 Flash and GLM 5.3 Flash via Ollama's cloud), each ranks all the answers blind behind shuffled labels, and a Claude chair synthesizes one answer with the disagreements ruled on, after Karpathy's llm-council. Every member runs read-only through agent-review with only the named files. Use when the user wants a panel, a council, several frontier models on one question, a second and third opinion on a plan, or says "agent conference", "convene the agents", "ask the panel", "run the council". Explicitly invoked; expensive by design. One harness's opinion is agent-review.
+disable-model-invocation: true
 ---
 
 # agent-conference

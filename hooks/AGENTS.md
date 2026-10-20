@@ -8,6 +8,7 @@ Every script here is seeded to every station and runs under that station's tools
   Check `grep --version` before concluding that a matching bug is in the pattern.
 - **A script is seeded only when `manifest.json` names it**, with its bindings; a companion file (a preamble, a word list, an example list) is copied without a binding.
   Scripts that enforce rules about Claude Code itself live in `specs/claude-code/hooks/` under the same rules.
+  `git/` is not seeded: it is git's own hooks folder, used in place through the global `core.hooksPath` that `git/install.sh` sets, and every hook name in it links to `git/dispatch`.
 - **Hook input is harness-specific.** A script reads it through `_input.py` or is marked in the manifest as tested for one harness only; it is never wired into a harness it has no test for.
 - **An advisory hook returns context, never a permission decision.**
   A PreToolUse `allow` is a verdict the harness acts on, so a hook that only nudges emits `additionalContext` alone.

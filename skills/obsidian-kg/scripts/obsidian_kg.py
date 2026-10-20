@@ -2751,23 +2751,33 @@ def est_tokens(text: str) -> int:
 
 
 # ---------- aggregates ----------
+def has_log_dated(con: sqlite3.Connection) -> bool:
+    return con.execute(
+        "SELECT 1 FROM notes WHERE profile = 'log-dated' LIMIT 1").fetchone() is not None
+
+
 def window_sections(con: sqlite3.Connection, frm: str | None, to: str | None,
                     slot: str | None) -> list[tuple[str, str]]:
     """Aggregates count `own_body`, never `body`: a unit's body contains its
     children, so counting bodies would count a generated or instrument slot as
-    the author's own words no matter how it is labelled."""
-    sql = "SELECT id, own_body FROM sections WHERE doc_date != ''"
+    the author's own words no matter how it is labelled.
+
+    Only log-dated notes count. Ingest stamps a note's frontmatter date onto its
+    undated sections whatever the profile, so without this filter a dated
+    reference, hub or generated note would count as the author's own log."""
+    sql = ("SELECT s.id, s.own_body FROM sections s JOIN notes n ON n.id = s.note_id"
+           " WHERE s.doc_date != '' AND n.profile = 'log-dated'")
     params: list = []
     if frm:
-        sql += " AND doc_date >= ?"
+        sql += " AND s.doc_date >= ?"
         params.append(frm)
     if to:
-        sql += " AND doc_date <= ?"
+        sql += " AND s.doc_date <= ?"
         params.append(to)
     if slot:
-        sql += " AND slot = ?"
+        sql += " AND s.slot = ?"
         params.append(slot)
-    return con.execute(sql + " ORDER BY id", params).fetchall()
+    return con.execute(sql + " ORDER BY s.id", params).fetchall()
 
 
 def term_counts(bodies: list[str]) -> dict[str, int]:
@@ -2806,6 +2816,10 @@ def themes(vault: Path, frm: str | None, to: str | None, slot: str | None,
            limit: int = 20) -> dict:
     con = open_fresh(vault)
     slot = slot or "authored"
+    if not has_log_dated(con):
+        con.close()
+        return {"from": frm or "", "to": to or "", "slot": slot, "sections": 0,
+                "words": 0, "terms": [], "status": "NO_LOG_DATED_NOTES"}
     win = window_sections(con, frm, to, slot)
     allsec = window_sections(con, None, None, slot)
     con.close()
@@ -2827,7 +2841,7 @@ def themes(vault: Path, frm: str | None, to: str | None, slot: str | None,
     out.sort(key=lambda r: (-r["log_likelihood"], r["term"]))
     return {"from": frm or "", "to": to or "", "slot": slot,
             "sections": len(win), "words": win_total,
-            "terms": out[:limit]}
+            "terms": out[:limit], "status": "COMPLETE"}
 
 
 def bucket_of(iso: str, by: str) -> str:
@@ -2845,9 +2859,14 @@ def bucket_of(iso: str, by: str) -> str:
 def trends(vault: Path, by: str, slot: str | None, limit: int = 8) -> dict:
     con = open_fresh(vault)
     slot = slot or "authored"
+    if not has_log_dated(con):
+        con.close()
+        return {"by": by, "slot": slot, "windows": [], "status": "NO_LOG_DATED_NOTES"}
+    # log-dated notes only, for the reason window_sections gives
     rows = con.execute(
-        "SELECT doc_date, own_body FROM sections WHERE doc_date != ''"
-        + (" AND slot=?" if slot else "") + " ORDER BY doc_date",
+        "SELECT s.doc_date, s.own_body FROM sections s JOIN notes n ON n.id = s.note_id"
+        " WHERE s.doc_date != '' AND n.profile = 'log-dated'"
+        + (" AND s.slot=?" if slot else "") + " ORDER BY s.doc_date",
         ([slot] if slot else [])).fetchall()
     con.close()
     buckets: dict[str, list[str]] = {}
@@ -2874,7 +2893,7 @@ def trends(vault: Path, by: str, slot: str | None, limit: int = 8) -> dict:
         out.append({"window": cur, "previous": prev,
                     "rose": moves[:limit],
                     "fell": list(reversed(moves[-limit:]))})
-    return {"by": by, "slot": slot, "windows": out}
+    return {"by": by, "slot": slot, "windows": out, "status": "COMPLETE"}
 
 
 # ---------- entities ----------
@@ -3860,11 +3879,18 @@ def cmd_during(args: argparse.Namespace) -> int:
     return emit(args, payload, render)
 
 
+NO_LOG_DATED_LINE = ("no log-dated notes in this graph, so there is nothing to aggregate - "
+                     "give a dated log the log-dated profile in vault-kg-config.md")
+
+
 def cmd_themes(args: argparse.Namespace) -> int:
     payload = themes(vault_dir(args.vault), args.frm, args.to, args.slot,
                      args.limit)
 
     def render(p):
+        if p["status"] == "NO_LOG_DATED_NOTES":
+            print(NO_LOG_DATED_LINE)
+            return 0
         span = f"{p['from'] or 'start'}..{p['to'] or 'end'}"
         print(f"themes {span}  slot={p['slot']}  "
               f"{p['sections']} sections, {p['words']} words")
@@ -3882,6 +3908,9 @@ def cmd_trends(args: argparse.Namespace) -> int:
     payload = trends(vault_dir(args.vault), args.by, args.slot, args.limit)
 
     def render(p):
+        if p["status"] == "NO_LOG_DATED_NOTES":
+            print(NO_LOG_DATED_LINE)
+            return 0
         if not p["windows"]:
             print("not enough dated windows to compare")
             return 0

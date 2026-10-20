@@ -57,15 +57,16 @@ key - and never the value. If a peer truly needs a sensitive value, send it
 over direct session messaging (`SendMessage`), which writes no file, or don't
 send it and ask the user to hand it over.
 
-`send.sh` enforces this: it scans the subject and body with the `sanitize`
-skill before writing anything and refuses a hit with exit 9
-`SENSITIVE_CONTENT`, naming the classes found but never the value. Repo and
-file paths are allowed, and so are addresses at the reserved example domains
-(`example.com`, `.test`, `.invalid`), fictional 555 phone numbers,
-`{redacted-*}` markers and all-x placeholders such as `price_xxxxxxxx`. After a
-refusal, rewrite and resend; never work around it by splitting, encoding or
-paraphrasing the value. Without `sanitize` installed the send goes through with
-a warning, and the rule still applies.
+`send.sh` enforces this rule. Before writing anything, it scans the subject and
+body with the `sanitize` skill's detectors. A secret, personal data, an
+identifier shape, a station term or a hidden-character attack is refused with
+exit 9 `SENSITIVE_CONTENT`, and the refusal names the classes found but never
+the value. Repo and file paths are allowed, and so are addresses at the
+reserved example domains (`example.com`, `.test`, `.invalid`), fictional 555
+phone numbers, `{redacted-*}` markers and all-x placeholders such as
+`price_xxxxxxxx`. After a refusal, rewrite and resend; never work around it by
+splitting, encoding or paraphrasing the value. Without `sanitize` installed the
+send goes through with a warning, and the rule still applies.
 
 **Handle the guard exit codes; do NOT brute-force past them:**
 

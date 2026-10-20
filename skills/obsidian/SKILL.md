@@ -1,15 +1,16 @@
 ---
 name: obsidian
 description: >-
-  Universal Obsidian-flavored markdown standard plus a per-vault authoring workflow. Covers
-  syntax (frontmatter, tags, tasks, tables, footnotes, MathJax, Mermaid, highlights) and a
-  house style that renders cleanly in Live Preview. Probes each vault's config and notes,
-  then MIRRORS its conventions instead of imposing defaults. Use when authoring or editing
+  Obsidian-flavored markdown standard plus a per-vault authoring workflow. Covers
+  syntax (frontmatter, tags, tasks, tables, MathJax, Mermaid and more) and a house style
+  that renders cleanly in Live Preview, and MIRRORS each vault's own conventions instead of
+  imposing defaults. Use when authoring or editing
   .md inside an Obsidian vault (a `.obsidian/` folder is present), when the user mentions
   Obsidian, a vault, wikilinks, [[links]], callouts, properties, embeds, block references,
   Dataview, Tasks, Templater, or Bases, or for any Obsidian syntax question. Also use when a
   vault note will be published to Azure DevOps, GitHub or a repo docs folder, which changes
-  its links. Prefer this over generic markdown whenever a vault is present.
+  its links. Prefer this over generic markdown whenever a vault is present; indexing or
+  querying a vault is obsidian-kg.
 ---
 
 # obsidian (universal standard)

@@ -60,6 +60,11 @@
       "bindings": [{"event": "PreToolUse", "matcher": ["shell"], "timeout": 10}]
     },
     {
+      "script": "guard_git_bypass.py",
+      "harnesses": ["claude-code"],
+      "bindings": [{"event": "PreToolUse", "matcher": ["shell"], "timeout": 10}]
+    },
+    {
       "script": "warn_cross_repo_git.py",
       "harnesses": ["claude-code"],
       "advisory": true,
@@ -96,7 +101,7 @@
       "script": "harness_version_check.py",
       "harnesses": ["claude-code"],
       "advisory": true,
-      "gate": "fires only in the repository that holds the harness-bench skill; the script checks that itself",
+      "gate": "fires only in the repository that holds the task skill's tryout bench; the script checks that itself",
       "bindings": [{"event": "SessionStart", "sources": ["startup"], "timeout": 15}]
     },
     {

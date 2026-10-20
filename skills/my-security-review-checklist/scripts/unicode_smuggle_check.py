@@ -29,8 +29,9 @@ pad or re-encode a file past the gate.
     python3 unicode_smuggle_check.py --json <path>
     python3 unicode_smuggle_check.py --strict <path>   # WARN also exits 1
 
-Codepoints are written as escapes on purpose: a detector that embedded the
-literal characters would be invisible in its own source and would flag itself.
+The codepoint table lives in the sanitize skill (skills/sanitize/scripts/detect.py),
+the one rule source; this scanner reports the rows that table marks "fail" or "warn".
+A missing table is a FAIL, never a clean run.
 """
 
 from __future__ import annotations
@@ -51,33 +52,14 @@ TEXT_SUFFIXES = {
     ".zsh", ".py", ".js", ".ts", ".tsx", ".jsx", ".rs", ".go", ".rb", ".ps1",
 }
 
-# (first, last, severity, rule, why) - inclusive ranges, single codepoints as first==last.
-RANGES: tuple[tuple[int, int, str, str, str], ...] = (
-    (0xE0000, 0xE007F, FAIL, "tag-smuggling",
-     "Unicode TAG plane mirrors ASCII invisibly - the ASCII-smuggling injection vector"),
-    (0x202A, 0x202E, FAIL, "bidi-override",
-     "bidirectional override reorders displayed text without reordering bytes (Trojan Source)"),
-    (0x2066, 0x2069, FAIL, "bidi-isolate",
-     "bidirectional isolate reorders displayed text without reordering bytes (Trojan Source)"),
-    (0x200B, 0x200D, FAIL, "zero-width",
-     "zero-width character renders as nothing and can split or hide keywords"),
-    (0x2060, 0x2060, FAIL, "zero-width",
-     "word joiner renders as nothing and can split or hide keywords"),
-    (0x2061, 0x2064, FAIL, "invisible-operator",
-     "invisible math operator renders as nothing outside a maths context"),
-    (0x180E, 0x180E, FAIL, "zero-width",
-     "Mongolian vowel separator renders as nothing in modern fonts"),
-    (0x115F, 0x1160, FAIL, "zero-width",
-     "Hangul filler renders as nothing outside Korean jamo composition"),
-    (0x3164, 0x3164, FAIL, "zero-width",
-     "Hangul filler renders as nothing and is a known blank-name abuse character"),
-    (0xFEFF, 0xFEFF, FAIL, "zero-width",
-     "zero-width no-break space (BOM) mid-file renders as nothing"),
-    (0xFE00, 0xFE0F, WARN, "variation-selector",
-     "variation selector can carry hidden bytes, but is legitimate in emoji sequences"),
-    (0xE0100, 0xE01EF, WARN, "variation-selector",
-     "variation-selector supplement can carry hidden bytes"),
-)
+DETECT_DIR = Path(__file__).resolve().parents[2] / "sanitize" / "scripts"
+try:
+    sys.path.insert(0, str(DETECT_DIR))
+    import detect  # noqa: E402
+except Exception:                                   # reported per run in main()
+    detect = None
+
+SEVERITY = {"fail": FAIL, "warn": WARN}
 
 
 @dataclass(frozen=True)
@@ -92,11 +74,13 @@ class Finding:
 
 
 def classify(cp: int) -> tuple[str, str, str] | None:
-    """Return (severity, rule, why) for a dangerous codepoint, else None."""
-    for first, last, severity, rule, why in RANGES:
-        if first <= cp <= last:
-            return severity, rule, why
-    return None
+    """Return (severity, rule, why) for a dangerous codepoint, else None. Cosmetic rows
+    of the shared table (exotic spaces, soft hyphens) are not this scanner's concern."""
+    found = detect.codepoint_rule(chr(cp))
+    if not found or found[1] not in SEVERITY:
+        return None
+    rule, smuggle, why = found
+    return SEVERITY[smuggle], rule, why
 
 
 def codepoint_name(cp: int) -> str:
@@ -174,8 +158,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     findings: list[Finding] = []
-    for target in iter_targets(args.paths):
-        findings.extend(scan_file(target))
+    if detect is None:
+        findings.append(Finding(str(DETECT_DIR / "detect.py"), 0, 0, FAIL, "table-missing", "-",
+                                "the shared codepoint table did not load, so nothing was checked - "
+                                "a check that did not run is not a clean result"))
+    else:
+        for target in iter_targets(args.paths):
+            findings.extend(scan_file(target))
 
     if args.json:
         print(json.dumps([asdict(f) for f in findings], indent=2))

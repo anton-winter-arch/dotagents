@@ -124,7 +124,7 @@ hand after installing.
 background daemon that pairs the CLI with a remote client, and `--remote-control`
 does the same for one session. Neither has run on the laptop: on 2026-10-15,
 `agy remote-control status` reported not running and no launch agent.
-`antigravity-task` refuses `--remote-control` in its argv. The telemetry switch
+`/task antigravity` refuses `--remote-control` in its argv. The telemetry switch
 is unverified and remains an open item: the 1.3.5 binary holds no
 `usageStatisticsEnabled` string, so Gemini CLI's opt-out key may be ignored, and
 the sign-in asks for Google telemetry scope.

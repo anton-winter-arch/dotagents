@@ -1,6 +1,7 @@
 ---
 name: local-model-task
-description: Hands one bounded task from a Claude Code session to a local Ollama model or the user's own OpenAI-compatible gateway and returns a short capsule, with the result kept on disk, while Claude checks the answer. MUST be used whenever the user names the local model, qwen, Ollama or their own gateway as the one to do a task - summarizing, extracting fields to JSON, triaging a list, or finding where something lives in a codebase - instead of doing that task directly; also /local-model-task, /local-model-task list and /local-model-task use. Refuses Ollama cloud models and local servers listening beyond loopback. One call per task; a goal that needs several local calls and checked evidence is support-local. Not for file edits or for handing work to Codex, which is codex-task.
+description: Hands one bounded task from a Claude Code session to a local Ollama model or the user's own OpenAI-compatible gateway and returns a short capsule, with the result kept on disk, while Claude checks the answer. MUST be used whenever the user names the local model, qwen, Ollama or their own gateway as the one to do a task - summarizing, extracting fields to JSON, triaging a list, or finding where something lives in a codebase - instead of doing that task directly; also /local-model-task, /local-model-task list and /local-model-task use. Refuses Ollama cloud models and local servers listening beyond loopback. One call per task; a goal that needs several local calls and checked evidence is support-local. Not for file edits or for handing work to Codex, which is /task codex.
+disable-model-invocation: true
 ---
 
 # local-model-task

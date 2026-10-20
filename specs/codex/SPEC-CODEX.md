@@ -18,7 +18,7 @@ documentation) or **impression** (the user's working sense, not yet measured).
   `codex` member of `agent-conference` on `gpt-6-astra`, it ranked first of five
   valid members on 2026-10-13 and third of six on 2026-10-12
   (`tasks/reviews/*/tally.md`).
-- **Bounded delegation that holds - observed.** `codex-task` runs it headless in
+- **Bounded delegation that holds - observed.** `/task codex` runs it headless in
   a detached worktree with the sandboxed shell, network off and edits as
   `apply_patch`; the file allowlist and the diff review are the contract. The
   probe facts are in the delegation section below.
@@ -46,7 +46,7 @@ unless `CODEX_HOME` is isolated.
 |---|---|---|
 | Global | `~/.codex/config.toml` | model, effort, the privacy fragment below, `[projects]` trust, the ChatGPT app's plugin and MCP tables |
 | Global | `~/.codex/hooks.json`, `~/.codex/hooks/` | hook wiring and scripts (not yet seeded) |
-| Global | `~/.codex/auth.json` | the ChatGPT sign-in; never copied, symlinked into an isolated `CODEX_HOME` by `codex-task` |
+| Global | `~/.codex/auth.json` | the ChatGPT sign-in; never copied, symlinked into an isolated `CODEX_HOME` by `/task codex` |
 | Global | `~/.codex/models_cache.json` | the model lineup and effort levels, refreshed by the CLI |
 | Global | `~/.codex/skills/` | Codex's own skill folder; this station uses `~/.agents/skills/` instead |
 | Remote control (invariant 7) | `[features] daemon_auto_start = false` and `[analytics] enabled = false` in `~/.codex/config.toml`; `codex remote-control` never started | the shared app-server daemon, remote control and analytics, all off on the laptop 2026-10-15; the paragraph "An interactive session leaves a daemon running" says what the daemon does when on |
@@ -167,13 +167,14 @@ starts it. `exec` and `features` accept that `-c` override (the other
 subcommands were not tried), and `codex features disable daemon_auto_start`
 writes the setting into a home's `config.toml`. Any scratch home gets that line
 before its first interactive use, and any tool that creates a scratch home kills
-the recorded pid when it is done; `codex-task` does both.
+the recorded pid when it is done; `/task codex` does both.
 
-## Delegation from Claude Code: the `codex-task` skill
+## Delegation from Claude Code: `/task codex`
 
-Claude Code hands Codex one bounded task through
-`skills/codex-task/scripts/codex_task.py`, the only sanctioned way a session
-spawns Codex. It runs `codex exec` headless in a detached git worktree, harvests
+Claude Code hands Codex one bounded task through `/task codex`, whose
+dispatcher `skills/task/scripts/task.py` hands off to
+`skills/task/harnesses/codex/scripts/codex_task.py`, the only sanctioned way a
+session spawns Codex. It runs `codex exec` headless in a detached git worktree, harvests
 a patch filtered to an explicit file allowlist, and applies it only after the
 delegating agent reviews the diff. Built and verified 2026-09-19/20 on desktop
 against `codex-cli 0.155.1`; the spec that built it is archived under
@@ -204,7 +205,7 @@ server, has no per-file write scope, and is not installed here.
 | Both git directories are denied: the worktree's own (`.git/worktrees/<id>/`) and the real repo's common dir, `hooks/` included - the path that would otherwise be code execution on the user's next commit | `codex sandbox` with the skill's exclusion flags, repo and worktree both outside `/tmp`, 2026-09-20. Probing this through a `codex-task` brief does not work: the brief tells the model `.git` is read-only, so it declines rather than being blocked, and a repo under `/tmp` denies for the wrong reason |
 
 The locked flag set, the exit-code contract and the review gate are in
-`skills/codex-task/SKILL.md`. Two boundaries it does not draw: reads are not
+`skills/task/SKILL.md` and `skills/task/references/codex.md`. Two boundaries it does not draw: reads are not
 bounded (see above), and the model is hosted by OpenAI, so delegated work stays
 within the medium-stakes lane below.
 
@@ -284,8 +285,8 @@ codex login status             # expect "Logged in using ChatGPT"
 
 The ChatGPT desktop app does not provide the CLI; the cask is the only install
 path this spec supports, and the same ChatGPT plan covers both. Nothing else is
-installed: skills load from `~/.agents/skills` natively, and the `codex-task`
-skill needs only the binary on `PATH` and a completed login.
+installed: skills load from `~/.agents/skills` natively, and `/task codex`
+needs only the binary on `PATH` and a completed login.
 
 ### `~/.codex/config.toml` fragment
 
@@ -317,8 +318,8 @@ codex exec --strict-config -s read-only --ephemeral --json 'Reply with exactly O
 
 An unrecognized key errors out here; a parse-clean file returns one
 `agent_message` item with `OK`. Then confirm the delegation skill end to end:
-`python3 -m unittest discover -s ~/.agents/skills/codex-task/tests` (offline,
-27 cases), and one live `codex_task.py run` on a scratch repo with a single
-allowed file.
+`python3 -m unittest discover -s ~/.agents/skills/task/harnesses/codex/tests`
+(offline, 44 cases), and one live `task.py run codex` on a scratch repo with a
+single allowed file.
 
 An `AGENTS.md` template remains a backlog item in `tasks/plan.md`.

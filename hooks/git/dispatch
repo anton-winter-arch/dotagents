@@ -1,0 +1,79 @@
+#!/bin/sh
+# Station git hook dispatcher. The global core.hooksPath points at this folder, and every
+# hook name in githooks(5) is a link to this file, because a name with no link is
+# silenced in every repo once the global path is set. Two names are left unlinked on
+# purpose: git changes its own behavior when push-to-checkout or proc-receive merely
+# exists (updateInstead stops updating the work tree; the receive protocol expects a
+# speaker), so a pass-through link would break both.
+#
+# Each event chains to the repo's own hook at $(git rev-parse --git-common-dir)/hooks/<name>
+# when it exists, passing arguments, stdin and exit status through. The common dir also
+# finds a linked worktree's hooks; `git rev-parse --git-path hooks` is never used, because
+# it honors core.hooksPath and would chain into this file.
+#
+# pre-commit, commit-msg and pre-push also run `sanitize gate` (skills/sanitize/scripts/gate.py),
+# after the repo's hook, so the gate scans what is actually committed. A missing python3 or
+# gate prints one line and lets the operation through, matching the gate's own failure mode.
+
+name=$(basename "$0")
+here=$(cd "$(dirname "$0")" && pwd -P)
+gate="$here/../../skills/sanitize/scripts/sanitize.py"
+
+# Run only from the station folder. A link to this file from anywhere else (a repo's
+# .git/hooks, a husky folder) would resolve the gate path inside that repo's own files.
+if [ ! -f "$here/dispatch" ] || [ -L "$here/dispatch" ]; then
+  echo "station git hook: linked from outside its folder, so it did nothing here" >&2
+  exit 0
+fi
+
+repo_hook=""
+common=$(git rev-parse --git-common-dir 2>/dev/null)
+if [ -n "$common" ] && [ -f "$common/hooks/$name" ] && [ -x "$common/hooks/$name" ]; then
+  hook_dir=$(cd "$common/hooks" && pwd -P)
+  [ "$hook_dir" != "$here" ] && repo_hook="$common/hooks/$name"
+fi
+
+run_gate() {
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "station git hook: python3 not found, so the content check did not run" >&2
+    return 0
+  fi
+  if [ ! -f "$gate" ]; then
+    echo "station git hook: sanitize gate not found, so the content check did not run" >&2
+    return 0
+  fi
+  python3 "$gate" gate "$@"
+}
+
+case "$name" in
+  pre-commit)
+    if [ -n "$repo_hook" ]; then "$repo_hook" "$@" || exit $?; fi
+    run_gate --staged
+    exit $?
+    ;;
+  commit-msg)
+    if [ -n "$repo_hook" ]; then "$repo_hook" "$@" || exit $?; fi
+    run_gate --message "$1"
+    exit $?
+    ;;
+  pre-push)
+    buf=$(mktemp "${TMPDIR:-/tmp}/station-pre-push.XXXXXX") || {
+      echo "station git hook: could not buffer the push list, so the content check did not run" >&2
+      if [ -n "$repo_hook" ]; then exec "$repo_hook" "$@"; fi
+      exit 0
+    }
+    trap 'rm -f "$buf"' EXIT INT TERM HUP
+    cat > "$buf"
+    if [ -n "$repo_hook" ]; then "$repo_hook" "$@" < "$buf" || exit $?; fi
+    run_gate --refs --remote "$1" < "$buf"
+    exit $?
+    ;;
+  dispatch)
+    echo "station git hook: run through a hook name link, not directly" >&2
+    exit 2
+    ;;
+  *)
+    if [ -n "$repo_hook" ]; then exec "$repo_hook" "$@"; fi
+    exit 0
+    ;;
+esac

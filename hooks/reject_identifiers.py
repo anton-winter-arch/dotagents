@@ -10,16 +10,18 @@ So the check is at the write, not at the exit. It never blocks: every hit is ret
 the model as PreToolUse `additionalContext` and the write proceeds, so the model (or the
 user, in place) decides whether the value is a leak or a legitimate word. A gate that
 refuses ordinary prose because a term is also a dictionary word gets muted, and a muted
-gate is worse than none.
+gate is worse than none. The commit gate (`sanitize gate`) warns on the same content
+again at commit; this is the early warning.
 
 GUARDED PATHS (portable or canon-bound; identifiers must never enter these):
     **/.claude/skills/**      **/.agents/skills/**    ~/.claude/hooks/**
+    **/.agents/hooks/**       **/.agents/agents/**    **/.agents/commands/**
     **/_RESEARCH/**           **/LEARNING/**          **/KNOWLEDGE-BASE/**
     **/.claude/tools/**       **/.claude/agents/**    **/.claude/commands/**
     **/specs/**               (seed copies of the files above)
 
 UNGUARDED (identifiers belong here and are not the model's to strip):
-    PROJECTS/**   tasks/**   DRAFTS/**   _PROJECTS/**   notes-*.md   anything else
+    PROJECTS/**   tasks/**   DRAFTS/**   _PROJECTS/**   __archive/**   anything else
 
 WHAT IS SURFACED (never blocked)
     a project alias, from the station term list (~/.claude/private/identifier-terms.txt,
@@ -32,12 +34,17 @@ WHAT IS SURFACED (never blocked)
       layer as one word
     a work-item id, `STORY-000001` in shape, whose digits are not a synthetic run.
       NNNNnn, repdigits, consecutive runs and zero-padded counters are fixtures and
-      pass silently; EPIC-/FEATURE-/STORY- are universal agile terms. Shape cannot
-      tell a real tracker number from a made-up one, so the model judges.
+      pass silently. Shape cannot tell a real tracker number from a made-up one, so
+      the model judges.
 
     The examples above are deliberately synthetic. A detector's own documentation
     is the easiest place for a real value to hide, because nobody reads a rule
     table looking for the thing the rule describes.
+
+Every pattern and the term-matching rule are the sanitize skill's (skills/sanitize/
+scripts/detect.py, the one rule source), found beside this hook's folder
+(SANITIZE_SCRIPTS overrides, for tests). This file holds only the path rule and the
+report.
 
 Only NEW content is checked (Write content, Edit/MultiEdit new_string, NotebookEdit
 new_source). old_string is exempt: matching bytes already on disk requires reproducing
@@ -47,15 +54,39 @@ Always exits 0. A finding is printed as a PreToolUse `additionalContext` payload
 which the model sees while the write proceeds. On any internal error the hook stays
 silent apart from a stderr note, so it can never brick editing.
 """
+import importlib.util
 import json
 import os
 import pathlib
 import re
 import sys
 
+
+def _load_detect():
+    """The engine by exact file path: a missing folder must not import some other
+    module that happens to be named `detect`."""
+    base = pathlib.Path(os.environ.get("SANITIZE_SCRIPTS") or
+                        pathlib.Path(__file__).resolve().parent.parent / "skills" / "sanitize" / "scripts")
+    path = base / "detect.py"
+    if not path.is_file():
+        raise FileNotFoundError("detect.py")
+    spec = importlib.util.spec_from_file_location("detect", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["detect"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+try:
+    detect = _load_detect()
+except Exception:                                  # reported by main(); the hook stays silent
+    detect = None
+
 GUARDED = (
     ("/.claude/skills/",), ("/.agents/skills/",), ("/.claude/hooks/",),
     ("/.claude/tools/",), ("/.claude/agents/",), ("/.claude/commands/",),
+    # This repo's own hooks, subagents and commands travel exactly as its skills do.
+    ("/.agents/hooks/",), ("/.agents/agents/",), ("/.agents/commands/",),
     ("/_RESEARCH/",), ("/LEARNING/",), ("/KNOWLEDGE-BASE/",),
     # A station spec carries the seed copies of the files above. The live hook
     # under ~/.claude/hooks/ was guarded and its published twin was not, so the
@@ -63,55 +94,19 @@ GUARDED = (
     ("/specs/",),
 )
 # Checked before GUARDED. A project workspace legitimately holds identifiers even when
-# it sits under a guarded-looking path.
-EXEMPT = ("/PROJECTS/", "/_PROJECTS/", "/tasks/", "/DRAFTS/", "/__archive/")
+# it sits under a guarded-looking path; the list is the one the review sweep uses.
+EXEMPT = detect.PROJECT_PATHS if detect else ("/PROJECTS/", "/_PROJECTS/", "/tasks/", "/DRAFTS/", "/__archive/")
 
-PLACEHOLDER = {
-    "poc", "alias", "project", "vault", "name", "out", "x", "y", "v", "id",
-    "acme", "test", "example", "sample", "foo", "bar", "contoso", "client",
-    "certs", "drafts", "shared", "common", "archive", "templates",
-}
-
-PATTERNS = (
-    (re.compile(r"\b[A-Z]{1,4}\s*\((?:DE|DA|ITL|BA|PM|QA|SA|SO)\d+\)"),
-     "a person's initials with a role code"),
-    (re.compile(r"\b(?:prod|uat|dev|test|stg)[-_]?(?:bronze|silver|gold|raw|landing)\b",
-                re.I),
-     "an environment-prefixed catalog name"),
-)
-
-# Handled apart from PATTERNS because the digits decide it, not the shape, and
-# because the verdict is advisory. A skill whose subject IS work items has to be
-# able to write the form, and no test can say which six-digit values are real.
-WORK_ITEM_RE = re.compile(r"\b(?:STORY|TASK|BUG|FEATURE|EPIC|DEF)[-_](\d{3,})\b", re.I)
 WORK_ITEM_WHY = "a work-item identifier that is not a synthetic run"
+REASONS = {
+    "role_code": "a person's initials with a role code",
+    "catalog": "an environment-prefixed catalog name",
+    "work_item": WORK_ITEM_WHY,
+}
+# Kept for the commit-message hook, which imports these names until it retires.
+WORK_ITEM_RE = detect.WORK_ITEM if detect else re.compile(r"(?!)")
+synthetic = detect.synthetic if detect else (lambda digits: True)
 
-
-def synthetic(digits):
-    """True for a run no tracker would issue: every digit the same, a consecutive
-    ascending or descending run, or a zero-padded counter under three digits."""
-    if len(set(digits)) == 1:
-        return True
-    stripped = digits.lstrip("0")
-    if stripped != digits and len(stripped) <= 2:
-        return True
-    seq = [int(c) for c in digits]
-    steps = {b - a for a, b in zip(seq, seq[1:])}
-    return steps in ({1}, {-1})
-
-
-def repo_of(path):
-    for parent in [path] + list(path.parents):
-        if (parent / ".git").exists():
-            return parent
-    return None
-
-
-# The station's own term list: one identifier per line, `#` comments allowed, never
-# committed (gitignored under private/). This is what makes the alias rule work in a
-# repo that holds no PROJECTS/ folder of its own, such as the shared skills repo.
-TERMS_FILE = pathlib.Path(os.environ.get("IDENTIFIER_TERMS_FILE")
-                          or pathlib.Path.home() / ".claude" / "private" / "identifier-terms.txt")
 # Paths this hook always checks, whatever else is guarded: itself and the list.
 SELF_GUARDED = ("/hooks/reject_identifiers.py", "/private/identifier-terms.txt")
 
@@ -123,34 +118,20 @@ def is_comment(line):
 
 
 def station_terms():
-    try:
-        lines = TERMS_FILE.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return set()
-    return {ln.strip() for ln in lines if ln.strip() and not is_comment(ln)}
+    return set(detect.station_terms_lenient() or ()) if detect else set()
+
+
+def repo_of(path):
+    for parent in [path] + list(path.parents):
+        if (parent / ".git").exists():
+            return parent
+    return None
 
 
 def aliases_for(path):
     """The station term list, plus subjects derived from the target repo's own
-    PROJECTS/ folders where it has any. Only engagement-shaped folders count: one
-    carrying a vault suffix, whose head is not a generic stand-in."""
-    found = station_terms()
-    repo = repo_of(path)
-    if not repo:
-        return found
-    projects = repo / "PROJECTS"
-    if not projects.is_dir():
-        return found
-    for child in projects.iterdir():
-        if not child.is_dir():
-            continue
-        low = child.name.lower()
-        if not any(s in low for s in ("-okf", "-enrich", "-staging", "-prev")):
-            continue
-        head = re.split(r"[-_]", child.name, maxsplit=1)[0]
-        if len(head) >= 2 and not head.isdigit() and head.lower() not in PLACEHOLDER:
-            found.add(head)
-    return found
+    PROJECTS/ folders where it has any."""
+    return station_terms() | detect.project_aliases(repo_of(path))
 
 
 def guarded(path_str):
@@ -176,36 +157,25 @@ def self_text(target, text):
     return text
 
 
-def findings(text, aliases):
-    """(matched value, reason) pairs. Callers that talk to the model report the
-    reason and the position, never the value: the list is not the model's to read."""
-    hits = []
-    for regex, why in PATTERNS:
-        for match in regex.finditer(text):
-            hits.append((match.group(0), why, match.start()))
-    for match in WORK_ITEM_RE.finditer(text):
-        if not synthetic(match.group(1)):
-            hits.append((match.group(0), WORK_ITEM_WHY, match.start()))
-    hits.extend(alias_hits(text, aliases))
-    return hits
-
-
 def alias_hits(text, aliases):
-    """(value, reason, start) for every term-list alias in text. Shared by the
-    commit-message hook, so both gates match the same way.
-
-    A single-case term matches any capitalization; a mixed-case term matches exactly
-    as typed, because its case is its identity and the folded form is usually an
-    ordinary word. Spacing inside a term is matched as written. Edges are "no word
-    character on either side" rather than \\b, so a term that starts or ends with a
-    symbol (#tag, @handle, sup#) still matches as a whole token."""
+    """(value, reason, start) for every term-list alias in text, by the shared term rule
+    on the raw text (whole token, case kept for a mixed-case term, spacing as written)."""
+    if not detect:
+        return []
     out = []
     for alias in sorted(aliases):
-        flags = re.I if (alias == alias.upper() or alias == alias.lower()) else 0
-        pattern = r"(?<!\w)" + re.escape(alias) + r"(?!\w)"
-        for match in re.finditer(pattern, text, flags):
+        for match in detect.term_pattern(alias).finditer(text):
             out.append((match.group(0), "a project alias", match.start()))
     return out
+
+
+def findings(text, aliases):
+    """(matched value, reason, start) triples. Callers that talk to the model report the
+    reason and the position, never the value: the list is not the model's to read."""
+    hits = [(text[h.start:h.end], REASONS[h.cls], h.start)
+            for h in detect.find(text) if h.cls in REASONS]
+    hits.extend(alias_hits(text, aliases))
+    return hits
 
 
 def describe(hits, scanned):
@@ -245,6 +215,10 @@ def main():
         if not isinstance(text, str) or not text or not target:
             return 0
         if not guarded(str(target)):
+            return 0
+        if detect is None:
+            print("reject_identifiers: the sanitize detectors did not load; write allowed unchecked",
+                  file=sys.stderr)
             return 0
         path = pathlib.Path(target).expanduser()
         scanned = self_text(target, text)

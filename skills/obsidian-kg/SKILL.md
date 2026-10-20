@@ -19,8 +19,8 @@ Two things make it worth reaching for over `grep` or `Read`:
 
 - **Sections, not files.** A hit locates a heading-bounded passage with a line
   range you can read directly, instead of naming a file you then have to open.
-- **Aggregates over time.** Dated entries roll up into themes and trends, which
-  no amount of searching produces.
+- **Aggregates over time.** Entries in log-dated notes roll up into themes and
+  trends, which no amount of searching produces.
 
 ## Layout
 
@@ -275,8 +275,9 @@ one up is about structure and edges instead:
 | use `ignore` aggressively on archived or duplicated trees | a stale copy indexed beside its live note returns every answer twice and sometimes outranks it |
 
 Date-free and fully available on this shape: `search`, `query`, `sections`, `read`,
-`coverage`, `backlinks`, `links`, `neighbors`, `path`, `stats`, `index`. Unavailable
-without dates: `themes`, `trends`, `timeline`, `during`, `trajectory`.
+`coverage`, `backlinks`, `links`, `neighbors`, `path`, `stats`, `index`. `timeline`,
+`during` and `trajectory` are unavailable without dates, and `themes` and `trends` are
+unavailable without log-dated notes.
 
 ## Slots keep aggregates honest (dated logs only)
 
@@ -292,6 +293,12 @@ wrong. `routine` exists for the subtler version of the same failure: a checklist
 is authored in the literal sense, and it restates the same nouns on every
 occurrence until the item is closed, so one long-running open item reads as a
 theme. If a corpus has recurring slots, label them.
+
+`themes` and `trends` count only notes with the `log-dated` profile. A frontmatter
+date on a note with any other profile does not qualify it: ingest stamps that date
+onto the note's sections, and counting those sections would count a dated research
+brief as the author's own writing. A graph with no log-dated note returns
+`"status": "NO_LOG_DATED_NOTES"` with exit 0; otherwise the status is `COMPLETE`.
 
 ## Conventions
 

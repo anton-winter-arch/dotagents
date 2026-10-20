@@ -12,17 +12,17 @@ available to Claude Code (and other skill-aware agents) on every device.
 Third-party/upstream skills are **not** published here - they are consumed from
 installed plugins (e.g. `agent-skills@addy-agent-skills`), which auto-update and
 expose namespaced `plugin:skill` entries. This repo carries only what the user
-authors or forks (**32 skills** `agent-conference`, `agent-cc-configs-sync`,
+authors or forks (**29 skills** `agent-conference`, `agent-cc-configs-sync`,
 `agent-mail`, `agent-review`, `ai-engineering`, `ai-slop-magic-eraser`,
-`antigravity-task`, `cmon`, `code-kg`, `codex-task`, `cover-me`, `cursor-task`,
-`deep-research`, `frontend-aesthetics`, `harness-bench`, `hi`, `local-model-task`, `meta-loop`,
+`cmon`, `code-kg`, `cover-me`,
+`deep-research`, `frontend-aesthetics`, `hi`, `local-model-task`, `meta-loop`,
 `my-security-review-checklist`, `notes`, `obsidian`, `obsidian-kg`,
 `plugin-update`, `project-knowledge-vault`, `reflect`, `repo-device-sync`,
-`sanitize`, `skill-authoring`, `sprint-board`, `support-local`, `teach-me`,
+`sanitize`, `skill-authoring`, `sprint-board`, `support-local`, `task`, `teach-me`,
 `wrap-up`;
 **9 subagents** `my-security-reviewer`, `supervisor`, `ai-engineer`, `advisor`,
 `researcher`, `reader`, `worker`, `curator`, `support-local`;
-**13 commands** `agent-mail`, `my-security-review`, `supervisor`, `reflect`,
+**14 commands** `advisor`, `agent-mail`, `my-security-review`, `supervisor`, `reflect`,
 `wrap-up`, `cmon`, and the agent-skills aliases `spec`, `plan`, `build`, `test`,
 `review`, `code-simplify`, `ship` - the aliases carry
 `disable-model-invocation: true`, so they exist for the user's slash invocation
@@ -196,8 +196,8 @@ One engine for every markdown corpus: `skills/obsidian-kg/`, stdlib-only single
 script, SQLite+FTS5, no network and no embeddings. Retrieval addresses sections
 rather than files, a profile in `<vault>/vault-kg/vault-kg-config.md` declares
 what one section is, and a declared unit is never fragmented. Aggregates over
-detected dates (`themes`, `trends`, `timeline`, `during`) are the layer no
-search provides.
+time (`themes` and `trends` over log-dated notes, `timeline` and `during` over
+detected dates) are the layer no search provides.
 
 Anything specific to a vault is config, never code, and never a default. A vault
 with no config still gets sections, search, the link graph and backlinks.

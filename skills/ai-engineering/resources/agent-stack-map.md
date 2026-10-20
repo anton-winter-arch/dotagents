@@ -1,7 +1,7 @@
 ---
 name: agent-stack-map
 description: Opinionated, comparison-table map of the modern OSS agent stack - frameworks, harnesses, memory, retrieval/context, skills, ingestion, tuning/RL, self-improvement, the NVIDIA NeMo stack, and media production (local speech and podcast pipelines) - with recommended architectures and a current shortlist. The analytical core of the ai-engineering skill.
-updated: 2026-07-29
+updated: 2026-10-19
 ---
 
 # Agent Stack Software Map
@@ -211,6 +211,8 @@ Keep enforcement in agent configuration or an OS sandbox rather than the client,
 | mempalace | verify | verify | Memory palace | Structured long-term store. | Verify status. | Unverified | [repo](https://github.com/MemPalace/mempalace) |
 | Memoria | 0.5k | Apache-2.0 | **Version-controlled** memory | Snapshot / branch / merge / roll back a memory store like a git repo; hybrid vector + full-text recall, contradiction detection, audit trail per mutation. | ⚠️ Branching rides **MatrixOne's** copy-on-write MVCC engine - the headline feature carries a DB dependency, not a drop-in store. Quiet since 2026-06-29. | Caution | [repo](https://github.com/matrixorigin/Memoria) |
 | EverOS | verify | Apache-2.0 | Markdown-native local memory | Local-first portable memory layer; the store underneath Raven (Section B). | Pre-1.0, moves with Raven. | Unverified | [repo](https://github.com/EverMind-AI/EverOS) |
+| TencentDB Agent Memory | 29.6k | MIT | Layered memory hub + LLM proxy | Four layers (raw turns, key facts, scenario summaries, user profile) plus team assets (skills, an LLM-wiki, a code graph). Local SQLite + sqlite-vec by default, Tencent Cloud VectorDB optional; BM25 + vector recall fused with RRF. v2 adds a Memory Proxy that speaks the Anthropic and OpenAI protocols and injects memory into the system prompt, with ACLs and adapters for Claude Code, Codex, OpenClaw and Hermes. TypeScript, v2.0.2 (2026-10-09; GitHub API checked 2026-10-19). | **Every benchmark is Tencent's own** (PersonaMem 47.85% to 76.10%, without vs with it); no LoCoMo or LongMemEval, and the one independent harness lists it not-run (2026-10-15). The proxy sits on the model-traffic path and sees every prompt and credential; its Claude Code path swaps Claude Code's credentials for a memory key and forwards upstream on an API key. v2.0.2 pins simple-git and drizzle-orm below their security fixes and ships no lockfile for Memory Core (field note 2026-10-19). No MCP server. 772 open issues. A static read (2026-10-19) found its Langfuse, ClickHouse and Opik sinks off by default and no built-in vendor endpoint; not runtime-verified. A managed edition is sold on Tencent Cloud's China site. | Caution | [repo](https://github.com/TencentCloud/TencentDB-Agent-Memory) |
+| Hy-Memory (Tencent Hunyuan) | 0.9k | Apache-2.0 | Trained memory *writer* | A 30B-A3B model trained (on-policy distillation, then chunk-level GRPO) to decide what an existing memory framework stores, plus a Python SDK with chat, working and coding pipelines over ChromaDB/Qdrant/FAISS, Kuzu/Neo4j and SQLite. Paper arXiv 2610.22196 (2026-10-15). | Days old at check (2026-10-19). Its 55.49% vs Claude Opus 5's 54.62% macro score is the authors' own, on 20% subsamples. A 30B MoE writer is a GPU-serving dependency. GitHub tags reach v1.0.4 while PyPI `hy-memory` shows 2.0.4 with no project link, so confirm the package is Tencent's before installing. | Unverified | [repo](https://github.com/Tencent-Hunyuan/Hy-Memory) |
 
 > **Branch-and-merge memory (noted 2026-07-27):** Memoria and Shepherd (Section B)
 > arrive at the same primitive from opposite ends - versioning an agent's *state* so a
@@ -305,6 +307,65 @@ The durable knowledge/context layer agents operate on.
 **Stance:** treat agent RL as a specialized layer. Do not pick an agent framework
 primarily on its RL story unless you have an explicit post-training roadmap. For
 most teams, "improvement over time" comes from the memory layer, not RL.
+
+### H.1 - Harness self-improvement (researched 2026-10-19)
+
+A separate lane from RL. The executor model stays frozen while a second model
+rewrites the harness around it: prompts, guardrails, memory files, skills, scripts,
+subagents and sometimes the harness code itself. Two questions separate the
+entrants: what signal decides whether an edit stays, and whether the improvement
+machinery can edit itself. Results are each paper's own; GitHub figures are from
+the API, checked 2026-10-19.
+
+| Project | License | What it edits | Keep/reject signal | Edits its own improver? | Headline result (self-reported) | Link |
+|---|---|---|---|---|---|---|
+| Harness² (Google Cloud AI Research) | Apache-2.0 | Eight harness files of an OpenCode or Codex executor, per task | **No labels.** Candidate and base runs of the same task are compared by an anonymized model selector | No. Stage prompts and the decision rule are fixed; a per-domain library of adopted harnesses and lessons grows, and starts empty on every sweep | One step: WorkBuddy-Bench +11.5, JobBench +4.5, LAB +11.8 pp; beats Meta-Harness at k=5. v0.1.0, ~10.8k★ | [repo](https://github.com/google-research/harness2) |
+| Meta-Harness (Stanford) | MIT | Harness code, searched offline | Scores on a search set; the proposer reads every prior candidate's code, traces and scores | No | Gains over hand-built harnesses on TerminalBench-2 and text classification. ~1.7k★ | [repo](https://github.com/stanford-iris-lab/meta-harness) |
+| RRSI (Google Cloud AI Research, UNC, Stanford, WashU) | Apache-2.0 | The whole harness, component by component | Evolve-set scores, regularized: an annealed cap on edits per candidate, a critic that rejects benchmark-specific edits, a pruner for low-value ones | No | Up to +14.1 on the evolve split and +4.7 on five unseen benchmarks, with 30% fewer tokens. ~1.6k★ | [repo](https://github.com/google-research/rrsi) |
+| Darwin Gödel Machine (UBC, Sakana; ICLR 2026) | Apache-2.0 | **Its own agent code**, including the code that does the editing | Benchmark scores over an open-ended archive of variants | Yes | SWE-bench 20% to 50% (secondary source). ~2.4k★, quiet since 2025-08-13 | [repo](https://github.com/jennyzzt/dgm) |
+| Evo² (Google, UIUC) | Paper only | Harness code **and** the evolver model's weights, trained on its own edit trajectories | Task scores | Yes (weights) | SWE-bench Verified 48.3%, Polyglot 82.1% | [arXiv 2610.13025](https://arxiv.org/abs/2610.13025) |
+| ModularRSI | Paper only | Five harness modules evolved separately, then integrated | Success or failure on 2,000 tasks kept disjoint from the eval benchmarks | No | Gains on Terminal-Bench 2.0 and SWE-bench Verified (no figures on the abstract) | [arXiv 2609.14857](https://arxiv.org/abs/2609.14857) |
+| Recursive Harness Self-Improvement (Sakana, UC Berkeley) | Paper only | A prompt-level specification of the agent loop | Pairwise comparison over its own revision history | No | Low-effort agents beat max-effort ones at up to 60% lower cost, on 30 synthetic tasks | [arXiv 2607.15524](https://arxiv.org/abs/2607.15524) |
+| HSI | **No license** | Task harness code, plus the evolver's strategy through a meta-evolver | Environment reward | Yes (strategy) | BabyAI +39.3%, Crafter +33.0%. 12★ | [repo](https://github.com/TailinZhou/hsi) |
+
+**Harness² in detail** (read in code at v0.1.0, 2026-10-19). Per task it runs
+`4k` executor rollouts and `3k` editor sessions (k=1: 4 and 3; k=5: 20 and 15),
+plus one selection and one reflection session. The default editor is Claude Opus
+4.8. The editable surface is a path allowlist per executor, and an invalid
+proposal gets one retry before the current harness is kept. Four patterns transfer
+to any self-editing system:
+
+- **Probe against the unmodified harness on the same task**, and treat "keep the
+  base output" as a first-class verdict. The selector prompt states it is "a
+  completely valid and expected outcome."
+- **Anonymize and shuffle candidates** with a seeded order before a model chooses,
+  so position and label cannot steer the pick.
+- **Gate what enters memory.** A lesson is refused unless cue, lesson and evidence
+  are all present, and stored harnesses are scanned for grader markers
+  (`pass_rate`, `passed_count`) before they reach any context.
+- **Make the composer the last gate.** Its prompt says that "merging an edit
+  launders it", so every rule that bound the proposers binds the merge.
+
+Cautions for Harness²:
+
+- **Cost has no ceiling yet.** There is no spend cap (issue #4), resumed runs
+  undercount spend (#50), and the paper reports compute only as a chart.
+- **The executor is not isolated.** Codex runs with
+  `--dangerously-bypass-approvals-and-sandbox` and `--dangerously-bypass-hook-trust`,
+  network access is unrestricted, and the README leaves egress control to the
+  operator. A third-party report says Codex fetched a public grading rubric during
+  a run (unverified).
+- **It is shaped as a benchmark runner.** Your own task stream needs a benchmark
+  adapter. It is Linux-only, Vertex AI by default, and supports OpenCode and Codex
+  executors only (Claude Code and Pi requested in #64). An open bug has the grader
+  trusting a task's self-reported pass counts (#80). No independent reproduction
+  existed at check time.
+
+**Stance:** every entrant except Harness² needs a score, so they fit domains that
+already have a test suite. Harness² is the one built for open-ended work with no
+verifier, at the price of about seven model sessions per task at k=1. All of them
+are methods rather than tools: trial one on a fixed task set with a hard spend cap
+and a sandboxed executor before trusting a gain it reports about itself.
 
 ---
 

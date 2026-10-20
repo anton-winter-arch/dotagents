@@ -314,10 +314,9 @@ class TestDelegatedScanner(LintCase):
         self.assertEqual(code, 1)
         self.assertIn("invisible-unicode", out)
 
-    def test_scanner_is_where_this_script_expects_it(self) -> None:
-        scanner = (REPO_ROOT / "skills" / "my-security-review-checklist"
-                   / "scripts" / "unicode_smuggle_check.py")
-        self.assertTrue(scanner.is_file(), f"delegation target missing: {scanner}")
+    def test_the_engine_is_where_this_script_expects_it(self) -> None:
+        engine = REPO_ROOT / "skills" / "sanitize" / "scripts" / "detect.py"
+        self.assertTrue(engine.is_file(), f"delegation target missing: {engine}")
 
     def test_warn_severity_passes_through_without_failing(self) -> None:
         content = f"status: check{VS16}\n"

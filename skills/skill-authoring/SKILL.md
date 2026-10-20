@@ -171,6 +171,8 @@ Run over `skills/*/SKILL.md`, `agents/*.md`, `commands/*.md`:
   grader/comparator/analyzer agents, HTML eval viewer).
 - `skills-ref validate` (open-standard reference validator) for interop
   checks on anything shared outside Claude Code.
+- `scripts/trigger_ab.py` A/B tests a changed description's trigger evals against
+  the committed one; the eval convention covers how to run it.
 
 ### Eval convention (house wrapper around the plugin)
 
@@ -196,44 +198,56 @@ under. Division of labor: plugin = mechanism, this profile = policy.
   tell a bad case from a real miss when one fails.
 - Minimum 3 cases per skill, including at least one should-trigger and one
   should-NOT-trigger case (trigger precision matters as much as recall).
-- Write evals BEFORE polishing prose on a new skill; re-run after any
-  description change (that is the field most likely to regress triggering).
+- Write evals BEFORE polishing prose on a new skill.
+- **A changed description is A/B tested, not re-scored.**
+  `scripts/trigger_ab.py <skill>...` runs the plugin's `run_eval.py` over the same cases
+  on the committed description and the working-tree one, side by side.
+  It lists every case whose verdict flipped, and a regression exits 1.
+  An absolute pass rate is noisy and partly structural (see the repo-bound skills
+  bullet), so the flip list is the verdict.
+  `--dry-run` prints the call count (cases x runs x 2), and `--runs 3` settles a flip
+  seen at the default of one run.
+  Run it in the background, because a run takes minutes.
+  A per-machine lock allows one run at a time.
+  An interrupted run puts its hidden skills back as it exits,
+  or on the next invocation after a hard kill.
+  The tool pins the model, runs one worker per variant,
+  gives each variant its own throwaway project folder,
+  and hides the installed skill behind a stand-in without `SKILL.md`.
+  Unlinking the skill outright, as the earlier procedure did, made the station hooks
+  that load sanitize's scripts skip their checks for the length of the run
+  (observed 2026-10-20).
 - `tests/` (does the code work) sits alongside `evals/` (does the skill fire and
   behave); they answer different questions and both gate merge. See the test
   convention below for what a skill shipping executable code owes.
-- **Invocation, which is not obvious and has cost time twice.** Run it **as a
-  module from the plugin's own skill directory**, because a direct path
-  invocation dies on `ModuleNotFoundError: No module named 'scripts'`. The flags
-  are `--eval-set` and `--skill-path`, not `--evals` and `--skill`. Do not wrap
-  it in `timeout`; macOS has no such command.
+- **A new skill has no committed description to compare, so run `run_eval.py`
+  directly.** Run it as a module with the plugin folder on `PYTHONPATH`,
+  from a throwaway folder that holds an empty `.claude/`.
+  Invoking it by file path fails with `ModuleNotFoundError: No module named 'scripts'`.
+  The runner writes its skill copies into the nearest folder that contains `.claude/`;
+  started from the plugin's own folder, that is the home folder,
+  and the copies appear in live sessions' skill lists.
+  The eval set and the skill go in `--eval-set` and `--skill-path`.
+  Do not wrap it in `timeout`; macOS has no such command.
 
   ```bash
-  cd ~/.claude/plugins/cache/claude-plugins-official/skill-creator/*/skills/skill-creator
-  python3 -m scripts.run_eval \
-    --eval-set <skill>/evals/triggers.json \
-    --skill-path <skill> --model claude-sonnet-5 --num-workers 1
+  SCRATCH=/path/to/a/scratch/folder; SKILL=/path/to/the/skill   # set both first
+  mkdir -p "$SCRATCH/eval-root/.claude" && cd "$SCRATCH/eval-root" && \
+  PYTHONPATH="$(ls -td ~/.claude/plugins/cache/claude-plugins-official/skill-creator/*/skills/skill-creator | head -1)" \
+    python3 -m scripts.run_eval --eval-set "$SKILL/evals/triggers.json" \
+    --skill-path "$SKILL" --model claude-sonnet-5 --num-workers 1
   ```
 
   It spawns a fresh `claude -p` per case, and `--runs-per-query` defaults to 3,
   so the real unit is cases times three: a 20-case set is 60 serialized spawns at
-  roughly 20 seconds each, near 20 minutes. Budget from that arithmetic rather
-  than from the case count, and run it in the background. Send its output
-  straight to a file; piping it through `tail` or `head` buffers the whole run,
-  so progress stays invisible until the process exits. Drop to
-  `--runs-per-query 1` when the question is only whether a description change
-  moved recall by a lot, and keep 3 when a flaky miss has to be told from a
-  real one.
-- Run `run_eval.py` with `--num-workers 1` and an explicitly pinned `--model`
-  (probes must never inherit the session tier; a cheap tier is fine for trigger
-  probes): parallel workers register their
+  roughly 20 seconds each, near 20 minutes. Budget from that arithmetic and run it in
+  the background, with its output sent straight to a file; piping it through `tail`
+  or `head` buffers the whole run.
+- Pin `--model` (probes must never inherit the session tier; a cheap tier is fine for
+  trigger probes) and keep `--num-workers 1`: parallel workers register their
   synthetic uuid-named command copies in the same project root simultaneously,
   so the model invokes another worker's copy and the scorer counts a miss
   (observed 2026-07-26: identical set scored 3/8 at 4 workers for this reason).
-  If the skill under test is already installed (symlinked into
-  `~/.claude/skills`), unlink it for the duration of the run - the model will
-  invoke the real name instead of the uuid-suffixed eval copy, which also
-  scores as a miss - and re-run `sync-skills.sh` afterward even if the eval
-  run fails, so the station never stays desynced.
 - **Repo-bound skills score zero recall structurally.** Probes spawn `claude -p`
   outside the target repo, so a skill whose firing precondition is repo-bound (a
   vault, a local corpus, a project database) fails every should-trigger case no
@@ -299,7 +313,8 @@ exits 0: a description over the 800-character cap, or a plain scalar containing
    asks whether it **behaves** once fired. Every model-invocable skill has
    `evals/triggers.json` carrying a minimum of 3 cases in both polarities (at
    least one should-trigger and one should-NOT-trigger), and those cases have
-   actually been run with the model pinned. Three is a floor: a skill whose
+   actually been run with the model pinned; a changed description passes
+   `scripts/trigger_ab.py` with no regression. Three is a floor: a skill whose
    trigger scope is contested, because it borders another skill or fires on a
    situation rather than a phrase, needs more to draw that boundary. A skill with
    `disable-model-invocation: true` never auto-fires, so it is exempt from

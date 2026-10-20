@@ -774,8 +774,8 @@ CURSOR_LOCK = "cli-config.lock"
 class CursorConfigLock:
     """One Cursor call at a time per user. The snapshot and restore of Cursor's config file
     cannot interleave: two runs that overlap (two conferences, or a conference and a
-    cursor-task) would restore each other's copy. The lock file sits beside the config, so
-    cursor-task shares it. The wait is bounded by the call's own timeout, and in test mode
+    `/task cursor` run) would restore each other's copy. The lock file sits beside the
+    config, so `/task cursor` shares it. The wait is bounded by the call's own timeout, and in test mode
     by AGENT_REVIEW_CURSOR_LOCK_WAIT."""
 
     def __init__(self, timeout: float):

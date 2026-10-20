@@ -5,6 +5,8 @@ stdlib-only, so these run with a plain
 
 Sections numbered against the SPEC-VAULT-KG test plan; the wikilink invariants
 are the ported original suite and no regression is permitted there."""
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -1835,6 +1837,83 @@ class AggregateTests(VaultCase):
     def test_windows_snap_to_doc_dates_not_file_mtimes(self):
         got = obsidian_kg.themes(self.vault, "2026-06-01", "2026-06-01", None)
         self.assertEqual(got["sections"], 2)  # the entry plus its reflection
+
+
+class LogDatedAggregateTests(VaultCase):
+    """`themes` and `trends` count log-dated notes only. Ingest stamps a frontmatter
+    date onto the undated sections of any profile, and an undeclared section is
+    `authored`, so before this rule a dated research brief counted as the author's
+    own writing and its vocabulary became the window's themes."""
+
+    fixture = ADVERSARIAL
+
+    def setUp(self):
+        super().setUp()
+        self.limits(floor=5)
+        obsidian_kg.ingest(self.vault)
+
+    def note(self, rel, date_key, date, word, n=12):
+        body = " ".join([word] * n) + " written as a long dated brief for the record."
+        (self.vault / rel).parent.mkdir(parents=True, exist_ok=True)
+        (self.vault / rel).write_text(f"---\n{date_key}: {date}\n---\n\n{body}\n", encoding="utf-8")
+        obsidian_kg.ingest(self.vault)
+
+    def rose(self, got):
+        return {t["term"] for w in got["windows"] for t in w["rose"]}
+
+    def test_a_frontmatter_dated_reference_note_stays_out(self):
+        self.note("Notes/brief.md", "date-created", "2026-07-15", "zorpquill")
+        july = obsidian_kg.themes(self.vault, "2026-07-01", "2026-07-31", None)
+        self.assertNotIn("zorpquill", [t["term"] for t in july["terms"]])
+        self.assertNotIn("zorpquill", self.rose(obsidian_kg.trends(self.vault, "month", None)))
+
+    def test_a_reference_note_outside_the_window_leaves_the_baseline_unchanged(self):
+        before = obsidian_kg.themes(self.vault, "2026-07-01", "2026-07-31", None)
+        base = {t["term"]: t["baseline"] for t in before["terms"]}
+        self.note("Notes/old.md", "date", "2025-01-10", "mulch", n=20)
+        after = obsidian_kg.themes(self.vault, "2026-07-01", "2026-07-31", None)
+        self.assertEqual({t["term"]: t["baseline"] for t in after["terms"]}.get("mulch"), base.get("mulch"))
+
+    def test_a_log_dated_notes_authored_slot_still_counts(self):
+        before = obsidian_kg.themes(self.vault, "2026-07-01", "2026-07-31", None)
+        self.note("Notes/brief.md", "date-created", "2026-07-15", "zorpquill")
+        after = obsidian_kg.themes(self.vault, "2026-07-01", "2026-07-31", None)
+        self.assertIn("mulch", [t["term"] for t in after["terms"]])
+        self.assertEqual(after["sections"], before["sections"])
+        self.assertEqual(after["status"], "COMPLETE")
+
+    def test_a_dated_generated_profile_note_stays_out_of_the_generated_slot(self):
+        self.note("generated/digest.md", "date", "2026-07-20", "brindlefen")
+        july = obsidian_kg.themes(self.vault, "2026-07-01", "2026-07-31", "generated")
+        self.assertNotIn("brindlefen", [t["term"] for t in july["terms"]])
+        self.assertNotIn("brindlefen", self.rose(obsidian_kg.trends(self.vault, "month", "generated")))
+        # the journal's own generated slot, inside a log-dated note, still counts
+        self.assertGreater(obsidian_kg.themes(self.vault, None, None, "generated")["sections"], 0)
+
+
+class NoLogDatedNotesTests(VaultCase):
+    """A vault with no log-dated note says so in the payload, since callers read
+    --json, and exits 0."""
+
+    fixture = FIXTURE
+
+    def setUp(self):
+        super().setUp()
+        obsidian_kg.ingest(self.vault)
+
+    def test_themes_and_trends_report_the_missing_profile(self):
+        self.assertEqual(obsidian_kg.themes(self.vault, None, None, None)["status"], "NO_LOG_DATED_NOTES")
+        self.assertEqual(obsidian_kg.trends(self.vault, "month", None)["status"], "NO_LOG_DATED_NOTES")
+        for cmd in ("themes", "trends"):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = obsidian_kg.main([cmd, str(self.vault), "--json"])
+            self.assertEqual(code, 0, cmd)
+            self.assertEqual(json.loads(buf.getvalue())["status"], "NO_LOG_DATED_NOTES", cmd)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(obsidian_kg.main([cmd, str(self.vault)]), 0, cmd)
+            self.assertIn("no log-dated notes", buf.getvalue(), cmd)
 
 
 # --------------------------------------------------------------- 13: index
