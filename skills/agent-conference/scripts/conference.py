@@ -59,6 +59,11 @@ MEMBER_PRESETS = {"deepseek": "deepseek-v4.1-flash:cloud", "glm": "glm-5.3-flash
 # at `high` loops in its thinking on a long stage-2 brief and never answers; its tag lists no
 # medium, so low is the step down.
 MEMBER_EFFORTS = {"deepseek": "low"}
+# A member's own default model where it differs from agent-review's. Cursor seats Grok 4.7
+# on the Fast tier: the same model on priority inference at twice the token price, measured
+# 2026-10-21 on one stage-1 brief at 268 s against 711 s for the standard tier, with the
+# same answer quality. Cursor set the stage ceiling on every run before this.
+MEMBER_MODELS = {"cursor": "grok-4.7-fast"}
 # deepseek keeps its preset and its low pin for `--members ...,deepseek`, but is not seated by
 # default: on every measured run it spent its whole output budget thinking and returned no
 # text, at low as at high, so a default seat bought an exit 3 and nothing else.
@@ -133,7 +138,7 @@ def roster(members: list[str], models: dict[str, str], efforts: dict[str, str], 
                 cfgs[m] = ar.resolve("ollama", models.get(m) or MEMBER_PRESETS.get(m),
                                      efforts.get(m) or MEMBER_EFFORTS.get(m) or effort, allow_cloud=True)
             else:
-                cfgs[m] = ar.resolve(m, models.get(m), efforts.get(m) or effort)
+                cfgs[m] = ar.resolve(m, models.get(m) or MEMBER_MODELS.get(m), efforts.get(m) or effort)
         except ar.ReviewError as exc:
             raise ConferenceError(f"{m}: {exc}")
         cfgs[m]["member"] = m

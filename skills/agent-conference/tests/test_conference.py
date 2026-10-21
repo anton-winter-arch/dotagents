@@ -189,7 +189,7 @@ class TestStages(Base):
         self.assertEqual((self.out / "synthesis.md").read_text(), "The chair's synthesis.")
         run = json.loads((self.out / "run.json").read_text())
         self.assertEqual(run["exit_code"], 0)
-        self.assertEqual(run["stage1"]["cursor"]["model"], "grok-4.7")
+        self.assertEqual(run["stage1"]["cursor"]["model"], "grok-4.7-fast")
         self.assertEqual(run["stage1"]["cursor"]["effort"], "high")
         self.assertNotIn("text", run["stage1"]["cursor"])
         # one stage-1 call, one stage-2 call per member, plus the chair
@@ -392,6 +392,15 @@ class TestStages(Base):
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
         run = json.loads((self.tmp / "out2" / "run.json").read_text())
         self.assertEqual(sorted(run["members"]), sorted(five))
+        # cursor seats Grok 4.7 on the Fast tier by default, at the panel's effort; a --model
+        # override for cursor still wins (the explicit run above pinned nothing and got the same)
+        self.assertEqual((run["members"]["cursor"]["model"], run["members"]["cursor"]["effort"]), ("grok-4.7-fast", "high"))
+
+    def test_cursor_model_override_replaces_the_fast_default(self):
+        r = self.run_conference(extra=["--members", "claude,cursor", "--model", "cursor=grok-4.7", "--chair", "session"])
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        run = json.loads((self.out / "run.json").read_text())
+        self.assertEqual(run["members"]["cursor"]["model"], "grok-4.7")
 
     def test_two_failures_leave_too_few_to_review(self):
         responses = {m: {"fail": True} for m in MEMBERS if m != "claude"}

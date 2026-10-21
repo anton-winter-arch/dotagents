@@ -58,7 +58,11 @@ connections.
   smaller job than answering, and a `member=level` pin still wins there. The
   default members start with agent-review's defaults at high effort: Fable, GPT-6
   Astra, Grok 4.7 and Gemini 4 Argon, which is checked against `agy models` at run
-  time, with a substitution recorded when the pin is gone. The fifth default is
+  time, with a substitution recorded when the pin is gone. Cursor seats Grok 4.7 on
+  its Fast tier (`grok-4.7-fast`, the same model on priority inference at twice the
+  token price): measured 2026-10-21 on one brief at 268 s against 711 s standard with
+  the same answer quality, and cursor had set the stage ceiling on every run before.
+  `--model cursor=grok-4.7` seats the standard tier. The fifth default is
   `glm` (`glm-5.3-flash:cloud`); `deepseek` (`deepseek-v4.1-flash:cloud`) seats
   only when `--members` names it. Both are member names for agent-review's
   `ollama` harness that take any registered `:cloud` tag and nothing else. The

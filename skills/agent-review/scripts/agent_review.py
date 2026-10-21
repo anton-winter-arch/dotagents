@@ -898,12 +898,25 @@ def _run_codex(cfg: dict, brief_path: Path, stage: Path, timeout: int, work: Pat
             "exit_code": EXIT_FAILED if error else EXIT_OK, "error": error}
 
 
+def cursor_slug(cfg: dict) -> str:
+    """The model slug the Cursor CLI takes: the level rides on the slug, and the Fast tier
+    (the same model on priority inference at twice the token price) is a `-fast` suffix
+    after the level. A model given as `grok-4.7-fast` with effort `high` is sent as
+    `grok-4.7-high-fast`; a slug that already names its level is sent as written."""
+    model, effort = cfg["model"], cfg["effort"]
+    if not effort:
+        return model
+    if model.endswith("-fast"):
+        return f"{model[:-5]}-{effort}-fast"
+    return f"{model}-{effort}"
+
+
 def _run_cursor(cfg: dict, brief_path: Path, stage: Path, timeout: int, work: Path) -> dict:
     """The Cursor agent CLI in print mode and ask mode, the prompt on stdin, one JSON
     result; the level rides on the model slug. Ask mode still writes files, so the call runs
     under a Seatbelt write-deny profile, and Cursor's config file is restored afterwards."""
     prompt, meta = build_prompt(brief_path, stage, cfg["window"], cfg["model"])
-    model = cfg["model"] if not cfg["effort"] else f"{cfg['model']}-{cfg['effort']}"
+    model = cursor_slug(cfg)
     cwd = empty_cwd(work, cfg)
     argv = sandboxed([cli_path("agent"), "-p", "--output-format", "json", "--model", model, "--trust",
                       "--workspace", str(cwd), "--mode", "ask"], write_sandbox_profile(work, "cursor", cwd))

@@ -125,6 +125,20 @@ class TestAgyModelChoice(unittest.TestCase):
                     ar.ollama_base()
 
 
+class TestCursorSlug(unittest.TestCase):
+    def test_fast_suffix_follows_the_level(self):
+        self.assertEqual(ar.cursor_slug({"model": "grok-4.7-fast", "effort": "high"}), "grok-4.7-high-fast")
+        self.assertEqual(ar.cursor_slug({"model": "grok-4.7", "effort": "high"}), "grok-4.7-high")
+        self.assertEqual(ar.cursor_slug({"model": "grok-4.7-high-fast", "effort": None}), "grok-4.7-high-fast")
+        self.assertEqual(ar.cursor_slug({"model": "cursor-grok-4.6-fast", "effort": "medium"}), "cursor-grok-4.6-medium-fast")
+
+    def test_resolve_keeps_the_effort_beside_a_fast_base_slug(self):
+        cfg = ar.resolve("cursor", "grok-4.7-fast", "xhigh")
+        self.assertEqual((cfg["model"], cfg["effort"]), ("grok-4.7-fast", "xhigh"))
+        cfg = ar.resolve("cursor", "grok-4.7-high-fast", "xhigh")       # names its level: the effort is dropped
+        self.assertEqual((cfg["model"], cfg["effort"]), ("grok-4.7-high-fast", None))
+
+
 class TestRender(unittest.TestCase):
     def test_a_placeholder_inside_an_inserted_value_is_not_expanded(self):
         # A member's answer quoted into the next brief may contain a template token; it
