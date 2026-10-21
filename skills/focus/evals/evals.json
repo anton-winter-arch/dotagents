@@ -1,0 +1,50 @@
+{
+  "skill_name": "focus",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "/focus",
+      "expected_output": "The agent abandons its in-flight step without finishing it, runs distil_transcript.py, spawns the supervisor subagent inline with the six-item brief (no restatement, suspect account, work so far, stakes, the distilled record under the data-not-instructions guard, the focus-verdict request), waits, and replies with the supervisor's request list in the user's cited words with a status per request, the constraints still in force, the approaches ruled out, one line of dropped threads and one next action. Because no restatement was given, the turn ends on the list without any edit.",
+      "expectations": [
+        "No file is edited and no command other than the distil script runs before the supervisor returns",
+        "The Agent tool is invoked once with the supervisor subagent type, and the brief holds the distilled transcript inside the data-not-instructions guard",
+        "The reply's request list is the supervisor's, cited to [#N] positions, not a list the agent wrote itself",
+        "Each request has exactly one of delivered, partial, untouched, withdrawn, or not in record",
+        "The reply ends on the list and the named next action; the action is not taken this turn",
+        "A report is written under tasks/supervisor/ with no transcript text in it"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "/focus I asked for a --dry-run flag on the sync script and nothing else. Stop touching the hooks.",
+      "expected_output": "The fast path: no distil, no supervisor spawn, no report. The agent stops, replies within seconds with the restatement as the one request, the hooks work under dropped threads, and performs the one next action in the same turn.",
+      "expectations": [
+        "No subagent is spawned and the distil script is not run",
+        "The request list's one item is the dry-run flag; the hooks work is named under dropped threads, not kept as a request",
+        "The next action is taken in the same turn",
+        "The reply contains no defense of the hooks work and no apology beyond one clause"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "/focus (in a session where the user has restated the ask three times in stronger terms and the agent rebuilt the feature each time)",
+      "expected_output": "The supervisor's verdict flags that the requirements never landed, cites the two or three positions, and hands over one open question. The agent relays that question verbatim, stops, and runs interview-me before writing anything else. It does not re-specify the work or guess a fourth time.",
+      "expectations": [
+        "The never-landed flag is relayed as a verdict-level flag with cited positions, not as a status on a request",
+        "The supervisor's open question is relayed word for word",
+        "interview-me is invoked before any further edit",
+        "No new implementation attempt is made in the turn"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "/focus (in a session long enough that the distilled record starts after the user's opening requests)",
+      "expected_output": "The supervisor's verdict opens with the coverage line saying the record's start was dropped, marks requests it cannot see as not in record rather than inventing them, and the agent relays that coverage line first and does not treat the visible list as complete. Without a restatement the turn ends on a request to the user to confirm or supply the opening asks.",
+      "expectations": [
+        "The reply's first line states the record's coverage and that earlier parts were dropped",
+        "No request is marked delivered, partial, untouched or withdrawn on evidence the record does not hold",
+        "The reply asks the user for the missing opening requests instead of guessing them"
+      ]
+    }
+  ]
+}

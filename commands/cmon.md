@@ -2,7 +2,9 @@
 description: Corrective for a verbose reply - distill what was just said down to its core essentials and restate it in as few words as it honestly takes, leading with the answer, then hold that terse register for the rest of the session. Fired by the user right after a long-winded answer that could have been a sentence.
 ---
 
-The previous reply was too long. Compress it now, and stay compressed.
+The previous reply was too long. Compress it now, and stay compressed. If the
+complaint is that the reply was aimed at the wrong thing rather than too long,
+that is `/focus`, and this command does not apply.
 
 1. **Distill the last answer down to its core essentials.** Lead with the
    point, then support it only with things that earn their place - the facts

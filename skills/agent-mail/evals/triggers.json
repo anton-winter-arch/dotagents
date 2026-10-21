@@ -69,7 +69,7 @@
     "name": "subagent-prompt",
     "query": "spawn a subagent and tell it to audit the config files",
     "should_trigger": false,
-    "why": "The Agent tool, or cover-me if the intent is review. A subagent receives a prompt at spawn and has no inbox; mail is between independent agents that outlive a turn."
+    "why": "The Agent tool. A subagent receives a prompt at spawn and has no inbox; mail is between independent agents that outlive a turn."
   },
   {
     "name": "github-issue-comment",

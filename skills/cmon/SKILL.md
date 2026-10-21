@@ -5,7 +5,9 @@ description: Corrective for verbose output - distills the previous over-long rep
 
 # cmon
 
-The previous reply was too long. Compress it now, and stay compressed.
+The previous reply was too long. Compress it now, and stay compressed. If the
+complaint is that the reply was aimed at the wrong thing rather than too long,
+that is `/focus`, and this skill does not fire.
 
 1. **Distill the last answer down to its core essentials.** Lead with the
    point, then support it only with things that earn their place - the facts

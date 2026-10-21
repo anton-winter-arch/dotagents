@@ -285,8 +285,8 @@ description is its trigger contract and its body is the workflow.
 | `ai-engineering` | AI/agent stack knowledge in three modes: read (choose from a dated catalog), write (discover, verify, record), build (intake-driven scaffolding) |
 | `ai-slop-magic-eraser` | Rewrites prose and layout to the user's voice with meaning fixed, and flags what looks invented; runs forked in `curator` |
 | `cmon` | Restates the last verbose reply in as few words as possible, then holds that register |
-| `cover-me` | Spawns the `supervisor` peer to scrutinize in-flight work and writes its dated root-cause report to `tasks/supervisor/` |
 | `deep-research` | Multi-angle web research: parallel researchers, cross-validated, cited |
+| `focus` | `/focus` for a session that went off target: the `supervisor` re-derives the user's requests from the record, the agent relays the list and holds the terse register; the only entry to the supervisor, with its dated report in `tasks/supervisor/` |
 | `frontend-aesthetics` | Raise UI past the defaults that read as AI slop, and verify the rendered result in a browser |
 | `hi` | Session-start orientation, read-only |
 | `meta-loop` | Orchestration: plan, fan out, verify, synthesize |
@@ -319,7 +319,7 @@ description is its trigger contract and its body is the workflow.
 | `my-security-reviewer` | Fresh-context reviewer applying the checklist to staged diffs |
 | `reader` | Read-only fan-out worker: searches one bounded question, returns findings |
 | `researcher` | Source-cited researcher for one bounded angle; the `deep-research` worker |
-| `supervisor` | Read-only peer watching in-flight work for drift and landmines, with a root-cause section (config, prompt, session, environment) on every verdict |
+| `supervisor` | Read-only peer spawned by `focus` only; re-derives the user's requests from the distilled record, flags drift and landmines, with a root-cause section (config, prompt, session, environment) on every verdict |
 | `support-local` | Goal-bound worker on `claude-haiku-5-5` that drives local models over a corpus and returns one JSON answer with evidence; cannot spawn agents or read guarded files |
 | `worker` | Fan-out worker that changes the tree and returns evidence of what it changed |
 
@@ -331,7 +331,6 @@ description is its trigger contract and its body is the workflow.
 | `/cmon` | Restates the last verbose reply in as few words as possible, then holds that register |
 | `/my-security-review` | The agent-tooling security review; dispatches `my-security-reviewer` for depth |
 | `/reflect` | Memory reconciliation (propose -> user gate -> apply); in-repo stale claims go to `/notes` |
-| `/supervisor` | Spawns the supervisor peer (alias of `cover-me`) |
 | `/wrap-up` | Closes the session cleanly: review, inbox and `/notes`, commit and push on the right branch, then `/reflect` |
 | `/spec` `/plan` `/build` `/test` `/review` `/ship` `/code-simplify` | House SOP for each stage, self-contained |
 

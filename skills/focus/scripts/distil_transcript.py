@@ -11,7 +11,7 @@ Stdlib only. Reads the transcript, writes to stdout, never writes to disk.
 
 Usage:
     distil_transcript.py [TRANSCRIPT] [--session-id ID] [--n 300]
-                         [--cap 500] [--max-bytes 80000]
+                         [--cap 500] [--user-cap 4000] [--max-bytes 80000]
 
 With no positional path the transcript is derived: transcripts live at
 ~/.claude/projects/<sanitized-cwd>/<session-id>.jsonl where sanitized-cwd is the
@@ -48,7 +48,14 @@ SIGNAL_TYPES = frozenset(("user", "assistant"))
 
 DEFAULT_N = 300
 DEFAULT_CAP = 500
+# The user's own words are the one thing a reviewer must see whole: a request
+# cut at 500 characters loses the asks at its end. They get their own, larger cap.
+DEFAULT_USER_CAP = 4000
 DEFAULT_MAX_BYTES = 80000
+# Every body line is indented by this, so no body can forge a part header: a
+# tool result containing "[#9 user text]" at column zero would otherwise read
+# as a user turn.
+BODY_INDENT = "  "
 
 
 def sanitize_cwd(path):
@@ -132,8 +139,52 @@ def _cap(text, cap):
     return "{} ...[+{} chars]".format(text[:cap], len(text) - cap)
 
 
-def iter_parts(lines, cap=DEFAULT_CAP):
+def _queued_human_prompt(event):
+    """The text of a message the user sent mid-turn, or None.
+
+    Claude Code stores those as `attachment` events of type `queued_command`
+    with a human origin. Anything else under `attachment` is noise.
+    """
+    att = event.get("attachment")
+    if not isinstance(att, dict) or att.get("type") != "queued_command":
+        return None
+    origin = att.get("origin")
+    if not isinstance(origin, dict) or origin.get("kind") != "human":
+        return None
+    prompt = att.get("prompt")
+    return prompt if isinstance(prompt, str) and prompt.strip() else None
+
+
+# A user event the harness wrote rather than the user typed, without `isMeta`:
+# the text opens with one of these tags. `<command-name>`, `<command-message>`
+# and `<bash-input>` stay user text, because they hold what the user typed.
+HARNESS_TEXT_PREFIXES = (
+    "<task-notification>",
+    "<bash-stdout>",
+    "<bash-stderr>",
+    "<local-command-stdout>",
+    "<local-command-stderr>",
+    "<system-reminder>",
+)
+
+
+def _is_harness_text(event, text):
+    """True for a user event the harness injected: meta, a compaction summary,
+    or text that opens with a harness tag."""
+    if event.get("isMeta") or event.get("isCompactSummary"):
+        return True
+    return text.lstrip().startswith(HARNESS_TEXT_PREFIXES)
+
+
+def iter_parts(lines, cap=DEFAULT_CAP, user_cap=DEFAULT_USER_CAP):
     """Yield (ordinal, role, kind, text) for each projected part.
+
+    Kinds: `text`, `tool_call`, `tool_result`, and `meta` for a user event the
+    harness injected rather than the user typed: `isMeta` (a skill body, a
+    slash-command expansion), a compaction summary, or text opening with a
+    harness tag such as a task notification or shell output. The user's own
+    text, typed or queued mid-turn, is capped at `user_cap`; everything else
+    at `cap`.
 
     A malformed or truncated line is skipped, never fatal; it yields the
     sentinel ("malformed", None, None, None) so the caller can count it.
@@ -152,6 +203,12 @@ def iter_parts(lines, cap=DEFAULT_CAP):
             yield ("malformed", None, None, None)
             continue
         etype = event.get("type")
+        if etype == "attachment":
+            prompt = _queued_human_prompt(event)
+            if prompt is not None:
+                ordinal += 1
+                yield (ordinal, "user", "text", _cap(prompt, user_cap))
+            continue
         if etype not in SIGNAL_TYPES:
             continue
         for block in _blocks(event.get("message")):
@@ -159,7 +216,10 @@ def iter_parts(lines, cap=DEFAULT_CAP):
             if rendered is None:
                 continue
             kind, text = rendered
-            text = _cap(text, cap)
+            if kind == "text" and etype == "user" and _is_harness_text(event, text):
+                kind = "meta"
+            own_words = etype == "user" and kind == "text"
+            text = _cap(text, user_cap if own_words else cap)
             if not text:
                 continue
             ordinal += 1
@@ -168,15 +228,16 @@ def iter_parts(lines, cap=DEFAULT_CAP):
 
 def _render_part(part):
     ordinal, role, kind, text = part
-    return "[#{} {} {}]\n{}\n".format(ordinal, role, kind, text)
+    body = "\n".join(BODY_INDENT + line for line in text.splitlines())
+    return "[#{} {} {}]\n{}\n".format(ordinal, role, kind, body)
 
 
 def distil(lines, n=DEFAULT_N, cap=DEFAULT_CAP, max_bytes=DEFAULT_MAX_BYTES,
-           source="-"):
+           source="-", user_cap=DEFAULT_USER_CAP):
     window = deque(maxlen=max(1, n))
     total = 0
     malformed = 0
-    for part in iter_parts(lines, cap=cap):
+    for part in iter_parts(lines, cap=cap, user_cap=user_cap):
         if part[0] == "malformed":
             malformed += 1
             continue
@@ -186,6 +247,9 @@ def distil(lines, n=DEFAULT_N, cap=DEFAULT_CAP, max_bytes=DEFAULT_MAX_BYTES,
     rendered = [(p[0], _render_part(p)) for p in window]
 
     header_lines = ["# transcript: {}".format(source)]
+    header_lines.append(
+        "# user text cap {} chars; body lines indented, a part header is only ever at column zero".format(user_cap)
+    )
     if malformed:
         header_lines.append("# skipped {} malformed lines".format(malformed))
 
@@ -236,6 +300,10 @@ def main(argv=None):
     parser.add_argument("--n", type=int, default=DEFAULT_N, help="parts to keep")
     parser.add_argument("--cap", type=int, default=DEFAULT_CAP, help="chars per part")
     parser.add_argument(
+        "--user-cap", type=int, default=DEFAULT_USER_CAP,
+        help="chars per part of the user's own text (typed or queued mid-turn)",
+    )
+    parser.add_argument(
         "--max-bytes",
         type=int,
         default=None,
@@ -260,7 +328,8 @@ def main(argv=None):
         return 2
     with handle:
         sys.stdout.write(
-            distil(handle, n=args.n, cap=args.cap, max_bytes=max_bytes, source=path)
+            distil(handle, n=args.n, cap=args.cap, max_bytes=max_bytes, source=path,
+                   user_cap=args.user_cap)
         )
     return 0
 

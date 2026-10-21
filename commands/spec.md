@@ -10,7 +10,9 @@ an appendix.
 
 Interrogate the request before specifying it. An ambiguity settled now is cheap;
 the same ambiguity discovered in code is a rewrite. Where two readings would lead
-to materially different work, ask rather than pick.
+to materially different work, ask rather than pick. A requirement the user
+stated that the spec cannot meet, or scopes out, is never cut silently: it goes
+under the spec's decisions for the user, with the reason.
 
 Per this repo's docs lifecycle, a scoped spec for one feature lands at
 `tasks/SPEC-FEATURE-NAME.md` while that feature is in flight. On completion its

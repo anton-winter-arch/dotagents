@@ -1,6 +1,6 @@
 ---
 name: advisor
-description: Board-level advisor for the meta-loop pattern - strategy, decomposition, risk spotting, and proportion. Fresh context, off the hot path; consulted on demand at plan time and before final synthesis, never for implementation. Use when an orchestrator wants a premium second opinion on a plan's decomposition seams, sequencing, hidden risks, or the quality bar of a synthesized deliverable. Pairs with the meta-loop skill. Distinct from supervisor (which watches in-flight work for drift); the advisor is pulled in deliberately with a specific question.
+description: Board-level advisor for the meta-loop pattern - strategy, decomposition, risk spotting, and proportion. Fresh context, off the hot path; consulted on demand at plan time and before final synthesis, never for implementation. Use when an orchestrator wants a premium second opinion on a plan's decomposition seams, sequencing, hidden risks, or the quality bar of a synthesized deliverable. Pairs with the meta-loop skill. Distinct from supervisor (which the user summons with /focus to re-derive the original requests); the advisor is pulled in deliberately with a specific question.
 model: inherit
 tools: Read, Grep, Glob, WebSearch, WebFetch
 ---

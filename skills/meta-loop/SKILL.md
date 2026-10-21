@@ -92,7 +92,7 @@ Apply the verdict - proceed / revise / stop - before any worker starts.
   - `worker` - anything that changes the tree (opus)
   - `researcher` - source-cited research on one bounded angle, capsule return
   - `advisor` - strategy, decomposition, risk and proportion, off the hot path
-  - `supervisor` - watches in-flight work for drift; pushed, not pulled
+  - `supervisor` - re-derives the user's requests when the user fires `/focus`; spawned by that skill only
   - `my-security-reviewer` - the agent-tooling security checklist
   - `ai-engineer` - AI and agent builds
   - `curator` - how a deliverable reads and looks; edits in place (opus)
@@ -185,4 +185,4 @@ Phase 4 is the loop's gate, not a substitute for the review the change would hav
 ## Related tooling
 
 `advisor` agent (this skill's off-path judgment and counsel),
-`supervisor` agent via cover-me (in-flight watcher, push not pull).
+`supervisor` agent via `focus` (a cold read of the record, fired by the user only).

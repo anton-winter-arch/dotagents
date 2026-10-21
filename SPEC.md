@@ -14,15 +14,15 @@ installed plugins (e.g. `agent-skills@addy-agent-skills`), which auto-update and
 expose namespaced `plugin:skill` entries. This repo carries only what the user
 authors or forks (**29 skills** `agent-conference`, `agent-cc-configs-sync`,
 `agent-mail`, `agent-review`, `ai-engineering`, `ai-slop-magic-eraser`,
-`cmon`, `code-kg`, `cover-me`,
-`deep-research`, `frontend-aesthetics`, `hi`, `local-model-task`, `meta-loop`,
+`cmon`, `code-kg`,
+`deep-research`, `focus`, `frontend-aesthetics`, `hi`, `local-model-task`, `meta-loop`,
 `my-security-review-checklist`, `notes`, `obsidian`, `obsidian-kg`,
 `plugin-update`, `project-knowledge-vault`, `reflect`, `repo-device-sync`,
 `sanitize`, `skill-authoring`, `sprint-board`, `support-local`, `task`, `teach-me`,
 `wrap-up`;
 **9 subagents** `my-security-reviewer`, `supervisor`, `ai-engineer`, `advisor`,
 `researcher`, `reader`, `worker`, `curator`, `support-local`;
-**14 commands** `advisor`, `agent-mail`, `my-security-review`, `supervisor`, `reflect`,
+**13 commands** `advisor`, `agent-mail`, `my-security-review`, `reflect`,
 `wrap-up`, `cmon`, and the agent-skills aliases `spec`, `plan`, `build`, `test`,
 `review`, `code-simplify`, `ship` - the aliases carry
 `disable-model-invocation: true`, so they exist for the user's slash invocation

@@ -27,6 +27,6 @@ infer it from the current work and state the inference in the brief.
 
 Relay the advisor's verdict and its reasoning back to the user, ranked, with the
 disagreements it has with the plan stated plainly. It is **advisory**: present
-the findings and let the user decide; do not act on them unasked. For in-flight
-drift watching use `/supervisor`; for code or security depth route to the review
-skills.
+the findings and let the user decide; do not act on them unasked. A session that
+has drifted off its requests is the user's `/focus`; for code or security depth
+route to the review skills.
