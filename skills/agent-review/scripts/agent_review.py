@@ -315,10 +315,10 @@ def child_env() -> dict[str, str]:
 
 
 def render(template: str, **fields: str) -> str:
-    out = template
-    for k, v in fields.items():
-        out = out.replace("{{" + k + "}}", v)
-    return out
+    """Substitute `{{NAME}}` placeholders in one pass over the template, so a placeholder
+    written inside an inserted value (a member's answer quoting the brief's own tokens)
+    is never expanded in turn. Unknown names are left as written."""
+    return re.sub(r"\{\{([A-Z_]+)\}\}", lambda m: fields.get(m.group(1), m.group(0)), template)
 
 
 # ---------------------------------------------------------------- resolution ---

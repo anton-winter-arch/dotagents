@@ -59,7 +59,10 @@ MEMBER_PRESETS = {"deepseek": "deepseek-v4.1-flash:cloud", "glm": "glm-5.3-flash
 # at `high` loops in its thinking on a long stage-2 brief and never answers; its tag lists no
 # medium, so low is the step down.
 MEMBER_EFFORTS = {"deepseek": "low"}
-DEFAULT_MEMBERS = ["claude", "codex", "cursor", "antigravity", "deepseek", "glm"]
+# deepseek keeps its preset and its low pin for `--members ...,deepseek`, but is not seated by
+# default: on every measured run it spent its whole output budget thinking and returned no
+# text, at low as at high, so a default seat bought an exit 3 and nothing else.
+DEFAULT_MEMBERS = ["claude", "codex", "cursor", "antigravity", "glm"]
 # The user may sit on the panel as the member `user`: the run pauses at each stage for
 # `stage1/user.md` and `stage2/user.md` (exit 5) and `resume` carries on. Every brief a
 # model reads names that member by a per-run alias with no model, so the reviewers and
@@ -71,6 +74,8 @@ CITATION_RE = re.compile(r"\b[\w./-]+\.[A-Za-z0-9]{1,8}:\d+|\bline\s+\d+", re.I)
 LABELS = "ABCDEFGHIJ"
 DEFAULT_TIMEOUT = 1500
 MAX_TIMEOUT = 1800
+# A ranking-block repair returns one JSON block; it never needs the stage budget.
+REPAIR_TIMEOUT = 300
 
 EXIT_OK, EXIT_ARGS, EXIT_PARTIAL, EXIT_FAILED, EXIT_WAITING = 0, 2, 3, 4, 5
 
@@ -208,9 +213,16 @@ def _fan_out(cfgs: dict, briefs: dict[str, Path], stage: Path, timeout: int, wor
     return results
 
 
+def words_note(res: dict) -> str:
+    """The visible word count on a stage line. Output tokens include a model's reasoning,
+    which the next stage never sees; the words are what it sends on."""
+    return f"  {res['words']} words" if res.get("words") is not None else ""
+
+
 def _write_results(out: Path, stage_name: str, results: dict) -> None:
     for name, res in results.items():
         if res.get("text"):
+            res["words"] = len(res["text"].split())
             (out / stage_name / f"{name}.md").write_text(res["text"], encoding="utf-8")
         (out / stage_name / f"{name}.json").write_text(json.dumps(res, indent=1), encoding="utf-8")
 
@@ -251,12 +263,16 @@ def blinding_for(answered: list[str]) -> tuple[dict[str, str], int]:
 
 
 def stage2(question: str, rels: list[str], cfgs: dict, answers: dict, stage: Path, out: Path, timeout: int,
-           redaction: str = "") -> tuple[dict, dict]:
+           redaction: str = "", review_cfgs: dict | None = None) -> tuple[dict, dict]:
     answered = [m for m in cfgs if answers[m].get("text")]
+    # Only a member that answered reviews. A member that failed stage 1 has no answer to be
+    # blinded and would hold the stage-2 barrier for another full timeout on its own fault.
+    # `review_cfgs`, when given, is the same roster resolved at the review round's effort.
+    reviewers = {m: (review_cfgs or cfgs)[m] for m in answered}
     (out / "stage2").mkdir()
     blinding: dict = {}
     briefs: dict[str, Path] = {}
-    for reviewer, cfg in cfgs.items():
+    for reviewer, cfg in reviewers.items():
         labels, seed = blinding_for(answered)
         blinding[reviewer] = {"labels": labels, "seed": seed}
         responses = "\n\n".join(f"## Response {lab}{scan_banner(answers[m])}\n\n{answers[m]['text']}" for lab, m in labels.items())
@@ -267,11 +283,41 @@ def stage2(question: str, rels: list[str], cfgs: dict, answers: dict, stage: Pat
         briefs[reviewer] = out / "stage2" / f"{reviewer}-brief.md"
         briefs[reviewer].write_text(brief, encoding="utf-8")
     (out / "blinding.json").write_text(json.dumps(blinding, indent=1), encoding="utf-8")
-    results = _fan_out(cfgs, briefs, stage, timeout, out / "stage2")
+    results = _fan_out(reviewers, briefs, stage, timeout, out / "stage2")
     for name, res in results.items():
         res["parsed"] = parse_review(res.get("text"), blinding[name]["labels"])
+    repair_reviews(reviewers, results, blinding, stage, out, timeout)
     _write_results(out, "stage2", results)
     return results, blinding
+
+
+def repair_reviews(reviewers: dict, results: dict, blinding: dict, stage: Path, out: Path, timeout: int) -> None:
+    """One short second call for a review that has text but no readable ranking block: the
+    member gets its own review back and is asked for the block alone. A review that did the
+    work and lost it to a format slip is not thrown away on the first miss; a second miss
+    still excludes it. The repair runs in parallel across the reviewers that need it."""
+    needing = {m: cfg for m, cfg in reviewers.items() if m in results      # the user member's review comes later
+               and results[m].get("text") and not (results[m].get("parsed") or {}).get("valid")}
+    if not needing:
+        return
+    briefs = {}
+    for m, cfg in needing.items():
+        brief = ar.render(read_template("repair.md"), LABELS=", ".join(blinding[m]["labels"]),
+                          TOOLS=ar.TOOL_NOTES[cfg["runner"]],
+                          REVIEW=scan_banner(results[m]).lstrip() + ("\n\n" if scan_banner(results[m]) else "") + results[m]["text"])
+        briefs[m] = out / "stage2" / f"{m}-repair-brief.md"
+        briefs[m].write_text(brief, encoding="utf-8")
+    repairs = _fan_out(needing, briefs, stage, min(timeout, REPAIR_TIMEOUT), out / "stage2")
+    for m, rep in repairs.items():
+        if rep.get("text"):
+            (out / "stage2" / f"{m}-repair.md").write_text(rep["text"], encoding="utf-8")
+        results[m]["repair"] = {k: v for k, v in rep.items() if k != "text"}
+        parsed = parse_review(rep.get("text"), blinding[m]["labels"])
+        if parsed.get("valid"):
+            parsed["repaired"] = True
+            results[m]["parsed"] = parsed
+        else:
+            results[m]["parsed"]["repair_why"] = parsed.get("why")
 
 
 def parse_review(text: str | None, labels: dict[str, str]) -> dict:
@@ -285,8 +331,52 @@ def parse_review(text: str | None, labels: dict[str, str]) -> dict:
     if sorted(ranking) != sorted(labels):
         return {"valid": False, "why": f"ranking labels {ranking} do not match {sorted(labels)}"}
     return {"valid": True, "ranking_labels": ranking, "ranking": [labels[x] for x in ranking],
-            "rationale": {labels.get(k, k): v for k, v in (data.get("rationale") or {}).items()},
-            "errors_found": data.get("errors_found"), "disagreements": data.get("disagreements")}
+            "rationale": unblind(data.get("rationale"), labels),
+            "errors_found": unblind(data.get("errors_found"), labels),
+            "disagreements": unblind(data.get("disagreements"), labels)}
+
+
+def unblind(value, labels: dict[str, str]):
+    """A review field with the reviewer's labels mapped back to member names: an object
+    keyed by label becomes one keyed by member, a list of {label, ...} items gets a `member`
+    key, and a string is returned as written. The field is untrusted, so a key that is not
+    a label is marked `unlisted:` and can never equal a member name, and a `member` the
+    reviewer wrote itself is dropped: reviews are blind, and only the label map names anyone."""
+    def who(key) -> str:
+        return labels.get(str(key).strip().upper(), f"unlisted:{str(key)[:40]}")
+
+    if isinstance(value, dict):
+        return {who(k): v for k, v in value.items()}
+    if isinstance(value, list):
+        out = []
+        for item in value:
+            if isinstance(item, dict):
+                item = {k: v for k, v in item.items() if k != "member"}
+                if "label" in item:
+                    item["member"] = who(item["label"])
+            out.append(item)
+        return out
+    return value
+
+
+def field_lines(value, name) -> str:
+    """One review field rendered for the chair: `- on <member>: text` per member for an
+    object, one line per item for a list, the text itself for a string. Each text is
+    flattened to one line, so a field cannot open a heading of its own in the brief."""
+    def flat(txt) -> str:
+        return " ".join(str(txt).split())
+
+    if isinstance(value, dict):
+        return "\n".join(f"- on {name(m)}: {flat(txt)}" for m, txt in value.items()) or "none stated"
+    if isinstance(value, list):
+        lines = []
+        for item in value:
+            if isinstance(item, dict) and isinstance(item.get("member"), str):
+                lines.append(f"- on {name(item['member'])}: {flat(item.get('text', item))}")
+            else:
+                lines.append(f"- {flat(item)}")
+        return "\n".join(lines) or "none stated"
+    return flat(value) if value else "none stated"
 
 
 def compute_tally(reviews: dict, answered: list[str]) -> dict:
@@ -329,6 +419,8 @@ def tally_markdown(tally: dict, cfgs: dict) -> str:
 def chair_brief(question: str, rels: list[str], answers: dict, reviews: dict, tally: dict, cfgs: dict,
                 redaction: str = "") -> str:
     def name(m: str) -> str:
+        if m not in cfgs:           # an `unlisted:` key from a review field, never a member
+            return m
         return cfgs[m]["model"] if is_user(cfgs, m) else m
 
     parts = [f"## Answer from {shown(cfgs, m)}{scan_banner(answers[m])}\n\n{answers[m]['text']}" for m in tally["answered"]]
@@ -337,12 +429,13 @@ def chair_brief(question: str, rels: list[str], answers: dict, reviews: dict, ta
         parsed = res.get("parsed") or {}
         if parsed.get("valid"):
             ranking = ", ".join(f"{i + 1}. {name(m)}" for i, m in enumerate(parsed["ranking"]))
-            rationale = "\n".join(f"- on {name(m)}: {txt}" for m, txt in (parsed.get("rationale") or {}).items())
-            rev_parts.append(f"## Review by {shown(cfgs, r)}\n\nRanking: {ranking}\n\n{rationale}\n\n"
-                             f"Errors found: {parsed.get('errors_found') or 'none stated'}\n\n"
-                             f"Disagreements: {parsed.get('disagreements') or 'none stated'}")
+            # a repaired review's fields come from the repair text, so its scan shows too
+            rev_parts.append(f"## Review by {shown(cfgs, r)}{scan_banner(res)}{scan_banner(res.get('repair') or {})}\n\nRanking: {ranking}\n\n"
+                             f"{field_lines(parsed.get('rationale'), name)}\n\n"
+                             f"Errors found:\n{field_lines(parsed.get('errors_found'), name)}\n\n"
+                             f"Disagreements:\n{field_lines(parsed.get('disagreements'), name)}")
         else:
-            rev_parts.append(f"## Review by {shown(cfgs, r)}\n\nExcluded: {parsed.get('why')}")
+            rev_parts.append(f"## Review by {shown(cfgs, r)}{scan_banner(res)}\n\nExcluded: {parsed.get('why')}")
     return ar.render(read_template("chair.md"), QUESTION=question, FILES="\n".join(f"- {r}" for r in rels),
                      ANSWERS="\n\n".join(parts), REVIEWS="\n\n".join(rev_parts), TALLY=tally_markdown(tally, cfgs),
                      TOOLS=ar.TOOL_NOTES["claude"], REDACTION=redaction)
@@ -362,6 +455,11 @@ def cmd_run(a: argparse.Namespace) -> int:
     models, _ = parse_pairs(a.model, "model")
     efforts, effort = parse_pairs(a.effort, "effort")
     cfgs = roster(members, models, efforts, effort)
+    # The review round may run at its own level: ranking five answers against the files is
+    # a different job from writing one. Each member is re-resolved through the same path, so
+    # a model that names its level, or a member pinned by --effort, keeps what it had.
+    stage2_effort = a.stage2_effort
+    review_cfgs = roster(members, models, efforts, stage2_effort) if stage2_effort else None
     if a.chair not in ("claude", "session"):
         raise ConferenceError("--chair is claude or session")
     # A member whose CLI is not installed here is skipped before anything is spent, and
@@ -373,6 +471,8 @@ def cmd_run(a: argparse.Namespace) -> int:
         raise ConferenceError(str(exc))
     members = [m for m in members if m not in skipped]
     cfgs = {m: cfgs[m] for m in members}
+    if review_cfgs:
+        review_cfgs = {m: review_cfgs[m] for m in members}
     if len(members) < 2:
         raise ConferenceError("fewer than two members are available on this machine; skipped: "
                            + "; ".join(f"{m} ({why})" for m, why in skipped.items()), EXIT_FAILED)
@@ -418,9 +518,10 @@ def cmd_run(a: argparse.Namespace) -> int:
         print(f"  skipped {m:<12} {why}")
     run_extra = {"skipped": skipped, "chair": chair, "chair_fallback": chair_fallback, "topic": topic, "sanitize": sanitized,
                  "reviews_dir": str(rdir) if rdir else str(out), "reviews_dir_rule": rule, "reviews": None,
+                 "stage2_effort": stage2_effort, "efforts": efforts,
                  "resume": {"timeout": timeout, "chair_cfg": chair_cfg if chair == "claude" else None, "started": started},
                  "status": "running"}
-    ctx = {"out": out, "run_id": run_id, "cfgs": cfgs, "members": members, "rels": rels, "question": question,
+    ctx = {"out": out, "run_id": run_id, "cfgs": cfgs, "review_cfgs": review_cfgs, "members": members, "rels": rels, "question": question,
            "redaction": redaction, "timeout": timeout, "chair": chair, "chair_cfg": chair_cfg if chair == "claude" else None,
            "chair_fallback": chair_fallback, "rdir": rdir, "run_extra": run_extra, "started": started, "stage": stage}
     return _continue(ctx, answers=None)
@@ -458,7 +559,7 @@ def _continue(ctx: dict, answers: dict | None) -> int:
             return _pause(ctx, "stage1", why, answers, {})
     for m in members:
         state = "ok" if answers[m].get("text") else f"FAILED ({answers[m].get('error')})"
-        print(f"  stage 1 {m:<12} {answers[m]['elapsed_s']:>7}s  {state}{ar.scan_note(answers[m].get('scan'))}")
+        print(f"  stage 1 {m:<12} {answers[m]['elapsed_s']:>7}s  {state}{words_note(answers[m])}{ar.scan_note(answers[m].get('scan'))}")
     answered = [m for m in members if answers[m].get("text")]
     if len(answered) < 2:
         ctx["run_extra"]["status"] = "failed"
@@ -467,9 +568,10 @@ def _continue(ctx: dict, answers: dict | None) -> int:
 
     if (out / "blinding.json").exists():
         blinding = json.loads((out / "blinding.json").read_text(encoding="utf-8"))
-        reviews = _load_results(out, "stage2", [m for m in members if m != user])
+        reviews = _load_results(out, "stage2", [m for m in blinding if m != user])
     else:
-        reviews, blinding = stage2(question, rels, cfgs, answers, stage, out, timeout, redaction)
+        reviews, blinding = stage2(question, rels, cfgs, answers, stage, out, timeout, redaction,
+                                   review_cfgs=ctx.get("review_cfgs"))
     if user:
         text, why = user_text(out, "stage2", blinding[user]["labels"])
         reviews[user] = user_result(text, cfgs[user], why)
@@ -478,9 +580,15 @@ def _continue(ctx: dict, answers: dict | None) -> int:
         if not text:
             return _pause(ctx, "stage2", why, answers, reviews)
     for m in members:
+        if m not in reviews:
+            print(f"  stage 2 {m:<12} {'':>7}   dropped (no stage-1 answer to review with)")
+            continue
         parsed = reviews[m].get("parsed") or {}
-        state = "ok" if parsed.get("valid") else f"excluded ({parsed.get('why')})"
-        print(f"  stage 2 {m:<12} {reviews[m]['elapsed_s']:>7}s  {state}{ar.scan_note(reviews[m].get('scan'))}")
+        if parsed.get("valid"):
+            state = "ok (ranking block repaired on a second call)" if parsed.get("repaired") else "ok"
+        else:
+            state = f"excluded ({parsed.get('why')}" + (f"; repair: {parsed['repair_why']}" if parsed.get("repair_why") else "") + ")"
+        print(f"  stage 2 {m:<12} {reviews[m]['elapsed_s']:>7}s  {state}{words_note(reviews[m])}{ar.scan_note(reviews[m].get('scan'))}")
     return _finish(ctx, answers, reviews)
 
 
@@ -561,11 +669,21 @@ def cmd_resume(a: argparse.Namespace) -> int:
     for m in members:
         if is_user(stored, m):
             cfgs[m]["model"] = stored[m]["model"]
+    stage2_effort = run.get("stage2_effort")
+    review_cfgs = None
+    if stage2_effort:
+        # the stored member efforts are the answering levels; the review round re-resolves at
+        # its own level, keeping only the pins the user named with --effort member=level
+        pins = {m: lv for m, lv in (run.get("efforts") or {}).items() if m in members}
+        review_cfgs = roster(members, models, pins, stage2_effort)
+        for m in members:
+            if is_user(stored, m):
+                review_cfgs[m]["model"] = stored[m]["model"]
     resume = run.get("resume") or {}
     rdir = Path(run["reviews_dir"]) if run.get("reviews_dir_rule") != "fallback-run-folder" else None
     run_extra = {k: run[k] for k in ("skipped", "chair", "chair_fallback", "topic", "sanitize", "reviews_dir",
-                                     "reviews_dir_rule", "reviews", "resume", "status", "alias") if k in run}
-    ctx = {"out": out, "run_id": run["run_id"], "cfgs": cfgs, "members": members, "rels": run["files"],
+                                     "reviews_dir_rule", "reviews", "stage2_effort", "efforts", "resume", "status", "alias") if k in run}
+    ctx = {"out": out, "run_id": run["run_id"], "cfgs": cfgs, "review_cfgs": review_cfgs, "members": members, "rels": run["files"],
            "question": (out / "question.md").read_text(encoding="utf-8"),
            "redaction": ar.REDACTION_NOTE if (run.get("sanitize") or {}).get("on") else "",
            "timeout": int(resume.get("timeout") or DEFAULT_TIMEOUT), "chair": run["chair"], "chair_cfg": resume.get("chair_cfg"),
@@ -622,7 +740,7 @@ def cmd_tally(a: argparse.Namespace) -> int:
     run = json.loads((out / "run.json").read_text(encoding="utf-8"))
     blinding = json.loads((out / "blinding.json").read_text(encoding="utf-8"))
     reviews = {}
-    for m in run["members"]:
+    for m in blinding:      # the reviewers: every member that answered stage 1
         text_path = out / "stage2" / f"{m}.md"
         text = text_path.read_text(encoding="utf-8") if text_path.exists() else None
         reviews[m] = {"parsed": parse_review(text, blinding[m]["labels"])}
@@ -665,6 +783,7 @@ def main(argv: list[str] | None = None) -> int:
                         + ", ".join(f"{m} (ollama on {t})" for m, t in MEMBER_PRESETS.items()) + ", ollama (needs --model ollama=<tag>:cloud)")
     r.add_argument("--model", action="append", help="override a member's model: member=name; repeatable; an ollama member takes a :cloud tag only")
     r.add_argument("--effort", action="append", help="a level for every member, or member=level; repeatable")
+    r.add_argument("--stage2-effort", help="a level for the review round only; a member=level from --effort still wins; default: the answering level")
     r.add_argument("--out", help="run folder (default: a new run under the state dir)")
     r.add_argument("--topic", help="slug in the reviews folder's name; default: the question file's stem")
     r.add_argument("--reviews-dir", help="where the answers, reviews, tally and synthesis are copied; default: tasks/reviews/ under the nearest git root with a tasks/ folder, else <git-root>/reviews/, else reviews/ beside the files")

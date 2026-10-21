@@ -125,6 +125,18 @@ class TestAgyModelChoice(unittest.TestCase):
                     ar.ollama_base()
 
 
+class TestRender(unittest.TestCase):
+    def test_a_placeholder_inside_an_inserted_value_is_not_expanded(self):
+        # A member's answer quoted into the next brief may contain a template token; it
+        # stays as written instead of pulling in another field.
+        out = ar.render("Q: {{QUESTION}}\nR: {{REVIEWS}}", QUESTION="what is {{REVIEWS}}?", REVIEWS="the reviews")
+        self.assertEqual(out, "Q: what is {{REVIEWS}}?\nR: the reviews")
+
+    def test_unknown_placeholders_are_left_alone_and_fields_may_repeat(self):
+        out = ar.render("{{A}} {{A}} {{B}} {{NOPE}}", A="x", B="y")
+        self.assertEqual(out, "x x y {{NOPE}}")
+
+
 class TestJsonBlocks(unittest.TestCase):
     def test_key_picks_the_block_even_when_a_summary_block_follows(self):
         text = ('x\n```json\n{"ranking": ["B", "A"], "rationale": {}}\n```\n'

@@ -4,7 +4,9 @@
 object {text, usage, model, exit_code, error}.
 
 AGENT_REVIEW_FAKE_RESPONSES is a JSON object keyed by harness: {"stage1": text, "stage2":
-"<labels in rank order, e.g. CAB>" | "invalid" | null, "chair": text, "fail": bool}.
+"<labels in rank order, e.g. CAB>" | "invalid" | null, "repair": "<labels>" | null (the answer
+to a ranking-block repair brief; absent or null means the repair fails too), "chair": text,
+"fail": bool}.
 The stage is read from the brief's first heading. A stage-2 ranking is built from the
 labels the brief shows, so the fake never knows who wrote what.
 """
@@ -31,6 +33,15 @@ def main():
     usage = {"input_tokens": 100, "output_tokens": 20}
     if brief.startswith("# Chair"):
         text = spec.get("chair", f"Synthesis by {harness}.")
+    elif brief.startswith("# Ranking block"):
+        labels = re.search(r"exactly once: ([A-J, ]+)\.", brief).group(1).replace(",", "").split()
+        order = spec.get("repair")
+        if order is None:
+            text = "Still no block, sorry."
+        else:
+            ranking = [c for c in order if c in labels] + [c for c in labels if c not in order]
+            text = "```json\n" + json.dumps({"ranking": ranking, "rationale": {c: f"repaired {c}" for c in labels},
+                                            "errors_found": "none", "disagreements": "none"}) + "\n```"
     elif brief.startswith("# Blind review"):
         labels = re.findall(r"^## Response ([A-J])$", brief, re.M)
         order = spec.get("stage2")
@@ -40,9 +51,11 @@ def main():
             text = "No ranking block here."
         else:
             ranking = [c for c in order if c in labels] + [c for c in labels if c not in order]
-            # A task skill's own summary block follows the ranking, as the real CLIs do.
-            text = ("Review paragraphs.\n\n```json\n" + json.dumps({"ranking": ranking, "rationale": {c: f"because {c}" for c in labels},
-                                                                 "errors_found": "none", "disagreements": "none"}) + "\n```\n\n"
+            # Errors go back keyed by label, as the brief asks; a task skill's own summary
+            # block follows the ranking, as the real CLIs do.
+            text = (spec.get("stage2_prefix", "") + "Review paragraphs.\n\n```json\n"
+                    + json.dumps({"ranking": ranking, "rationale": {c: f"because {c}" for c in labels},
+                                  "errors_found": {c: f"{c} misreads a.py:1" for c in labels}, "disagreements": "none"}) + "\n```\n\n"
                     "```json\n{\"summary\": \"ranked\", \"files_changed\": [], \"notes\": \"\", \"blocked_on\": \"\"}\n```")
     else:
         text = spec.get("stage1", f"Answer from {harness}: the files say so.")
