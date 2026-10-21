@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 
@@ -23,10 +24,14 @@ def main():
     brief_path = Path(brief_path)
     spec = json.loads(os.environ.get("AGENT_REVIEW_FAKE_RESPONSES", "{}")).get(harness, {})
     brief = brief_path.read_text(encoding="utf-8")
+    # `stage2_delay` makes one reviewer slow, so a test can see what starts before it ends.
+    delay = float(spec.get("stage2_delay") or 0) if brief.startswith("# Blind review") else 0.0
     if os.environ.get("AGENT_REVIEW_FAKE_RECORD"):
         with Path(os.environ["AGENT_REVIEW_FAKE_RECORD"]).open("a", encoding="utf-8") as fh:
             fh.write(json.dumps({"member": harness, "brief": str(brief_path), "stage": stage, "model": model,
-                                 "effort": effort, "cwd": os.getcwd()}) + "\n")
+                                 "effort": effort, "cwd": os.getcwd(), "at": time.time(), "delay": delay}) + "\n")
+    if delay:
+        time.sleep(delay)
     if spec.get("fail"):
         print(json.dumps({"text": None, "usage": None, "model": model, "exit_code": 4, "error": "fake failure"}))
         return 0

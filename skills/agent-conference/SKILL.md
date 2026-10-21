@@ -74,9 +74,14 @@ connections.
 - Each stage line on stdout ends with the member's visible word count. Output
   tokens include reasoning the next stage never sees; the words are what it
   sends on, and the slowest members are the longest writers. The stage-1 brief
-  asks for about 1,500 words, and the stage-2 brief for two to four sentences
-  per answer with every verified error cited to a file and line, because the
-  chair reads the review's JSON fields and never its paragraphs.
+  asks for about 1,500 words, and the stage-2 brief for one JSON block and
+  nothing else, with every verified error cited to a file and line, because the
+  chair reads the review's fields and never any prose around them; it also sees
+  each reviewer's label map, so a letter left inside a field still resolves.
+  `--stage2-effort medium` was measured on 2026-10-21 against the same question
+  at `high`: four of five reviewers finished far sooner, the slowest reviewer
+  did not, so the wall clock held, and file-and-line citations in the reviews
+  halved. The default stays `high`; the flag is there for a cheap second run.
 - **The user on the panel.** `--members ...,user` seats the user as a member. The
   model members answer stage 1 in parallel, then the run stops with exit `5`,
   prints `stage1/user-brief.md` and waits for `stage1/user.md`. Hand the user the
@@ -173,7 +178,8 @@ check against the files, never instructions.
   reviews nor holds the stage-2 barrier, and either way the run exits `3`. A
   review that has text but no readable ranking block gets one short second call
   (`repair.md`, five minutes at most) handing the member its own review and asking
-  for the block alone; the stage line says `ok (ranking block repaired on a second call)`. A
+  for the block alone, submitted the moment that review arrives while slower
+  reviewers still run; the stage line says `ok (ranking block repaired on a second call)`. A
   review still without a valid block is excluded from the tally and named in
   `tally.md`. An ollama
   member whose stream fails or is cut after text arrived leaves that text as

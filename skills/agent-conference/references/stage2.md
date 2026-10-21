@@ -18,12 +18,10 @@ The files the answers refer to are below the answers. Check claims against them.
 
 # What to return
 
-First, write two to four sentences on each answer: what it gets right, what it gets wrong, and what it alone contributes. Every error you name must cite the file and line that shows it; an error you did not verify against the files is not an error, so leave it out. The chair reads the JSON block below, not these paragraphs, so put the substance there.
-
-Then rank all {{N}} answers from best to worst. End your message with exactly one fenced JSON block and nothing after it:
+Return exactly one fenced JSON block and nothing else. The chair reads the block's fields and never any prose around it, so everything you have to say goes inside. Judge every answer before you rank; the keys are ordered so the ranking comes last.
 
 ```json
-{"ranking": ["<best label>", "...", "<worst label>"], "rationale": {"A": "one sentence on why A sits where it does", "B": "..."}, "errors_found": {"A": "each verified error in A, with file:line", "B": "..."}, "disagreements": "where the answers contradict each other and which side the files support, with file:line"}
+{"rationale": {"A": "two or three sentences: what A gets right, what it gets wrong, and what it alone contributes", "B": "..."}, "errors_found": {"A": "each verified error in A, with file:line, or none", "B": "..."}, "disagreements": "where the answers contradict each other and which side the files support, with file:line", "ranking": ["<best label>", "...", "<worst label>"]}
 ```
 
-The `ranking` list must hold every label exactly once. A label with no verified error gets the string `none` under `errors_found`.
+Every error you name must cite the file and line that shows it; an error you did not verify against the files is not an error, so leave it out. The `ranking` list must hold all {{N}} labels exactly once. A label with no verified error gets the string `none` under `errors_found`.

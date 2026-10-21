@@ -255,8 +255,13 @@ class TestStages(Base):
         self.assertNotRegex(errors, r"- on [A-F]:")              # the keys are members, never labels
         run = json.loads((self.out / "run.json").read_text())
         self.assertEqual(set(run["stage2"]["cursor"]["parsed"]["errors_found"]), set(MEMBERS))
-        # the brief asked for the short form with file and line on every error
-        self.assertIn("two to four sentences", (self.out / "stage2" / "cursor-brief.md").read_text())
+        # the brief asks for the block alone, with file and line on every error
+        brief = (self.out / "stage2" / "cursor-brief.md").read_text()
+        self.assertIn("exactly one fenced JSON block and nothing else", brief)
+        self.assertNotIn("short paragraph", brief)
+        # the chair gets each reviewer's label map, so letters left inside a field resolve
+        labels = json.loads((self.out / "blinding.json").read_text())["cursor"]["labels"]
+        self.assertIn("Labels in this review: " + ", ".join(f"{l} = {m}" for l, m in labels.items()), review)
 
     def test_stage2_briefs_hide_authors_and_shuffle_per_reviewer(self):
         responses = {m: {"stage1": f"UNIQUE-{m.upper()}-TEXT", "stage2": ALL} for m in MEMBERS}
@@ -328,6 +333,19 @@ class TestStages(Base):
         self.assertEqual([c["member"] for c in repairs], ["cursor"])
         self.assertEqual(len(self.calls()), 2 * len(MEMBERS) + 2)
         self.assertRegex(r.stdout, r"stage 2 cursor +[\d.]+s  ok \(ranking block repaired")
+
+    def test_a_repair_starts_when_its_reviewer_finishes_not_after_the_barrier(self):
+        # cursor loses its block and finishes first; glm is slow. The repair call must be
+        # recorded before glm's review returns, which the fake's record timestamps show.
+        responses = {m: {"stage2": ALL} for m in MEMBERS}
+        responses["cursor"] = {"stage2": None, "repair": ALL}
+        responses["glm"]["stage2_delay"] = 3
+        r = self.run_conference(responses)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        calls = self.calls()
+        repair_at = next(c["at"] for c in calls if c["brief"].endswith("cursor-repair-brief.md"))
+        glm_done = next(c["at"] + c["delay"] for c in calls if c["brief"].endswith("stage2/glm-brief.md"))
+        self.assertLess(repair_at, glm_done)
 
     def test_a_repair_that_fails_leaves_the_review_excluded(self):
         responses = {m: {"stage2": ALL} for m in MEMBERS}

@@ -43,7 +43,7 @@ import shutil
 import subprocess
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
@@ -283,41 +283,54 @@ def stage2(question: str, rels: list[str], cfgs: dict, answers: dict, stage: Pat
         briefs[reviewer] = out / "stage2" / f"{reviewer}-brief.md"
         briefs[reviewer].write_text(brief, encoding="utf-8")
     (out / "blinding.json").write_text(json.dumps(blinding, indent=1), encoding="utf-8")
-    results = _fan_out(reviewers, briefs, stage, timeout, out / "stage2")
-    for name, res in results.items():
-        res["parsed"] = parse_review(res.get("text"), blinding[name]["labels"])
-    repair_reviews(reviewers, results, blinding, stage, out, timeout)
+    # Reviews are consumed as they complete, and a review that lost its ranking block gets
+    # its repair call submitted at once, while slower reviewers are still running, instead
+    # of after the whole barrier. The user member's review arrives later, through resume.
+    models = {m: c for m, c in reviewers.items() if not is_user(cfgs, m)}
+    results: dict = {}
+    work = out / "stage2"
+    with ThreadPoolExecutor(max_workers=max(1, len(models))) as pool:
+        pending = {pool.submit(ar.run_harness, cfg, briefs[m], stage, timeout, work): (m, "review") for m, cfg in models.items()}
+        while pending:
+            done = next(as_completed(pending))
+            m, kind = pending.pop(done)
+            res = done.result()
+            if kind == "review":
+                res["parsed"] = parse_review(res.get("text"), blinding[m]["labels"])
+                results[m] = res
+                if res.get("text") and not res["parsed"].get("valid"):
+                    brief = repair_brief(models[m], res, blinding[m]["labels"], out)
+                    pending[pool.submit(ar.run_harness, models[m], brief, stage, min(timeout, REPAIR_TIMEOUT), work)] = (m, "repair")
+            else:
+                apply_repair(results[m], res, blinding[m]["labels"], m, out)
     _write_results(out, "stage2", results)
     return results, blinding
 
 
-def repair_reviews(reviewers: dict, results: dict, blinding: dict, stage: Path, out: Path, timeout: int) -> None:
-    """One short second call for a review that has text but no readable ranking block: the
-    member gets its own review back and is asked for the block alone. A review that did the
-    work and lost it to a format slip is not thrown away on the first miss; a second miss
-    still excludes it. The repair runs in parallel across the reviewers that need it."""
-    needing = {m: cfg for m, cfg in reviewers.items() if m in results      # the user member's review comes later
-               and results[m].get("text") and not (results[m].get("parsed") or {}).get("valid")}
-    if not needing:
-        return
-    briefs = {}
-    for m, cfg in needing.items():
-        brief = ar.render(read_template("repair.md"), LABELS=", ".join(blinding[m]["labels"]),
-                          TOOLS=ar.TOOL_NOTES[cfg["runner"]],
-                          REVIEW=scan_banner(results[m]).lstrip() + ("\n\n" if scan_banner(results[m]) else "") + results[m]["text"])
-        briefs[m] = out / "stage2" / f"{m}-repair-brief.md"
-        briefs[m].write_text(brief, encoding="utf-8")
-    repairs = _fan_out(needing, briefs, stage, min(timeout, REPAIR_TIMEOUT), out / "stage2")
-    for m, rep in repairs.items():
-        if rep.get("text"):
-            (out / "stage2" / f"{m}-repair.md").write_text(rep["text"], encoding="utf-8")
-        results[m]["repair"] = {k: v for k, v in rep.items() if k != "text"}
-        parsed = parse_review(rep.get("text"), blinding[m]["labels"])
-        if parsed.get("valid"):
-            parsed["repaired"] = True
-            results[m]["parsed"] = parsed
-        else:
-            results[m]["parsed"]["repair_why"] = parsed.get("why")
+def repair_brief(cfg: dict, res: dict, labels: dict, out: Path) -> Path:
+    """The brief for one short second call: the member gets its own review back, under its
+    arrival-scan banner, and is asked for the ranking block alone. A review that did the
+    work and lost it to a format slip is not thrown away on the first miss."""
+    banner = scan_banner(res)
+    brief = ar.render(read_template("repair.md"), LABELS=", ".join(labels), TOOLS=ar.TOOL_NOTES[cfg["runner"]],
+                      REVIEW=(banner.lstrip() + "\n\n" if banner else "") + res["text"])
+    path = out / "stage2" / f"{cfg['member']}-repair-brief.md"
+    path.write_text(brief, encoding="utf-8")
+    return path
+
+
+def apply_repair(review: dict, rep: dict, labels: dict, m: str, out: Path) -> None:
+    """Fold a repair call's result into its review: a valid block replaces the parse and is
+    marked repaired; a second miss leaves the review excluded and says why."""
+    if rep.get("text"):
+        (out / "stage2" / f"{m}-repair.md").write_text(rep["text"], encoding="utf-8")
+    review["repair"] = {k: v for k, v in rep.items() if k != "text"}
+    parsed = parse_review(rep.get("text"), labels)
+    if parsed.get("valid"):
+        parsed["repaired"] = True
+        review["parsed"] = parsed
+    else:
+        review["parsed"]["repair_why"] = parsed.get("why")
 
 
 def parse_review(text: str | None, labels: dict[str, str]) -> dict:
@@ -417,7 +430,7 @@ def tally_markdown(tally: dict, cfgs: dict) -> str:
 
 
 def chair_brief(question: str, rels: list[str], answers: dict, reviews: dict, tally: dict, cfgs: dict,
-                redaction: str = "") -> str:
+                redaction: str = "", blinding: dict | None = None) -> str:
     def name(m: str) -> str:
         if m not in cfgs:           # an `unlisted:` key from a review field, never a member
             return m
@@ -429,8 +442,11 @@ def chair_brief(question: str, rels: list[str], answers: dict, reviews: dict, ta
         parsed = res.get("parsed") or {}
         if parsed.get("valid"):
             ranking = ", ".join(f"{i + 1}. {name(m)}" for i, m in enumerate(parsed["ranking"]))
+            # the reviewer's own label map, so a letter it left inside a field still resolves
+            labels = ((blinding or {}).get(r) or {}).get("labels") or {}
+            label_line = ("Labels in this review: " + ", ".join(f"{lab} = {name(m)}" for lab, m in labels.items()) + "\n\n") if labels else ""
             # a repaired review's fields come from the repair text, so its scan shows too
-            rev_parts.append(f"## Review by {shown(cfgs, r)}{scan_banner(res)}{scan_banner(res.get('repair') or {})}\n\nRanking: {ranking}\n\n"
+            rev_parts.append(f"## Review by {shown(cfgs, r)}{scan_banner(res)}{scan_banner(res.get('repair') or {})}\n\n{label_line}Ranking: {ranking}\n\n"
                              f"{field_lines(parsed.get('rationale'), name)}\n\n"
                              f"Errors found:\n{field_lines(parsed.get('errors_found'), name)}\n\n"
                              f"Disagreements:\n{field_lines(parsed.get('disagreements'), name)}")
@@ -600,7 +616,8 @@ def _finish(ctx: dict, answers: dict, reviews: dict) -> int:
     tally = compute_tally(reviews, answered)
     (out / "tally.json").write_text(json.dumps(tally, indent=1), encoding="utf-8")
     (out / "tally.md").write_text(tally_markdown(tally, cfgs), encoding="utf-8")
-    (out / "chair-brief.md").write_text(chair_brief(ctx["question"], rels, answers, reviews, tally, cfgs, ctx["redaction"]),
+    blinding = json.loads((out / "blinding.json").read_text(encoding="utf-8")) if (out / "blinding.json").exists() else {}
+    (out / "chair-brief.md").write_text(chair_brief(ctx["question"], rels, answers, reviews, tally, cfgs, ctx["redaction"], blinding),
                                         encoding="utf-8")
 
     synthesis = None
