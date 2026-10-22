@@ -16,7 +16,8 @@ again at commit; this is the early warning.
 GUARDED PATHS (portable or canon-bound; identifiers must never enter these):
     **/.claude/skills/**      **/.agents/skills/**    ~/.claude/hooks/**
     **/.agents/hooks/**       **/.agents/agents/**    **/.agents/commands/**
-    **/_RESEARCH/**           **/LEARNING/**          **/KNOWLEDGE-BASE/**
+    **/_RESEARCH/**           **/RESEARCH/**          **/LEARNING/**
+    **/KNOWLEDGE-BASE/**
     **/.claude/tools/**       **/.claude/agents/**    **/.claude/commands/**
     **/specs/**               (seed copies of the files above)
 
@@ -87,7 +88,8 @@ GUARDED = (
     ("/.claude/tools/",), ("/.claude/agents/",), ("/.claude/commands/",),
     # This repo's own hooks, subagents and commands travel exactly as its skills do.
     ("/.agents/hooks/",), ("/.agents/agents/",), ("/.agents/commands/",),
-    ("/_RESEARCH/",), ("/LEARNING/",), ("/KNOWLEDGE-BASE/",),
+    # Research folders under both names: this repo's _RESEARCH/ and a vault's RESEARCH/.
+    ("/_RESEARCH/",), ("/RESEARCH/",), ("/LEARNING/",), ("/KNOWLEDGE-BASE/",),
     # A station spec carries the seed copies of the files above. The live hook
     # under ~/.claude/hooks/ was guarded and its published twin was not, so the
     # same bytes were checked in one location and unchecked in the other.

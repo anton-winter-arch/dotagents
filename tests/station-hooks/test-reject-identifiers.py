@@ -39,6 +39,10 @@ class TestGuardedPaths(unittest.TestCase):
         for path in ("/x/.agents/hooks/new.py", "/x/.agents/agents/helper.md", "/x/.agents/commands/run.md"):
             self.assertIn("a project alias", self.run_hook(path, f"about {TERM}"), path)
 
+    def test_research_folders_are_guarded_under_both_names(self):
+        for path in ("/x/.agents/_RESEARCH/notes.md", "/x/vault/RESEARCH/brief.md"):
+            self.assertIn("a project alias", self.run_hook(path, f"about {TERM}"), path)
+
     def test_working_state_stays_unguarded(self):
         self.assertEqual(self.run_hook("/x/.agents/tasks/plan.md", f"about {TERM}"), "")
 

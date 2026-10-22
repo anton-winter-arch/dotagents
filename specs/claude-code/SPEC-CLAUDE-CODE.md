@@ -1030,7 +1030,7 @@ never blocks**. Surfaces project identifiers in NEW content written to files
 that travel: `**/.claude/skills/`, `**/.agents/skills/`, `**/.claude/hooks/`,
 `tools/`, `agents/`, `commands/` (under `.claude/`, and this repo's own
 `.agents/hooks/`, `.agents/agents/` and `.agents/commands/`), `**/_RESEARCH/`,
-`**/LEARNING/`, `**/KNOWLEDGE-BASE/` and `**/specs/`, with `PROJECTS/`,
+`**/RESEARCH/`, `**/LEARNING/`, `**/KNOWLEDGE-BASE/` and `**/specs/`, with `PROJECTS/`,
 `_PROJECTS/`, `tasks/`, `DRAFTS/` and `__archive/` exempt because identifiers
 belong there. It runs four detectors, all from the sanitize skill
 (`skills/sanitize/scripts/detect.py`, imported from the skills folder beside the
