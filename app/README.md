@@ -83,7 +83,7 @@ uv tool install -e .     # editable: the app resolves its vault, UI and engine f
 
 To work in the terminal instead of the browser, `uv run agents chat` starts everything without opening one.
 
-Uninstall is three commands: `agents down`, `uv tool uninstall agents-app` (if you installed globally), and `rm -rf ~/.agents-app`. The only other things written are inside this folder: `data/` (conversations), `vault/vault-kg/` (the built index) and `.venv/`, all gitignored.
+Uninstall is three commands: `agents down`, `uv tool uninstall agents-app` (if you installed globally), and `rm -rf ~/.agents-app`. The only other things written are inside this folder: `data/` (conversations), `vault/markdown-kg/` (the built index; `vault/vault-kg/` in a checkout that built it before the rename) and `.venv/`, all gitignored.
 
 Environment variables override stored config per invocation:
 
@@ -212,4 +212,4 @@ uv run pytest            # test suite
 uv run agents up         # run from the repo
 ```
 
-Work happens on `develop`; `main` advances only after each feature is verified. The knowledge-graph engine is the `obsidian-kg` skill's own script, `skills/obsidian-kg/scripts/obsidian_kg.py`, loaded by path; there is no copy here, and changes to it belong in that skill. Runtime dependencies are `fastapi` and `uvicorn` and nothing else; the app never holds an API key. Large vaults: the automatic re-index on drift takes a few seconds, inline on the first read after a change.
+Work happens on `develop`; `main` advances only after each feature is verified. The knowledge-graph engine is the `markdown-kg` skill's own script, `skills/markdown-kg/scripts/markdown_kg.py`, loaded by path; there is no copy here, and changes to it belong in that skill. Runtime dependencies are `fastapi` and `uvicorn` and nothing else; the app never holds an API key. Large vaults: the automatic re-index on drift takes a few seconds, inline on the first read after a change.

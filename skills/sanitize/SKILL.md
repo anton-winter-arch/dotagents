@@ -18,7 +18,7 @@ import it, so a detector is fixed once and every consumer gets the fix.
 
 ## Commands
 
-Every command runs as `python3 ~/.agents/skills/sanitize/scripts/sanitize.py ...`.
+Every command runs as `python3 <skill-dir>/scripts/sanitize.py ...`.
 
 ### copy (alias: corpus)
 
@@ -134,8 +134,8 @@ terminal. `hooks/guard_git_bypass.py` refuses the same flag when an agent passes
 2. **Personal shapes:** email addresses, phone numbers, a macOS or Linux home
    directory prefix with its user name (the rest of the path stays), role-coded
    initials and environment-prefixed catalog names.
-3. **The station term list,** read from `IDENTIFIER_TERMS_FILE` or its default under
-   `~/.claude/private/`, by the identifier hook's rule: a single-case term matches any
+3. **The station term list,** read from `IDENTIFIER_TERMS_FILE` or its default in the
+   harness config folder's private directory, by the identifier hook's rule: a single-case term matches any
    case, a mixed-case term matches as typed, and no word character may touch either
    edge. Terms are matched on the raw text, then on a normalized view (whitespace and punctuation
    dropped, confusables and full-width letters folded, zero-width characters removed),
@@ -177,4 +177,4 @@ refused a copy, which was then not written.
 - The recall-layer masker (a local CPU model over the copy) is a later phase and
   ask-first. PDF text is out of scope until a dependency is approved.
 
-Spec: `tasks/SPEC-SANITIZE.md`. Tests: `python3 -m unittest discover -s ~/.agents/skills/sanitize/tests -v`.
+Spec: `tasks/SPEC-SANITIZE.md`. Tests: `python3 -m unittest discover -s <skill-dir>/tests -v`.

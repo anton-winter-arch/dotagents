@@ -1,16 +1,17 @@
 """Adapter suite over the upstream fixture vaults. STORY-000022 (M2 tail).
 
 Fixtures live in tests/fixtures/ (copied verbatim from
-~/.agents/skills/obsidian-kg/tests/ at upstream sha 4eef625):
+~/.agents/skills/markdown-kg/tests/, then named obsidian-kg, at upstream sha 4eef625):
   fixture-vault/     9 md files; nesting (plans/, projects/inner/), a
                      .trash/Ghost.md the engine must skip
   adversarial-vault/ 15 md files; own .kgignore (drafts/) and a
                      vault-kg/vault-kg-config.md with ignore/profile rules
+                     (the engine folder's legacy name, read in place)
   kb-fixture-vault/  6 md files; knowledge-base/ subdir; known content
                      terms: "irrigation", "drip", "sprinkler"
 
 Method: copy the fixture to tmp_path per test (shutil.copytree) and point
-AGENTS_APP_VAULT at the copy - ingest writes vault-kg/ into the vault, and
+AGENTS_APP_VAULT at the copy - ingest writes the engine folder into the vault, and
 the repo copies stay pristine. Stats counts are pinned from a real ingest and
 each pinned number is commented with what it counts.
 """

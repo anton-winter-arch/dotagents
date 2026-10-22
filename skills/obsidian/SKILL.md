@@ -10,7 +10,7 @@ description: >-
   Dataview, Tasks, Templater, or Bases, or for any Obsidian syntax question. Also use when a
   vault note will be published to Azure DevOps, GitHub or a repo docs folder, which changes
   its links. Prefer this over generic markdown whenever a vault is present; indexing or
-  querying a vault is obsidian-kg.
+  querying a vault is markdown-kg.
 ---
 
 # obsidian (universal standard)

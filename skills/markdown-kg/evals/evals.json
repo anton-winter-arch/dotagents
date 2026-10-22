@@ -1,12 +1,12 @@
 {
-  "skill_name": "obsidian-kg",
+  "skill_name": "markdown-kg",
   "evals": [
     {
       "id": 1,
       "prompt": "make my vault at ~/vault truly queryable - I want to search it and see what links where",
-      "expected_output": "Skill fires. init/ingest runs via scripts/obsidian_kg.py, then queries answer from vault-kg/vault-kg.db; no inline reimplementation of parsing.",
+      "expected_output": "Skill fires. init/ingest runs via scripts/markdown_kg.py, then queries answer from markdown-kg/markdown-kg.db; no inline reimplementation of parsing.",
       "expectations": [
-        "scripts/obsidian_kg.py is executed via Bash rather than the vault being parsed inline",
+        "scripts/markdown_kg.py is executed via Bash rather than the vault being parsed inline",
         "Search uses the engine's search or query subcommand, not raw grep over the vault",
         "The agent reads the underlying .md files before asserting facts from snippets",
         "No pip install, network call, or API key is involved"
@@ -37,9 +37,9 @@
     {
       "id": 4,
       "prompt": "clean up the formatting and callouts in this note in my vault",
-      "expected_output": "Skill does NOT fire. Authoring and formatting belong to the obsidian skill; obsidian-kg only indexes and queries.",
+      "expected_output": "Skill does NOT fire. Authoring and formatting belong to the obsidian skill; markdown-kg only indexes and queries.",
       "expectations": [
-        "The obsidian-kg skill is not invoked",
+        "The markdown-kg skill is not invoked",
         "The obsidian (authoring) skill handles the request",
         "No ingest or query subcommand is executed"
       ]
@@ -69,7 +69,7 @@
     {
       "id": 7,
       "prompt": "this vault has a huge dated log file and searching it just returns the whole day every time",
-      "expected_output": "Skill fires. The fix is a log-dated profile row in vault-kg-config.md so entries chunk per day with child headings indexed beneath them; the agent edits the config file directly.",
+      "expected_output": "Skill fires. The fix is a log-dated profile row in markdown-kg-config.md so entries chunk per day with child headings indexed beneath them; the agent edits the config file directly.",
       "expectations": [
         "The config file is edited directly, not through a CLI write path",
         "A log-dated profile row is added for the file in question",

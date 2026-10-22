@@ -159,7 +159,7 @@ Run over `skills/*/SKILL.md`, `agents/*.md`, `commands/*.md`:
 4. Body <=500 lines; references one level deep; scripts' execute-vs-read
    intent stated.
 5. Advisory agents have read-only `tools:` allowlists.
-6. Path hygiene per `my-security-review-checklist` (no `/Users/<name>/`).
+6. Path hygiene per the security checklist, where installed (no home-directory paths).
 7. Trigger sanity: does the description enumerate the situations this repo
    actually uses it in?
 
@@ -301,7 +301,7 @@ exits 0: a description over the 800-character cap, or a plain scalar containing
    SKILL.md and every `references/` file; fix the findings or consciously keep
    them (terms of art and corrective antitheses are legitimate keeps; symbols,
    filler, and meta-commentary are not).
-2. **Security pass** - apply `my-security-review-checklist` in full: personal
+2. **Security pass** - apply the security checklist in full, where installed, or these items by hand: personal
    constants, user-specific paths, secrets, and untrusted-input handling for
    any scripts or hooks the skill ships.
 3. **Tests written AND passing** - if the skill ships executable code, `tests/`

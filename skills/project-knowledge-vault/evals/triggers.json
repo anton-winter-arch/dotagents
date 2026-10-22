@@ -30,10 +30,10 @@
         "why": "Board content is sprint-board's job; the vault only hosts the file."
     },
     {
-        "name": "obsidian-kg-not-vault",
+        "name": "markdown-kg-not-vault",
         "query": "What links to notes-learnings, and how are the meeting notes connected to the BRD?",
         "should_trigger": false,
-        "why": "Graph traversal over an existing vault is obsidian-kg's job."
+        "why": "Graph traversal over an existing vault is markdown-kg's job."
     },
     {
         "name": "generic-obsidian-note",

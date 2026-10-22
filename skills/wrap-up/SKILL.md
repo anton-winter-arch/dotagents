@@ -7,7 +7,7 @@ description: Close a session cleanly so the next one starts strong - review the 
 
 When this ends, the session's files are reviewed, every claim in the repo is true, the tree is committed and pushed on the right branch, memory holds what was learned, and `tasks/todo.md` holds everything the next session needs. Nothing it needs is left only in this conversation.
 
-This skill owns the order, and each sub-skill owns its procedure and gates: the reviewer owns the session's files, `notes` the repo's text, `repo-device-sync` git, and `reflect` memory. It runs once per session; after that a commit request is an ordinary commit. Tell the user at the start that up to three approval gates may come: notes' proposals, a sync stop-and-ask and reflect's slate.
+This skill owns the order, and each sub-skill owns its procedure and gates: the reviewer owns the session's files, `notes` the repo's text, `repo-device-sync` git, and `reflect` memory. It runs once per session; after that a commit request is an ordinary commit. Where a named sub-skill or agent is not installed, its step is done by hand with git and the report says so. Tell the user at the start that up to three approval gates may come: notes' proposals, a sync stop-and-ask and reflect's slate.
 
 ## 1. Assess
 
@@ -22,7 +22,7 @@ Stop if there is nothing to wrap up, if the tree holds changes this session did 
 List the session's files from `git status --porcelain` and the unpushed range (a new skill counts as its whole folder), sweep them, and fix any FAIL.
 
 ```bash
-python3 "$HOME/.agents/skills/wrap-up/scripts/closeout_lint.py" <files>   # exit 1 on FAIL
+python3 "<skill-dir>/scripts/closeout_lint.py" <files>   # exit 1 on FAIL
 ```
 
 Write the list, their diff and the sweep (`--json`) to the scratchpad and spawn `my-security-reviewer` with the three paths. Pass `model: sonnet` unless the list holds executable surface (scripts, hooks, settings, a new skill) or a claim about the outside world (a package, endpoint, version). Skip the review only when the list is under ten prose files, none under `skills/`, `specs/`, `agents/`, `commands/` or `app/`, and the sweep is clean.
@@ -46,7 +46,7 @@ Take the reviewer's verdict and the curator's report. Fix each finding with the 
 ## 6. Commit and push
 
 ```bash
-python3 "$HOME/.agents/skills/wrap-up/scripts/gitignore_audit.py" audit   # exit 1 on findings
+python3 "<skill-dir>/scripts/gitignore_audit.py" audit   # exit 1 on findings
 ```
 
 Each uncovered pattern goes to the user before staging. Then run `repo-device-sync` from Phase 2: make one commit, check `git diff --cached --name-only` against the message, and re-fetch before the push. A paired stable branch advances by refspec (`git push origin develop:main`, then `git fetch origin main:main`), never by checkout. End on the working branch with `git status -sb` clean.

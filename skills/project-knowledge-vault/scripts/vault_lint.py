@@ -17,7 +17,7 @@ from pathlib import Path
 
 CONTRACT_FILES = {"AGENTS.md", "CLAUDE.md"}
 RESERVED_FILES = {"index.md", "log.md"}
-TOOLING_DIRS = {"vault-kg"}
+TOOLING_DIRS = {"markdown-kg", "vault-kg"}  # the graph engine's folder, current and legacy name
 
 # filename prefix -> allowed type values, most specific first
 FAMILIES: list[tuple[re.Pattern[str], set[str]]] = [

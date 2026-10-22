@@ -64,10 +64,10 @@ after them corroborates and dates; when a later source disagrees with git, git w
 4. **Memory - file-based.** If `MEMORY.md` was **not** already auto-injected into context
    this session, read this workspace's index at
    `~/.claude/projects/<slug>/memory/MEMORY.md` - where `<slug>` is the workspace's
-   absolute path with every `/` and `.` replaced by `-` (e.g. `/Users/me/code/app`
-   → `-Users-me-code-app`) - then any linked files that look relevant. If it was
+   absolute path with every `/` and `.` replaced by `-` (e.g. `/code/app`
+   → `-code-app`) - then any linked files that look relevant. If it was
    already injected (check the session context), don't re-read it.
-5. **Memory - recent activity (claude-mem).** The SessionStart hook usually injects a
+5. **Memory - recent activity (claude-mem), when that plugin is installed.** The SessionStart hook usually injects a
    recent timeline; if it's missing or you need more depth, pull it via the `mem-search`
    skill, `/mem-search <query>`, or the claude-mem MCP
    (`timeline`, `smart_search`, `get_observations`). This answers "what was I just doing,
@@ -81,7 +81,7 @@ A concise current-state briefing (terse, evidence over narration):
 
 - **Branch + working-tree state** - clean / dirty, and what's uncommitted.
 - **Active initiatives** - one line each: phase/status + the single next action.
-- **Recent activity** - what the last session(s) actually did (from claude-mem + git log),
+- **Recent activity** - what the last session(s) actually did (from git log and, when installed, claude-mem),
   especially anything that **didn't finish**.
 - **Blocked / gated** - anything waiting on a user review gate or decision.
 - **Flagged maintenance** - stale status lines, pending sweeps, pinned do-not-touch items.

@@ -15,7 +15,7 @@
     "name": "notes-survey",
     "should_trigger": true,
     "query": "Survey my obsidian notes for every mention of the pricing experiment and summarize what we decided.",
-    "why": "A survey over an indexed corpus, the obsidian-kg path."
+    "why": "A survey over an indexed corpus, the markdown-kg path."
   },
   {
     "name": "cheap-delegation",

@@ -1,8 +1,8 @@
-# vault-kg.db schema reference
+# markdown-kg.db schema reference
 
-SQLite database created by `obsidian_kg.py` at `<vault>/vault-kg/vault-kg.db`,
-beside `vault-kg-config.md`. Read this before writing raw SQL against the DB;
-prefer the CLI subcommands otherwise.
+`markdown_kg.py` creates the SQLite database at `<vault>/markdown-kg/markdown-kg.db`, beside `markdown-kg-config.md`.
+A vault built before the folder was renamed has the database at the legacy `vault-kg/vault-kg.db`, and the engine keeps using that file in place.
+Read this before writing raw SQL against the DB; prefer the CLI subcommands otherwise.
 
 ## Contents
 
@@ -23,9 +23,9 @@ prefer the CLI subcommands otherwise.
 
 ## notes
 
-One row per ingested markdown file (dot folders - `.obsidian`, `.git`,
-`.trash`, … - `SKIP_FOLDERS` and the engine's own `vault-kg/` are never
-ingested). Enumeration is a filesystem walk, so gitignored notes and notes
+One row per ingested markdown file.
+Dot folders such as `.obsidian`, `.git` and `.trash`, the folders in `SKIP_FOLDERS` and the engine's own folder under either name (`markdown-kg/` or the legacy `vault-kg/`) are never ingested.
+Enumeration is a filesystem walk, so gitignored notes and notes
 inside a nested git repo are ingested like any other; exclusion belongs to
 the engine's own ignore rules. Files excluded by an ignore rule are not here
 at all; see [ignored](#ignored).

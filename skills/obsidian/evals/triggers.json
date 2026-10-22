@@ -21,7 +21,7 @@
 
   {"name": "rebuild-index-note", "should_trigger": true,
    "query": "Rebuild INDEX.md at the root of my vault so every note is listed with its section headings underneath.",
-   "why": "The bundled index_vault.py hub note: a markdown file listing files and heading trees as wiki-links. Distinct from obsidian-kg's graph-derived index, which reports orphans, broken links and hubs by degree."},
+   "why": "The bundled index_vault.py hub note: a markdown file listing files and heading trees as wiki-links. Distinct from markdown-kg's graph-derived index, which reports orphans, broken links and hubs by degree."},
 
   {"name": "dataview-inline-field", "should_trigger": true,
    "query": "I want a table of every project note with its status. My vault has Dataview turned on.",
@@ -37,11 +37,11 @@
 
   {"name": "backlinks-question", "should_trigger": false,
    "query": "Which notes in my vault link to Soil Amendments, and what were they saying about it?",
-   "why": "Link graph traversal belongs to obsidian-kg. Vault vocabulary and wikilinks make this a plausible false positive, but nothing is being authored or edited."},
+   "why": "Link graph traversal belongs to markdown-kg. Vault vocabulary and wikilinks make this a plausible false positive, but nothing is being authored or edited."},
 
   {"name": "make-vault-searchable", "should_trigger": false,
    "query": "My vault has about four thousand notes now. Can you make it searchable so I can actually find things in it?",
-   "why": "Indexing a corpus for retrieval belongs to obsidian-kg. This skill's only index is the INDEX.md hub note, not a queryable store."},
+   "why": "Indexing a corpus for retrieval belongs to markdown-kg. This skill's only index is the INDEX.md hub note, not a queryable store."},
 
   {"name": "session-docs-sweep", "should_trigger": false,
    "query": "We're done for the day. Write up what we did into the project docs.",

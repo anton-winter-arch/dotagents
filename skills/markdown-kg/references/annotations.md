@@ -150,11 +150,11 @@ annotation noise. Annotation rows themselves are not diffed.
 ## Querying
 
 ```bash
-obsidian_kg.py annotations <vault>                      # all, grouped by marker
-obsidian_kg.py annotations <vault> --marker FOLLOW-UP   # one worklist
-obsidian_kg.py annotations <vault> --note "Some Note"
-obsidian_kg.py annotations <vault> --marker EVENT --newer-than 2026-08-26
-obsidian_kg.py annotations <vault> --limit 100 --json
+markdown_kg.py annotations <vault>                      # all, grouped by marker
+markdown_kg.py annotations <vault> --marker FOLLOW-UP   # one worklist
+markdown_kg.py annotations <vault> --note "Some Note"
+markdown_kg.py annotations <vault> --marker EVENT --newer-than 2026-08-26
+markdown_kg.py annotations <vault> --limit 100 --json
 ```
 
 Truncation is declared (`COMPLETE` / `TRUNCATED n of m`, default limit 50).

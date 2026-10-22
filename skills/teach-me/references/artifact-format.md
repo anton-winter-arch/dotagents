@@ -6,7 +6,7 @@ file per topic; one additional dated file per re-cert.
 
 The workspace root is `git rev-parse --show-toplevel` when inside a repo,
 otherwise the current working directory. If the resolved root is `$HOME` or a
-synced tooling repo (`~/.agents`, `~/.claude`), stop and confirm the
+synced tooling repo (a skills or dotfiles repo, or the harness config folder), stop and confirm the
 destination with the user before writing - personal learning artifacts do not
 belong in shared source-of-truth repos by default.
 

@@ -56,7 +56,7 @@ normal, and a slate of one is more often right than a slate of three: when
 the third item is the weakest, drop it before presenting rather than letting
 the user do the pruning.
 
-**Route before proposing.** `memory-routing.sh` fires on every write and
+**Route before proposing.** The `memory-routing.sh` hook, where installed, fires on every write and
 `memory_lint.py` fails one lacking a `MEMORY.md` pointer or valid frontmatter.
 Only a belief specific to THIS repo becomes a memory: universal principles go to
 global `~/.claude/CLAUDE.md`, invariants to a hook, procedures to a skill, and
@@ -84,7 +84,7 @@ missing is first sought as a sharper wording of a rule already there.
 cd ~/.claude/projects/<slug>/memory && ls *.md | grep -vc '^MEMORY.md$'
 ```
 
-The tiers match the ones `memory-routing.sh` enforces on every new memory file:
+The tiers match the ones the `memory-routing.sh` hook enforces, where installed, on every new memory file:
 
 | Count after the addition | Rule |
 |---|---|

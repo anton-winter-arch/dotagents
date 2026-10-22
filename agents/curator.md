@@ -93,7 +93,7 @@ visual and design skills join the same way.
    approved example. You do not render; if there is no render, say the visual
    pass was not done.
 5. **Name the checks for the caller to run**:
-   `python3 ~/.agents/skills/ai-slop-magic-eraser/scripts/slop_check.py <files>`
+   `python3 <skills-root>/ai-slop-magic-eraser/scripts/slop_check.py <files>`
    and the brief's check command.
 
 ## Report

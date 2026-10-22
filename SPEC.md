@@ -1,6 +1,6 @@
 # SPEC - ~/.agents
 
-**Status:** active · **Last updated:** 2026-09-15
+**Status:** active · **Last updated:** 2026-10-22
 
 ## What this is
 
@@ -14,12 +14,14 @@ installed plugins (e.g. `agent-skills@addy-agent-skills`), which auto-update and
 expose namespaced `plugin:skill` entries. This repo carries only what the user
 authors or forks (**29 skills** `agent-conference`, `agent-cc-configs-sync`,
 `agent-mail`, `agent-review`, `ai-engineering`, `ai-slop-magic-eraser`,
-`cmon`, `code-kg`,
-`deep-research`, `focus`, `frontend-aesthetics`, `hi`, `local-model-task`, `meta-loop`,
-`my-security-review-checklist`, `notes`, `obsidian`, `obsidian-kg`,
-`plugin-update`, `project-knowledge-vault`, `reflect`, `repo-device-sync`,
+`cmon`, `code-kg`, `compress-media`,
+`deep-research`, `focus`, `frontend-aesthetics`, `hi`, `local-model-task`,
+`markdown-kg`, `meta-loop`,
+`my-security-review-checklist`, `notes`, `obsidian`,
+`project-knowledge-vault`, `reflect`, `repo-device-sync`,
 `sanitize`, `skill-authoring`, `sprint-board`, `support-local`, `task`, `teach-me`,
-`wrap-up`;
+`wrap-up`, plus the `obsidian-kg` pointer that forwards to `markdown-kg` for one
+release and loads no description;
 **9 subagents** `my-security-reviewer`, `supervisor`, `ai-engineer`, `advisor`,
 `researcher`, `reader`, `worker`, `curator`, `support-local`;
 **13 commands** `advisor`, `agent-mail`, `my-security-review`, `reflect`,
@@ -31,7 +33,7 @@ plugin's own entries in the model's context).
 
 `skills-archive/` holds retired-but-kept skills (`data-engineering`,
 `dimensional-data-modeling`, `django`, `docker`, `machine-learning`,
-`statistics`, `o-o-d-a-loop`), moved out of `skills/` so their descriptions
+`statistics`, `o-o-d-a-loop`, `plugin-update`), moved out of `skills/` so their descriptions
 stop charging every session; restoring one is a `git mv` back plus
 `sync-skills.sh`.
 
@@ -97,7 +99,7 @@ assembly step, so:
 - Maintain `app/`, the agents chat app for talking to the harnesses over a
   markdown vault: a FastAPI server on loopback, a vanilla JS chat and graph UI
   with multi-agent group threads, and the `agents` CLI (alias `agn`). It is its own `uv` project with `fastapi` and
-  `uvicorn` as its only runtime dependencies, loads the one `obsidian-kg` engine
+  `uvicorn` as its only runtime dependencies, loads the one `markdown-kg` engine
   from `skills/`, and never holds an API key; model calls go through a harness
   CLI or the local Ollama daemon.
 - Maintain [`specs/claude-code/SPEC-CLAUDE-CODE.md`](specs/claude-code/SPEC-CLAUDE-CODE.md) - the standing
@@ -190,11 +192,14 @@ foothold. This is not a preference to weigh against convenience.
 2. Commit + push (`develop`), then fast-forward `main`.
 3. On each machine: `git pull && bash ~/.agents/sync-skills.sh`.
 
-## `obsidian-kg` scope
+## `markdown-kg` scope
 
-One engine for every markdown corpus: `skills/obsidian-kg/`, stdlib-only single
-script, SQLite+FTS5, no network and no embeddings. Retrieval addresses sections
-rather than files, a profile in `<vault>/vault-kg/vault-kg-config.md` declares
+One engine for every markdown corpus: `skills/markdown-kg/`, stdlib-only single
+script, SQLite+FTS5, no network and no embeddings. The skill was named
+`obsidian-kg` until the engine's reach outgrew the editor's name; `skills/obsidian-kg/`
+is a pointer whose `scripts/obsidian_kg.py` forwards to the engine, kept until no
+live caller in a sibling repo names the old path, then removed. Retrieval addresses sections
+rather than files, a profile in `<vault>/markdown-kg/markdown-kg-config.md` declares
 what one section is, and a declared unit is never fragmented. Aggregates over
 time (`themes` and `trends` over log-dated notes, `timeline` and `during` over
 detected dates) are the layer no search provides.
@@ -203,7 +208,7 @@ Anything specific to a vault is config, never code, and never a default. A vault
 with no config still gets sections, search, the link graph and backlinks.
 
 The `okf-kg` twin (built for OKF, Google's public Open Knowledge Format) retired to `__archive/` after measuring zero edges against
-`obsidian-kg`'s on the same corpus; its temporality columns and its reserved
+this engine's on the same corpus; its temporality columns and its reserved
 `extractions`/`conflicts` tables folded in. Those tables now carry the inferred
 side of edge provenance: `relate` records evidence-verified inferred relations,
 traversal joins them only behind an explicit flag, and everything ingest

@@ -285,6 +285,7 @@ description is its trigger contract and its body is the workflow.
 | `ai-engineering` | AI/agent stack knowledge in three modes: read (choose from a dated catalog), write (discover, verify, record), build (intake-driven scaffolding) |
 | `ai-slop-magic-eraser` | Rewrites prose and layout to the user's voice with meaning fixed, and flags what looks invented; runs forked in `curator` |
 | `cmon` | Restates the last verbose reply in as few words as possible, then holds that register |
+| `compress-media` | `/compress-media`, invoked explicitly: shrinks or converts video, audio, images and GIFs with ffmpeg into a `_small` copy beside each original: per-file format and quality defaults, HDR and rotation kept, results that are not smaller discarded, folder batches, and a size limit for uploads; HEIC through macOS `sips` |
 | `deep-research` | Multi-angle web research: parallel researchers, cross-validated, cited |
 | `focus` | `/focus` for a session that went off target: the `supervisor` re-derives the user's requests from the record, the agent relays the list and holds the terse register; the only entry to the supervisor, with its dated report in `tasks/supervisor/` |
 | `frontend-aesthetics` | Raise UI past the defaults that read as AI slop, and verify the rendered result in a browser |
@@ -298,8 +299,8 @@ description is its trigger contract and its body is the workflow.
 | `local-model-task` | Hands one bounded text or search task from Claude Code to a local Ollama model on loopback, with the result on disk and a short capsule back; search spreads its matches across files and reports the model's own "nothing answers" verdict, a bounded keep-alive spares a sequence of calls the reload; refuses Ollama's cloud API and exposed listeners |
 | `notes` | End-of-session docs sweep, plus correcting any repo text the session made false |
 | `obsidian` | Obsidian markdown standard plus a per-vault authoring workflow |
-| `obsidian-kg` | Offline section-level knowledge graph over a markdown corpus |
-| `project-knowledge-vault` | Seeds and lints a flat, OKF-compatible project vault: the contract, a scaffolder, a conformance linter and obsidian-kg profile rows |
+| `markdown-kg` | Offline section-level knowledge graph over a markdown corpus (formerly `obsidian-kg`; that name forwards for one release) |
+| `project-knowledge-vault` | Seeds and lints a flat, OKF-compatible project vault: the contract, a scaffolder, a conformance linter and markdown-kg profile rows |
 | `reflect` | End-of-session memory reconciliation |
 | `repo-device-sync` | Multi-device git sync ritual |
 | `sanitize` | Deterministic scrubbing engine and the station's one rule source (`detect.py`): a cleaned copy of any file or folder, a report-only tree scan, an answer gate on stdin, a parser-free verifier that reads every copy back, and the commit and push gate behind the global git hooks (secrets and hidden-character attacks block, identifier-shaped content warns); secrets, personal shapes and the station term list on raw, normalized and decoded text, no model inside, output that never holds a value |

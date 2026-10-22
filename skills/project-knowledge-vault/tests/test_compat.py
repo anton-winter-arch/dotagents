@@ -1,6 +1,6 @@
 """Compatibility with the skills that read or write a project vault.
 
-sprint-board owns user-stories.md; obsidian-kg reads the vault as a graph root. Each test
+sprint-board owns user-stories.md; markdown-kg reads the vault as a graph root. Each test
 is the whole coupling to that skill: a divergence fails here rather than months later.
 The okf-vault check runs only when OKF_VAULT_BUILD names a build output, because the
 build lives in another repo.
@@ -22,8 +22,8 @@ SCAFFOLD = SKILL / "scripts" / "vault_scaffold.py"
 LINT = SKILL / "scripts" / "vault_lint.py"
 BOARD_SCAFFOLD = SKILLS / "sprint-board" / "scripts" / "board_scaffold.py"
 BOARD_LINT = SKILLS / "sprint-board" / "scripts" / "board_lint.py"
-KG = SKILLS / "obsidian-kg" / "scripts" / "obsidian_kg.py"
-PROFILES = SKILL / "templates" / "vault-kg-profiles.md"
+KG = SKILLS / "markdown-kg" / "scripts" / "markdown_kg.py"
+PROFILES = SKILL / "templates" / "markdown-kg-profiles.md"
 
 
 def seed(tmp_path: Path) -> Path:
@@ -56,8 +56,8 @@ def test_sprint_board_scaffold_appended_to_the_seed_lints_clean(tmp_path: Path) 
     assert run(LINT, v).returncode == 0
 
 
-@pytest.mark.skipif(not KG.exists(), reason="obsidian-kg not installed beside this skill")
-def test_obsidian_kg_ingest_resolves_edges_dates_and_supersession(tmp_path: Path) -> None:
+@pytest.mark.skipif(not KG.exists(), reason="markdown-kg not installed beside this skill")
+def test_markdown_kg_ingest_resolves_edges_dates_and_supersession(tmp_path: Path) -> None:
     v = seed(tmp_path)
     (v / "notes-meetings.md").write_text(
         "---\ntype: meeting_note\ntitle: notes-meetings\ndate-created: 2026-01-01\n---\n\n# MEETING-NOTES\n\n"
@@ -86,7 +86,7 @@ def test_obsidian_kg_ingest_resolves_edges_dates_and_supersession(tmp_path: Path
     block = re.search(r"```json\n(.*?)```", PROFILES.read_text(), re.S)
     assert block
     config = json.loads(block.group(1))
-    (v / "vault-kg" / "vault-kg-config.md").write_text("# vault-kg-config\n\n```json\n" + json.dumps(config, indent=2) + "\n```\n")
+    (v / "markdown-kg" / "markdown-kg-config.md").write_text("# markdown-kg-config\n\n```json\n" + json.dumps(config, indent=2) + "\n```\n")
     ingest = run(KG, "ingest", v)
     assert ingest.returncode == 0, ingest.stderr + ingest.stdout
 

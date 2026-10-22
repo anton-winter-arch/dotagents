@@ -1,9 +1,9 @@
-# vault-kg-config.md field reference
+# markdown-kg-config.md field reference
 
-One markdown file holding one fenced `json` block, at
-`<vault>/vault-kg/vault-kg-config.md`. It is an ordinary file: edit it directly.
-JSON rather than markdown tables because an agent is the primary editor, values
-containing a pipe break tables, and a sorted JSON block gives readable diffs.
+The config is one markdown file holding one fenced `json` block, at `<vault>/markdown-kg/markdown-kg-config.md`.
+A vault built before the folder was renamed has the config at the legacy `vault-kg/vault-kg-config.md`, and the engine keeps using that file in place.
+It is an ordinary file: edit it directly.
+JSON rather than markdown tables because an agent is the primary editor, values containing a pipe break tables, and a sorted JSON block gives readable diffs.
 
 Everything here is optional. A vault whose config is never touched keeps
 working: sections, search, the link graph and backlinks all need none of it.
@@ -11,7 +11,7 @@ Enrichment accumulates as structure is confirmed, and nothing degrades if it
 never happens.
 
 ````markdown
-# vault-kg-config
+# markdown-kg-config
 
 ```json
 {

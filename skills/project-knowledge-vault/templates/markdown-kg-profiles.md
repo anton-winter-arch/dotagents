@@ -1,7 +1,7 @@
-# vault-kg-config rows for a project knowledge vault
+# markdown-kg-config rows for a project knowledge vault
 
-Run `obsidian_kg.py init <vault>/PROJECTS/<NAME>` once, then merge these rows into the
-`profiles` and `ignore` arrays of `<vault>/PROJECTS/<NAME>/vault-kg/vault-kg-config.md`.
+Run `markdown_kg.py init <vault>/PROJECTS/<NAME>` once, then merge these rows into the
+`profiles` and `ignore` arrays of `<vault>/PROJECTS/<NAME>/markdown-kg/markdown-kg-config.md`.
 Config has no CLI write path; the file is edited directly. Longest matching glob wins.
 
 ```json

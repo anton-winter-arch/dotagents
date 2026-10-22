@@ -12,7 +12,7 @@ nothing here ever sends repo text anywhere - the whole engine is offline. The
 one command that executes anything is `coverage run`, and it refuses to run
 without an explicit `--yes`.
 
-Design goals (mirrored from obsidian_kg.py, the markdown sibling):
+Design goals (mirrored from markdown_kg.py, the markdown sibling):
   * deterministic - `ingest` is a pure parse of the repo: same bytes produce
                     the same db content (`meta.ingested_at` and the coverage
                     `runs` log are the only exceptions). Every ingest is an

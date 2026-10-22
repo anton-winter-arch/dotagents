@@ -11,7 +11,7 @@ this skill actually lives in is invisible to the harness.
 Consequences:
 
 - The should-NOT cases are the enforceable half: they draw the boundary
-  against `obsidian-kg` (vaults, markdown docs trees) and against review and
+  against `markdown-kg` (vaults, markdown docs trees) and against review and
   debugging work, and they measure cleanly. Keep them passing.
 - Judge recall changes by diffing the description against the positive cases
   by hand, or by probing with a real repo present and reading the full tool

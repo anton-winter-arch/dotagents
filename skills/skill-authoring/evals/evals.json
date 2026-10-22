@@ -15,7 +15,7 @@
     },
     {
       "id": 2,
-      "prompt": "Audit my skills - check everything under ~/.agents/skills/ for problems.",
+      "prompt": "Audit my skills - check everything under the skills folder for problems.",
       "expected_output": "The skill triggers on 'audit my skills' and runs the audit checklist across skills/*/SKILL.md: frontmatter parses, name matches directory, description length/person/trigger conditions, no non-standard top-level fields, body length, reference depth, and path hygiene (no hardcoded /Users/<name>/ paths). Findings are reported per skill with the specific violation.",
       "expectations": [
         "The skill-authoring skill is invoked",

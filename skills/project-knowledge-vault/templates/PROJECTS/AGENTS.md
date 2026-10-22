@@ -10,7 +10,7 @@ Everything below is the contract. A skill or agent that reads a vault depends on
 
 One directory. No subfolders. The **filename prefix** is the category, and the **filename sort order** is the abstraction ladder.
 
-Link resolution, the knowledge-graph ingest and bulk upload all key on a single flat namespace, and a second folder reintroduces path fragility that filename resolution otherwise survives. The one exception is tooling state: a `vault-kg/` folder written by the knowledge-graph engine and any dot-folder are not notes and are not part of the vault.
+Link resolution, the knowledge-graph ingest and bulk upload all key on a single flat namespace, and a second folder reintroduces the path fragility that resolving by filename otherwise avoids. The one exception is tooling state: the knowledge-graph engine's `markdown-kg/` folder (`vault-kg/` under its legacy name) and any dot-folder are not notes and are not part of the vault.
 
 ## The ownership gradient
 

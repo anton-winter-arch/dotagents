@@ -91,14 +91,14 @@ check pass "find"              'find . -name "*.md"'
 check pass "chmod"             'chmod +x script.sh'
 # programs that write files at RUNTIME must pass - the hook guards inline
 # content authoring, not tool execution (non-constriction guarantee)
-check pass "engine-writes-db"  'python3 skills/obsidian-kg/scripts/obsidian_kg.py ingest ~/vault'
+check pass "engine-writes-db"  'python3 skills/markdown-kg/scripts/markdown_kg.py ingest ~/vault'
 check pass "git-apply-file"    'git apply fix.patch'
 check pass "node-read"         'node -e '"'"'console.log(require("./package.json").name)'"'"''
 check pass "gsed-read"         'gsed -n 3p file.md'
 check pass "sqlite-insert"     'sqlite3 graph.db "INSERT INTO notes VALUES (1)"'
 check pass "npm-install"       'npm install --save-dev vitest'
 check pass "file-relocation"   'mv tasks/plan.md tasks/plan-old.md'
-check pass "recursive-copy"    'cp -R skills/obsidian-kg /tmp/kb-copy'
+check pass "recursive-copy"    'cp -R skills/markdown-kg /tmp/kb-copy'
 check pass "git-mv"            'git mv HANDOFF.md tasks/todo.md'
 check pass "mkdir"             'mkdir -p tests/station-hooks'
 

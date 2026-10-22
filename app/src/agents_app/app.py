@@ -501,7 +501,7 @@ def _release_local_models() -> None:
         pass
 
 
-_ENGINE = Path(__file__).resolve().parents[3] / "skills" / "obsidian-kg" / "scripts" / "obsidian_kg.py"
+_ENGINE = Path(__file__).resolve().parents[3] / "skills" / "markdown-kg" / "scripts" / "markdown_kg.py"
 
 
 def cmd_build() -> int:

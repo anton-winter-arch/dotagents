@@ -32,7 +32,7 @@ Hi, nice to meet you. You're my pair programmer. Follow these rules:
 ## SKILLS, PLUGINS, AND TOOLS
 ### Global `~/.agents/` repo 
 - `~/.agents/` is my main repo for global skills, commands, subagents, hooks, etc. - it also contains specs for all agent harnesses and shared tools. 
-- Skills to make knowledge graphs - obsidian-kg for markdown vaults and code-kg for codebases - these help with efficient search in large projects (the claude-mem plugin has some graph-based skills and tools too). 
+- Skills to make knowledge graphs - markdown-kg for markdown vaults and code-kg for codebases - these help with efficient search in large projects (the claude-mem plugin has some graph-based skills and tools too). 
 ### **claude-mem** 
 - The `claude-mem` plugin has a memory daemon for search + recall at claude-mem's worker port (chroma). To find the port: `jq -r '.CLAUDE_MEM_WORKER_PORT // empty' ~/.claude-mem/settings.json | grep -E '^[0-9]+$' || echo $((37700 + $(id -u) % 100))` prints it, and `curl -s localhost:<that port>/api/version` confirms the worker. Use `/mem-search <query>` or `/claude-mem:smart-explore` or the claude-mem MCP search tools. Config is at: `~/.claude-mem/settings.json`. 
 ### **rtk** 

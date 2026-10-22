@@ -3,14 +3,14 @@ name: project-knowledge-vault
 description: >-
   Seeds and checks a project knowledge vault - one flat folder of markdown
   notes that the people and agents on a project share as its operational
-  source of truth, OKF-compatible and readable by obsidian-kg as its own
+  source of truth, OKF-compatible and readable by markdown-kg as its own
   graph. Owns the contract (AGENTS.md), the seed files, a scaffolder and a
   conformance linter. Use when starting a project vault or a new project under
   PROJECTS/, when asked to set up, seed, scaffold or template a project's
   notes, when checking whether a vault conforms or why the graph or the board
   tools read it badly, or when a project needs a home for its meetings, chat,
   learnings, questions and user stories. The knowledge base, learning path and research flows around it belong to
-  their own skills; so do the board (sprint-board) and the graph (obsidian-kg).
+  their own skills; so do the board (sprint-board) and the graph (markdown-kg).
 ---
 
 # project-knowledge-vault
@@ -31,7 +31,7 @@ The linter is the anti-drift mechanism. Every check fires on positive evidence, 
 
 | check | fails on |
 |---|---|
-| `flat` | any subdirectory other than `vault-kg/` or a dot-folder |
+| `flat` | any subdirectory other than `markdown-kg/`, the legacy `vault-kg/` or a dot-folder |
 | `frontmatter` | a note without parseable YAML carrying a non-empty `type` |
 | `family` | a `type` outside the family table for that prefix, or a prefix in no family |
 | `reserved` | `index.md` or `log.md` missing, or any frontmatter on either |
@@ -46,7 +46,7 @@ The linter is the anti-drift mechanism. Every check fires on positive evidence, 
 
 ## Where it sits in the stack
 
-- **obsidian-kg** reads each project vault as its own graph root: `obsidian_kg.py init <path>/PROJECTS/<NAME>`, then merge the rows in `templates/vault-kg-profiles.md` into the config it wrote. Every project vault carries the same reserved filenames, so a graph over all of `PROJECTS/` would find every bare wikilink ambiguous; a parent vault's own graph ignores `PROJECTS/**` in its `.kgignore`. The engine's `index` command writes `Vault Index.md` and never `index.md`. Supersession uses the engine's `**SUPERSEDED**: <ref>` marker, which closes the heading section it sits in, which is why each learning is its own `###`.
+- **markdown-kg** reads each project vault as its own graph root: `markdown_kg.py init <path>/PROJECTS/<NAME>`, then merge the rows in `templates/markdown-kg-profiles.md` into the config it wrote. Every project vault carries the same reserved filenames, so a graph over all of `PROJECTS/` would find every bare wikilink ambiguous; a parent vault's own graph ignores `PROJECTS/**` in its `.kgignore`. The engine's `index` command writes `Vault Index.md` and never `index.md`. Supersession uses the engine's `**SUPERSEDED**: <ref>` marker, which closes the heading section it sits in, so each learning is its own `###`.
 - **sprint-board** owns `user-stories.md` and `user-stories-completed.md`. The seed ships the board empty; write the spine as JSON, run its `board_scaffold.py`, and append the output after the seed's preamble. A fresh scaffold reports template residue until the bodies are written, and that is the author's job, not the vault's.
 - **The knowledge base, learning path and certification flow** live outside the vault. A project pushes durable facts up through `notes-learnings.md` for the certification flow to promote, and declares what it needs in the `skills:` list on `00-brd.md`, which a knowledge base diffs against its proven skills to find the gap and seed the learning path.
 - **okf-vault** (a build pipeline in another repo) produces a vault of this shape from raw sources. The relationship is a conformance check, not a dependency: point `OKF_VAULT_BUILD` at a build output and the test suite lints it.
@@ -57,11 +57,11 @@ The linter is the anti-drift mechanism. Every check fires on positive evidence, 
 
 **Ask first** before adding a second template profile, changing a family name or `type` value (every existing vault stops conforming), or resolving a real date into a template file.
 
-**Never** teach obsidian-kg the contract, restate sprint-board's anatomy in the seed, use a `kg-` frontmatter key, or put an identifier in anything under `templates/`. The templates ship into public repos and git history keeps what a later cleanup removes.
+**Never** teach markdown-kg the contract, restate sprint-board's anatomy in the seed, use a `kg-` frontmatter key, or put an identifier in anything under `templates/`. The templates ship into public repos and git history keeps what a later cleanup removes.
 
 ## Files
 
 - `templates/PROJECTS/` - the 14 seed files, including the contract
-- `templates/vault-kg-profiles.md` - config rows for obsidian-kg
+- `templates/markdown-kg-profiles.md` - config rows for markdown-kg
 - `scripts/vault_scaffold.py`, `scripts/vault_lint.py`
-- `tests/` - scaffold, one adversarial fixture per linter check, and the compatibility tests against sprint-board and obsidian-kg
+- `tests/` - scaffold, one adversarial fixture per linter check, and the compatibility tests against sprint-board and markdown-kg

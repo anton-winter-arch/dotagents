@@ -17,7 +17,9 @@ PreToolUse on load-adding tools (Bash, Agent, Workflow, any MCP tool):
   critical -> permission "deny", or "ask" when the ack file is fresh
 UserPromptSubmit: critical exits 2 (blocks the prompt, stderr to the user)
   unless the ack file is fresh, in which case the prompt passes silently;
-  warn passes with a warning.
+  warn passes with a warning once per episode: the warn file records the
+  reason, the same reason stays silent for as long as it holds, and a normal
+  reading clears the record. A new reason, or critical, is never suppressed.
 SessionStart: warn or critical prints a warning, never blocks.
 Any other tool, a normal reading, or a machine without sysctl: silent exit 0.
 
@@ -36,6 +38,8 @@ Environment overrides:
                           level counts (default 35)
   MEMGATE_ACK_FILE        ack file (default ~/.claude/state/memory-gate-ack);
                           touching it eases the gate for ACK_MINUTES
+  MEMGATE_WARN_FILE       warn record (default ~/.claude/state/memory-gate-warned);
+                          holds the reason of the last prompt warning
   AGENTS_APP_SEAT         set by the agents app's spawner on a seat's process
                           (BRAIN_SEAT, from the standalone second-brain app,
                           is honored the same way):
@@ -54,6 +58,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ACK_MINUTES = 60
+CLEAR_MARGIN_PCT = 15   # free memory this far above the warn line ends a warn episode
 SYSCTL_TIMEOUT = 1
 PS_TIMEOUT = 1
 SYSCTL = '/usr/sbin/sysctl'
@@ -204,6 +209,31 @@ def acknowledged(ack_file):
         return False
 
 
+def recently_warned(warn_file, reason):
+    """True when the last prompt warning named this same reason; the record lives
+    until a normal reading clears it, so one episode warns once however long it lasts."""
+    try:
+        return Path(warn_file).read_text(encoding='utf-8').strip() == reason
+    except OSError:
+        return False
+
+
+def clear_warned(warn_file):
+    try:
+        Path(warn_file).unlink()
+    except OSError:
+        pass
+
+
+def note_warned(warn_file, reason):
+    """Record the reason; a failure to write only means the warning repeats."""
+    try:
+        Path(warn_file).parent.mkdir(parents=True, exist_ok=True)
+        Path(warn_file).write_text(reason + '\n', encoding='utf-8')
+    except OSError:
+        pass
+
+
 def render(d, event):
     """Hook JSON. An ask reason is shown to the user, so it carries the
     process list; a deny reason and additionalContext go to the model, so
@@ -241,9 +271,23 @@ def main():
                  warn_free_pct=_env_int(env, 'MEMGATE_WARN_FREE_PCT', 35))
     ack_file = Path(env.get('MEMGATE_ACK_FILE',
                             Path.home() / '.claude' / 'state' / 'memory-gate-ack'))
+    warn_file = Path(env.get('MEMGATE_WARN_FILE',
+                             Path.home() / '.claude' / 'state' / 'memory-gate-warned'))
     sig = read_signals(env)
-    if sig is None or not severity(sig, cfg)[0]:
+    if sig is None:
         return 0
+    sev, reason = severity(sig, cfg)
+    if not sev:
+        # Clear the episode only once the machine is well clear of the threshold, so a
+        # reading that flaps around it does not re-warn on every other prompt.
+        if event == 'UserPromptSubmit' and sig.level < cfg.warn_level \
+                and sig.free_pct >= cfg.warn_free_pct + CLEAR_MARGIN_PCT:
+            clear_warned(warn_file)
+        return 0
+    if event == 'UserPromptSubmit' and sev == 'warn':
+        if recently_warned(warn_file, reason):
+            return 0
+        note_warned(warn_file, reason)
     acked = acknowledged(ack_file)
     seat = env.get('AGENTS_APP_SEAT') or env.get('BRAIN_SEAT') or None
     # No ps spawn on a struggling machine for a call that passes anyway,

@@ -178,7 +178,7 @@ def main() -> int:
                 print(
                     "\nEvery should-fire case scored exactly 0.00. That is usually the\n"
                     "harness or the fixtures, not the description. Check that the skill is\n"
-                    "symlinked into ~/.claude/skills (run ~/.agents/sync-skills.sh) and that\n"
+                    "linked or copied into the harness's skills folder and that\n"
                     "each prompt naming a document declares it under 'files'.",
                     file=sys.stderr,
                 )

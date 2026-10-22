@@ -35,6 +35,7 @@ def test_fresh_seed_is_clean(tmp_path: Path) -> None:
 
 def test_flat_fires_on_a_subdirectory_but_not_tooling(tmp_path: Path) -> None:
     v = seed(tmp_path)
+    (v / "markdown-kg").mkdir()
     (v / "vault-kg").mkdir()
     (v / ".obsidian").mkdir()
     assert lint(v)[0] == 0

@@ -1,6 +1,6 @@
-"""Vault adapter over the repo's obsidian-kg engine.
+"""Vault adapter over the repo's markdown-kg engine.
 
-The engine script is loaded as a module from skills/obsidian-kg/scripts/ (it has
+The engine script is loaded as a module from skills/markdown-kg/scripts/ (it has
 no package wrapper). Every read goes through _fresh() so no endpoint can serve a
 stale index; the engine re-ingests on manifest drift by itself.
 """
@@ -12,9 +12,9 @@ from pathlib import Path
 from agents_app import config
 
 # The one engine in the repo, three levels above this package; no second copy to drift.
-_ENGINE_PATH = Path(__file__).resolve().parents[3] / "skills" / "obsidian-kg" / "scripts" / "obsidian_kg.py"
+_ENGINE_PATH = Path(__file__).resolve().parents[3] / "skills" / "markdown-kg" / "scripts" / "markdown_kg.py"
 
-_spec = importlib.util.spec_from_file_location("obsidian_kg", _ENGINE_PATH)
+_spec = importlib.util.spec_from_file_location("markdown_kg", _ENGINE_PATH)
 engine = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(engine)
 
@@ -29,7 +29,7 @@ def _fresh(vault: Path) -> None:
 
 
 def _visible(entry: Path) -> bool:
-    return not entry.name.startswith(".") and entry.name != "vault-kg"
+    return not entry.name.startswith(".") and entry.name not in engine.KG_DIRS
 
 
 def fresh_connection(vault: Path | None = None):
@@ -83,7 +83,7 @@ def parity(vault: Path | None = None) -> list[str]:
     skips notes git hides: gitignored files, and anything inside a
     nested repo. Until that is fixed at the engine's source, this makes
     the drop loud instead of silent. Same walk filters as the engine's
-    own non-git path (dot folders, SKIP_FOLDERS, vault-kg, symlinks),
+    own non-git path (dot folders, SKIP_FOLDERS, KG_DIRS, symlinks),
     so every path reported here is one the graph WOULD serve if the
     enumeration could see it."""
     vault = vault or config.vault_path()
@@ -92,7 +92,7 @@ def parity(vault: Path | None = None) -> list[str]:
     for root, dirs, names in os.walk(vault):
         dirs[:] = [d for d in dirs
                    if d not in engine.SKIP_FOLDERS and not d.startswith(".")
-                   and not (Path(root) == vault and d == engine.KG_DIR)]
+                   and not (Path(root) == vault and d in engine.KG_DIRS)]
         for name in names:
             if not name.endswith(".md"):
                 continue
@@ -158,7 +158,7 @@ def _search_filenames(query: str, vault: Path) -> list[dict]:
         if not entry.is_file():
             continue
         rel = entry.relative_to(vault)
-        if any(part.startswith(".") or part == "vault-kg" for part in rel.parts):
+        if any(part.startswith(".") or part in engine.KG_DIRS for part in rel.parts):
             continue
         low_path = str(rel).lower()
         if not all(k in low_path for k in keywords):

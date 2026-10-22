@@ -33,13 +33,13 @@
     "name": "vault-backlinks",
     "query": "What links to the Zone Planning note in my Obsidian vault?",
     "should_trigger": false,
-    "why": "Markdown vault traversal belongs to obsidian-kg."
+    "why": "Markdown vault traversal belongs to markdown-kg."
   },
   {
     "name": "docs-tree-query",
     "query": "Make our docs folder of markdown runbooks queryable.",
     "should_trigger": false,
-    "why": "A markdown corpus is obsidian-kg's domain even outside Obsidian."
+    "why": "A markdown corpus is markdown-kg's domain even outside Obsidian."
   },
   {
     "name": "code-review",

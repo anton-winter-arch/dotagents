@@ -289,7 +289,7 @@ def agent_body() -> str:
 # The local tools the worker may run through Bash, as permission-rule prefixes. Any other shell command is
 # unmatched, which a headless run cannot approve, so it is denied and the worker reports `blocked`.
 LOCAL_TOOLS = ("skills/local-model-task/scripts/local_model_task.py", "skills/code-kg/scripts/code_kg.py",
-               "skills/obsidian-kg/scripts/obsidian_kg.py")
+               "skills/markdown-kg/scripts/markdown_kg.py")
 
 
 def allowed_tools() -> str:
@@ -559,7 +559,7 @@ def cmd_doctor(a: argparse.Namespace) -> int:
 
 def add_brief_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--goal", required=True)
-    p.add_argument("--corpus", required=True, help="a path, a code-kg or obsidian-kg index name, or vault:<name>")
+    p.add_argument("--corpus", required=True, help="a path, a code-kg or markdown-kg index name, or vault:<name>")
     p.add_argument("--corpus-root", default=None, help="the directory evidence references resolve against when --corpus is an index name; a path corpus is its own root")
     p.add_argument("--complete", default="", help="what a complete answer contains")
     p.add_argument("--out-of-scope", default="")
