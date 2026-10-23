@@ -1125,14 +1125,17 @@ but never a lockout because swap is sticky on macOS and never shrinks on its
 own. The free-memory floor exists because the kernel reports warn while half
 the memory is still free, and asking on every call there was noise.
 
-On load-adding tools (Bash, Agent, Workflow, any MCP tool) warn asks and
-critical denies, or asks when the ack is fresh. UserPromptSubmit blocks the
-prompt at critical unless the ack is fresh; SessionStart only warns. A normal
-reading or a machine without `sysctl` exits silently. The hook takes no
-containment action and tells the model to take none: the user-facing text
-names the top processes by memory, the model-facing text carries the numbers
-and an instruction to stop and wait. A resource guard, not a security control
-- the environment overrides can switch it off and that is accepted.
+Warn is information only: one short heads-up per episode, at whichever prompt
+or session start comes first in any session (the record in
+`~/.claude/state/memory-gate-warned` is shared), and no tool call is held.
+Critical holds work: load-adding tools (Bash, Agent, Workflow, any MCP tool) are
+denied, or asked when the ack is fresh, and UserPromptSubmit blocks the prompt
+unless the ack is fresh; SessionStart only warns. A normal reading or a machine
+without `sysctl` exits silently. The hook takes no containment action and tells
+the model to leave other processes alone: the user-facing text names the
+heaviest processes, the model-facing text carries the numbers in one or two
+plain sentences. A resource guard, not a security control - the environment
+overrides can switch it off and that is accepted.
 
 Overrides: `MEMGATE_PRESSURE_LEVEL`, `MEMGATE_SWAP_MB`, `MEMGATE_FREE_PCT`,
 `MEMGATE_SWAP_ASK_MB`, `MEMGATE_WARN_FREE_PCT`,
@@ -1140,8 +1143,9 @@ Overrides: `MEMGATE_PRESSURE_LEVEL`, `MEMGATE_SWAP_MB`, `MEMGATE_FREE_PCT`,
 ack eases the gate for an hour and is the user's call from their own shell,
 which is why `guard-private.sh` refuses shell access to `~/.claude/state`.
 `AGENTS_APP_SEAT` (or `BRAIN_SEAT` from the standalone second-brain app), set
-by a headless spawner, denies every gated call outright with an attributable
-reason prefix, because no prompt is possible headless.
+by a headless spawner, turns the critical-level ask into a deny with the
+attributable reason prefix `brain-gate: memory-pressure`, because no prompt is
+possible headless.
 
 Script: [`claude-code/hooks/memory_pressure_gate.py`](hooks/memory_pressure_gate.py).
 

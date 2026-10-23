@@ -2,32 +2,31 @@
 """PreToolUse, UserPromptSubmit, and SessionStart hook: gate on memory pressure.
 
 Reads the kernel's own memory verdict (the level behind Activity Monitor's
-pressure graph) plus swap in use, and stops the agent from adding load when
-the machine is already struggling, whatever the cause.
+pressure graph) plus swap in use. At warn it gives one heads-up; at critical it
+stops the agent from adding load, whatever the cause.
 
 Severity: critical is the kernel's critical level only. Warn is the kernel's
-warn level with free memory at or below WARN_FREE_PCT (the kernel raises
-warn while half the memory is still free, which asked on every call for
-nothing), or swap in use at or above half of physical memory (swap is
-sticky on macOS and never shrinks on its own, so it can raise a question but
-never a lockout).
+warn level with free memory at or below WARN_FREE_PCT (the kernel raises warn
+while half the memory is still free), or swap in use at or above half of
+physical memory (swap is sticky on macOS and never shrinks on its own).
 
-PreToolUse on load-adding tools (Bash, Agent, Workflow, any MCP tool):
-  warn     -> permission "ask": the user decides
-  critical -> permission "deny", or "ask" when the ack file is fresh
-UserPromptSubmit: critical exits 2 (blocks the prompt, stderr to the user)
-  unless the ack file is fresh, in which case the prompt passes silently;
-  warn passes with a warning once per episode: the warn file records the
-  episode (the kernel level, or swap without its megabytes), and the same
-  episode stays silent for as long as it holds. A normal reading well clear of
-  the threshold ends it; any other normal reading ends it once the warning is
-  RECORD_MINUTES old. A new episode, or critical, is never suppressed.
-SessionStart: warn or critical prints a warning, never blocks.
+Warn is information only: one short heads-up per episode, at whichever prompt or
+session start comes first in any interactive session, and tool calls pass
+untouched; a headless seat gets no heads-up and leaves the record alone. The warn
+file records the episode (the kernel level, or swap without its megabytes); a
+normal reading well clear of the threshold ends it, and any other normal reading
+ends it once the warning is RECORD_MINUTES old. A new episode warns again.
+Critical holds work:
+  PreToolUse on load-adding tools (Bash, Agent, Workflow, any MCP tool): "deny",
+    or "ask" when the ack file is fresh; a headless seat is always denied
+  UserPromptSubmit: exits 2 (blocks the prompt, stderr to the user) unless the
+    ack file is fresh, in which case the prompt passes silently
+  SessionStart: a warning, never a block
 Any other tool, a normal reading, or a machine without sysctl: silent exit 0.
 
-The hook takes no containment action and tells the model to take none. The
-user-facing text names the top processes by memory; the model-facing text
-carries only the numbers and an instruction to stop and wait for the user.
+The hook takes no containment action and tells the model to leave other processes
+alone. The user-facing text names the heaviest processes; the model-facing text is
+one or two plain sentences with the numbers.
 This is a resource guard, not a security control: the environment overrides
 below can switch it off, and that is acceptable.
 
@@ -41,13 +40,13 @@ Environment overrides:
   MEMGATE_ACK_FILE        ack file (default ~/.claude/state/memory-gate-ack);
                           touching it eases the gate for ACK_MINUTES
   MEMGATE_WARN_FILE       warn record (default ~/.claude/state/memory-gate-warned);
-                          holds the reason of the last prompt warning
+                          holds the episode of the last heads-up
   AGENTS_APP_SEAT         set by the agents app's spawner on a seat's process
                           (BRAIN_SEAT, from the standalone second-brain app,
-                          is honored the same way):
-                          every gated call is denied outright (no prompt is
-                          possible headless) with a "brain-gate: memory-pressure"
-                          reason prefix the spawner attributes, ack or not
+                          is honored the same way): at critical every gated
+                          call is denied outright (no prompt is possible
+                          headless) with a "brain-gate: memory-pressure" reason
+                          prefix the spawner attributes, ack or not
 """
 import json
 import os
@@ -62,7 +61,8 @@ from pathlib import Path
 ACK_MINUTES = 60
 CLEAR_MARGIN_PCT = 15   # free memory this far above the warn line ends a warn episode
 RECORD_MINUTES = 60     # after this, any normal reading ends the episode
-WARN_RECORD = re.compile(r'(kernel memory pressure level \d+|swap in use) \(warn\)')
+# The megabytes form is what the previous version wrote; it still counts as a record.
+WARN_RECORD = re.compile(r'(kernel memory pressure level \d+|swap in use(?: \d+ MB)?) \(warn\)')
 SYSCTL_TIMEOUT = 1
 PS_TIMEOUT = 1
 SYSCTL = '/usr/sbin/sysctl'
@@ -131,27 +131,20 @@ SEAT_PREFIX = 'brain-gate: memory-pressure'
 
 
 def texts(sig, sev, reason, top, seat=None):
-    numbers = (f'Memory pressure: {reason}, {sig.free_pct}% free, '
-               f'{sig.swap_mb} MB swap.')
-    procs = ', '.join(f'{sanitize(n)} {int(mb)} MB' for n, mb in top[:3])
-    user = numbers + (f' Top processes: {procs}.' if procs else '') + (
-        ' The agent adds no load until you decide. Close or stop what you '
-        'can, then allow the call or answer the prompt.')
+    numbers = f'{sig.free_pct}% free, {sig.swap_mb / 1024:.1f} GB swap'
+    procs = ', '.join(f'{sanitize(n)} {mb / 1024:.1f} GB' for n, mb in top[:3])
+    heaviest = f' Heaviest: {procs}.' if procs else ''
+    if sev != 'critical':
+        return (f'Memory is tight ({numbers}).{heaviest}',
+                f'Heads-up: memory is tight on this machine ({numbers}). Carry on; hold off on '
+                'starting a local model or a large fan-out unless the user asks.')
+    user = f'Memory is critically low ({numbers}).{heaviest} New heavy work waits until some is freed.'
     if seat:
-        # A headless seat has nobody to answer a prompt, so an ask would
-        # be a silent deny. Say so, with a prefix the spawner can parse.
-        model = (f'{SEAT_PREFIX}: {numbers} Load-adding calls are denied in '
-                 f'seat {sanitize(seat)} while this lasts; no prompt is possible '
-                 'headless. Report it and take no containment action of your own.')
-        return user, model
-    if sev == 'critical':
-        guidance = (' Stop, report this to the user, and wait for the user. '
-                    'Take no containment action of your own.')
-    else:
-        guidance = (' Report this to the user once. Read-only work may continue; '
-                    'load-adding calls will ask the user first. Take no '
-                    'containment action of your own.')
-    return user, numbers + guidance
+        # A headless seat has nobody to answer a prompt; the spawner parses the prefix.
+        return user, (f'{SEAT_PREFIX}: memory is critically low ({numbers}), so load-adding calls '
+                      f'in seat {sanitize(seat)} are paused. Continue with read-only tools.')
+    return user, (f'Memory is critically low on this machine ({numbers}). Pause anything that '
+                  'adds load, tell the user once, and leave other processes alone.')
 
 
 def decide(event, tool, sig, cfg, top=(), acked=False, seat=None):
@@ -160,11 +153,11 @@ def decide(event, tool, sig, cfg, top=(), acked=False, seat=None):
         return Decision('allow')
     user, model = texts(sig, sev, reason, top, seat)
     if event == 'PreToolUse':
-        if not is_gated(tool, cfg):
+        # Warn is information only: one heads-up per episode at a prompt or session
+        # start, and tool calls pass untouched. Only critical holds a call.
+        if sev != 'critical' or not is_gated(tool, cfg):
             return Decision('allow')
-        if seat:
-            return Decision('deny', user, model)
-        if sev == 'critical' and not acked:
+        if seat or not acked:
             return Decision('deny', user, model)
         return Decision('ask', user, model)
     if event == 'UserPromptSubmit':
@@ -311,17 +304,19 @@ def main():
         # normal reading ends it only once the warning is RECORD_MINUTES old, so a
         # reading that flaps around the threshold re-warns at most that often, and a
         # machine that recovers to just under the margin still warns on the next episode.
-        if event == 'UserPromptSubmit':
+        if event in ('UserPromptSubmit', 'SessionStart'):
             well_clear = sig.level < cfg.warn_level \
                 and sig.free_pct >= cfg.warn_free_pct + CLEAR_MARGIN_PCT
             clear_warned(warn_file, 0 if well_clear else RECORD_MINUTES * 60)
         return 0
-    if event == 'UserPromptSubmit' and sev == 'warn':
-        if recently_warned(warn_file, reason):
+    seat = env.get('AGENTS_APP_SEAT') or env.get('BRAIN_SEAT') or None
+    if sev == 'warn':
+        # One heads-up per episode across every interactive session: the record is
+        # shared, so a headless seat neither gets one nor uses up the user's.
+        if event == 'PreToolUse' or seat or recently_warned(warn_file, reason):
             return 0
         note_warned(warn_file, reason)
     acked = acknowledged(ack_file)
-    seat = env.get('AGENTS_APP_SEAT') or env.get('BRAIN_SEAT') or None
     # No ps spawn on a struggling machine for a call that passes anyway,
     # and no process names for a seat: they land in a foreign repo's
     # conversation record.

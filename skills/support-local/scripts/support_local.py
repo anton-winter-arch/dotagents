@@ -300,9 +300,9 @@ def allowed_tools() -> str:
     return ",".join(rules)
 
 
-# The station's memory gate. A headless worker cannot answer the "ask" the gate returns at warn, so the runner seats
-# the worker (the gate then denies load-adding calls outright, with a prefix the worker's fallback rule recognizes)
-# and asks the gate itself before spending anything: critical refuses the run, warn is passed on to the worker.
+# The station's memory gate. At warn it only informs; at critical it denies a seated worker's load-adding calls with a
+# prefix the worker's fallback rule recognizes. The runner seats the worker and asks the gate itself before spending
+# anything: critical refuses the run.
 SEAT = "support-local"
 GATE_PREFIX = "brain-gate: memory-pressure"
 GATE_HOOKS = (Path.home() / ".claude" / "hooks" / "memory_pressure_gate.py", HERE.parent.parent.parent / "hooks" / "memory_pressure_gate.py")
@@ -310,22 +310,20 @@ GATE_HOOKS = (Path.home() / ".claude" / "hooks" / "memory_pressure_gate.py", HER
 
 def gate_check() -> str | None:
     """Ask the station's memory gate as a prompt would. Exit 2 is critical: refuse before a worker is spent. A warning
-    on stdout is returned so the brief can tell the worker that its local calls may be denied. No gate installed, or a
+    needs nothing from the worker, since the gate holds no call at warn, so it returns None. No gate installed, or a
     gate that cannot read the kernel, means no gate."""
     hook = next((h for h in GATE_HOOKS if h.is_file()), None)
     if hook is None:
         return None
     try:
+        # a throwaway warn record, so this check never uses up the user's one heads-up for the episode
         p = subprocess.run([sys.executable, str(hook)], input=json.dumps({"hook_event_name": "UserPromptSubmit"}),
-                           capture_output=True, text=True, timeout=15)
+                           capture_output=True, text=True, timeout=15, env={**os.environ, "MEMGATE_WARN_FILE": os.devnull})
     except (OSError, subprocess.SubprocessError):
         return None
     if p.returncode == 2:
         raise TaskError("memory pressure is critical on this machine; refusing to start a worker: " + p.stderr.strip()[:300], EXIT_REFUSED)
-    try:
-        return (json.loads(p.stdout).get("systemMessage") or None) if p.stdout.strip() else None
-    except ValueError:
-        return None
+    return None
 
 
 def run_worker(brief: str, model: str, max_turns: int, timeout: int, effort: str | None = None,
@@ -422,7 +420,7 @@ def run_goal(goal: str, corpus: str, complete: str, out_of_scope: str, budget_tu
     model = model or agent_model()
     effort = effort or agent_effort()
     started = now()
-    warning = gate_check()   # critical refuses here, before anything is spent
+    gate_check()   # critical refuses here, before anything is spent
     corpus_path = corpus_root(corpus, root)
     if corpus_path is not None and Path(corpus).expanduser().is_dir():
         corpus = str(corpus_path.resolve())   # the worker runs in its own empty directory, so a relative corpus would not resolve
@@ -433,10 +431,6 @@ def run_goal(goal: str, corpus: str, complete: str, out_of_scope: str, budget_tu
     turns = budget_turns
     for n in range(1, retries + 2):
         brief = build_brief(goal, corpus, complete, out_of_scope, turns, budget_calls, variant)
-        if warning:
-            brief += (f"\n\n## Station state\n\nThe station's memory gate is at warn ({warning[:300]}). A local-model call may be denied "
-                      f"with a reason starting `{GATE_PREFIX}`; that is the machine declining to load a model, and your definition's "
-                      f"fallback rule applies: continue with Grep, Glob and Read and name the gate in `coverage`.\n")
         if prior:
             brief += f"\n\n## Prior attempt\n\nA previous worker on this goal ended early. Its coverage: {prior}\nStart from what it covered; do not repeat the same failing call.\n"
         obj, result, salvaged = attempt(goal, corpus, brief, model, turns, timeout, effort, autocompact)

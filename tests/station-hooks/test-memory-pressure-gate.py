@@ -33,13 +33,15 @@ class GateCase(unittest.TestCase):
             p.unlink()
         self.tmp.rmdir()
 
-    def run_hook(self, event, level, free, swap=0, tool="", swap_ask=100000):
+    def run_hook(self, event, level, free, swap=0, tool="", swap_ask=100000, seat=""):
         env = {**os.environ,
                "MEMGATE_PRESSURE_LEVEL": str(level), "MEMGATE_FREE_PCT": str(free),
                "MEMGATE_SWAP_MB": str(swap), "MEMGATE_SWAP_ASK_MB": str(swap_ask),
                "MEMGATE_WARN_FILE": str(self.warn_file), "MEMGATE_ACK_FILE": str(self.ack_file)}
         env.pop("AGENTS_APP_SEAT", None)
         env.pop("BRAIN_SEAT", None)
+        if seat:
+            env["AGENTS_APP_SEAT"] = seat
         payload = {"hook_event_name": event}
         if tool:
             payload["tool_name"] = tool
@@ -56,7 +58,8 @@ class GateCase(unittest.TestCase):
         code, out, _ = self.run_hook("UserPromptSubmit", level=2, free=30)
         self.assertEqual(code, 0)
         self.assertIn("additionalContext", out)
-        self.assertIn("level 2 (warn)", out)
+        self.assertIn("Memory is tight", out)
+        self.assertIn("30% free", out)
         self.assertTrue(self.warn_file.exists())
         code, out, err = self.run_hook("UserPromptSubmit", level=2, free=30)
         self.assertEqual((code, out, err), (0, "", ""))
@@ -65,7 +68,7 @@ class GateCase(unittest.TestCase):
         self.run_hook("UserPromptSubmit", level=2, free=30)
         code, out, _ = self.run_hook("UserPromptSubmit", level=1, free=60, swap=200, swap_ask=100)
         self.assertEqual(code, 0)
-        self.assertIn("swap in use 200 MB (warn)", out)
+        self.assertIn("additionalContext", out)
 
     def test_prompt_warn_stays_silent_however_long_the_episode_lasts(self):
         self.run_hook("UserPromptSubmit", level=2, free=30)
@@ -91,7 +94,7 @@ class GateCase(unittest.TestCase):
     def test_a_swap_episode_warns_once_while_its_megabytes_change(self):
         outs = [self.run_hook("UserPromptSubmit", level=1, free=60, swap=mb, swap_ask=1000)[1]
                 for mb in (1200, 1250, 1310)]
-        self.assertIn("swap in use 1200 MB (warn)", outs[0])
+        self.assertIn("Memory is tight", outs[0])
         self.assertEqual(outs[1:], ["", ""])
 
     def test_an_old_record_ends_on_any_normal_reading(self):
@@ -112,6 +115,13 @@ class GateCase(unittest.TestCase):
         self.run_hook("UserPromptSubmit", level=1, free=60)
         self.assertEqual(self.warn_file.read_text(), "not a warn record\n")
 
+    def test_a_record_from_the_previous_version_is_replaced_not_repeated(self):
+        self.warn_file.write_text("swap in use 1200 MB (warn)\n")
+        outs = [self.run_hook("UserPromptSubmit", level=1, free=60, swap=mb, swap_ask=1000)[1]
+                for mb in (1300, 1350)]
+        self.assertIn("Memory is tight", outs[0])
+        self.assertEqual(outs[1], "")
+
     def test_an_unreadable_record_does_not_crash_the_gate(self):
         self.warn_file.write_bytes(b"\xff\xfe\x00 binary")
         code, out, _ = self.run_hook("UserPromptSubmit", level=2, free=30)
@@ -130,20 +140,52 @@ class GateCase(unittest.TestCase):
         code, out, err = self.run_hook("UserPromptSubmit", level=4, free=5)
         self.assertEqual(code, 2)
         self.assertEqual(out, "")
-        self.assertIn("critical", err)
+        self.assertIn("critically low", err)
 
-    def test_pretooluse_ask_is_unaffected_by_the_warn_record(self):
-        self.run_hook("UserPromptSubmit", level=2, free=30)
-        for _ in range(2):
-            code, out, _ = self.run_hook("PreToolUse", level=2, free=30, tool="Bash")
-            self.assertEqual(code, 0)
-            self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecision"], "ask")
+    def test_tool_calls_at_warn_pass_silently(self):
+        for tool in ("Bash", "Agent", "mcp__x__y"):
+            self.assertEqual(self.run_hook("PreToolUse", level=2, free=30, tool=tool), (0, "", ""))
+        self.assertEqual(self.run_hook("PreToolUse", level=1, free=60, swap=900, swap_ask=100, tool="Bash"),
+                         (0, "", ""))
 
-    def test_sessionstart_warn_is_not_recorded_as_a_prompt_warning(self):
-        code, out, _ = self.run_hook("SessionStart", level=2, free=30)
-        self.assertEqual(code, 0)
-        self.assertIn("additionalContext", out)
+    def test_tool_calls_at_critical_are_denied_or_asked_once_acknowledged(self):
+        code, out, _ = self.run_hook("PreToolUse", level=4, free=5, tool="Bash")
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.ack_file.touch()
+        code, out, _ = self.run_hook("PreToolUse", level=4, free=5, tool="Bash")
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecision"], "ask")
+        self.assertEqual(self.run_hook("PreToolUse", level=4, free=5, tool="Read"), (0, "", ""))
+
+    def test_a_seat_passes_at_warn_and_is_denied_with_the_prefix_at_critical(self):
+        self.assertEqual(self.run_hook("PreToolUse", level=2, free=30, tool="Bash", seat="w"), (0, "", ""))
+        self.ack_file.touch()   # a fresh ack eases the gate for a person, never for a headless seat
+        code, out, _ = self.run_hook("PreToolUse", level=4, free=5, tool="Bash", seat="w")
+        spec = json.loads(out)["hookSpecificOutput"]
+        self.assertEqual(spec["permissionDecision"], "deny")
+        self.assertTrue(spec["permissionDecisionReason"].startswith("brain-gate: memory-pressure"))
+
+    def test_a_seat_gets_no_heads_up_and_leaves_the_users_record(self):
+        for event in ("SessionStart", "UserPromptSubmit"):
+            self.assertEqual(self.run_hook(event, level=2, free=30, seat="w"), (0, "", ""))
         self.assertFalse(self.warn_file.exists())
+        _, out, _ = self.run_hook("UserPromptSubmit", level=2, free=30)
+        self.assertIn("Memory is tight", out)
+
+    def test_one_heads_up_per_episode_across_session_start_and_prompts(self):
+        code, out, _ = self.run_hook("SessionStart", level=2, free=30)
+        self.assertIn("additionalContext", out)
+        self.assertTrue(self.warn_file.exists())
+        self.assertEqual(self.run_hook("UserPromptSubmit", level=2, free=30), (0, "", ""))
+        self.assertEqual(self.run_hook("SessionStart", level=2, free=30), (0, "", ""))
+
+    def test_the_heads_up_is_short_and_plain(self):
+        _, out, _ = self.run_hook("UserPromptSubmit", level=2, free=30, swap=2560)
+        payload = json.loads(out)
+        model = payload["hookSpecificOutput"]["additionalContext"]
+        self.assertLess(len(model), 220, model)
+        self.assertLess(len(payload["systemMessage"]), 200, payload["systemMessage"])
+        for jargon in ("level 2", "containment", "load-adding", "(warn)"):
+            self.assertNotIn(jargon, model)
 
 
 if __name__ == "__main__":

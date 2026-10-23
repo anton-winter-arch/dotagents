@@ -318,16 +318,13 @@ class TestHeadlessRun(unittest.TestCase):
         self.assertEqual(self.env_calls(), [], "no worker was started")
         self.assertFalse((self.root / "state" / "runs.jsonl").exists())
 
-    def test_warn_level_pressure_runs_the_worker_and_tells_it_the_gate_may_deny(self):
-        # warn lets read-only work continue; the worker is told, so a prefixed deny on its first local call is
-        # expected and the fallback rule in its definition applies
+    def test_warn_level_pressure_runs_the_worker_with_nothing_added_to_the_brief(self):
+        # the gate holds no call at warn, so the worker needs no note about it
         p = self.run_cmd("run", "--goal", "g", "--corpus", str(self.corpus), env=self.gate_env(2, 22))
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(len(self.env_calls()), 1)
-        self.assertIn("## Station state", self.argv_calls()[0][-1])
-        self.assertIn("brain-gate: memory-pressure", self.argv_calls()[0][-1])
-        p = self.run_cmd("run", "--goal", "g", "--corpus", str(self.corpus), env=self.gate_env(1, 60))
-        self.assertNotIn("## Station state", self.argv_calls()[-1][-1], "a healthy machine adds nothing to the brief")
+        self.assertNotIn("## Station state", self.argv_calls()[0][-1])
+        self.assertNotIn("brain-gate: memory-pressure", self.argv_calls()[0][-1])
 
     def test_run_without_an_effort_flag_passes_the_definitions_pinned_effort(self):
         # the agent body is appended with its frontmatter stripped, so the definition's `effort: high` reaches a
