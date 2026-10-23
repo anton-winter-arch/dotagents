@@ -88,6 +88,43 @@ class GateCase(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("additionalContext", out)
 
+    def test_a_swap_episode_warns_once_while_its_megabytes_change(self):
+        outs = [self.run_hook("UserPromptSubmit", level=1, free=60, swap=mb, swap_ask=1000)[1]
+                for mb in (1200, 1250, 1310)]
+        self.assertIn("swap in use 1200 MB (warn)", outs[0])
+        self.assertEqual(outs[1:], ["", ""])
+
+    def test_an_old_record_ends_on_any_normal_reading(self):
+        self.run_hook("UserPromptSubmit", level=2, free=30)
+        old = 10 ** 9
+        os.utime(self.warn_file, (old, old))
+        # normal by the kernel but below the margin: a fresh record would survive this
+        code, out, err = self.run_hook("UserPromptSubmit", level=1, free=44)
+        self.assertEqual((code, out, err), (0, "", ""))
+        self.assertFalse(self.warn_file.exists())
+        code, out, _ = self.run_hook("UserPromptSubmit", level=2, free=30)
+        self.assertIn("additionalContext", out)
+
+    def test_a_file_that_is_not_a_warn_record_is_never_overwritten_or_deleted(self):
+        self.warn_file.write_text("not a warn record\n")
+        code, out, _ = self.run_hook("UserPromptSubmit", level=2, free=30)
+        self.assertIn("additionalContext", out)
+        self.run_hook("UserPromptSubmit", level=1, free=60)
+        self.assertEqual(self.warn_file.read_text(), "not a warn record\n")
+
+    def test_an_unreadable_record_does_not_crash_the_gate(self):
+        self.warn_file.write_bytes(b"\xff\xfe\x00 binary")
+        code, out, _ = self.run_hook("UserPromptSubmit", level=2, free=30)
+        self.assertEqual(code, 0)
+        self.assertIn("additionalContext", out)
+
+    def test_a_record_dated_in_the_future_still_clears(self):
+        self.run_hook("UserPromptSubmit", level=2, free=30)
+        future = 4 * 10 ** 9
+        os.utime(self.warn_file, (future, future))
+        self.run_hook("UserPromptSubmit", level=1, free=60)
+        self.assertFalse(self.warn_file.exists())
+
     def test_critical_is_never_suppressed_by_the_warn_record(self):
         self.run_hook("UserPromptSubmit", level=2, free=30)
         code, out, err = self.run_hook("UserPromptSubmit", level=4, free=5)

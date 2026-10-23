@@ -18,8 +18,10 @@ PreToolUse on load-adding tools (Bash, Agent, Workflow, any MCP tool):
 UserPromptSubmit: critical exits 2 (blocks the prompt, stderr to the user)
   unless the ack file is fresh, in which case the prompt passes silently;
   warn passes with a warning once per episode: the warn file records the
-  reason, the same reason stays silent for as long as it holds, and a normal
-  reading clears the record. A new reason, or critical, is never suppressed.
+  episode (the kernel level, or swap without its megabytes), and the same
+  episode stays silent for as long as it holds. A normal reading well clear of
+  the threshold ends it; any other normal reading ends it once the warning is
+  RECORD_MINUTES old. A new episode, or critical, is never suppressed.
 SessionStart: warn or critical prints a warning, never blocks.
 Any other tool, a normal reading, or a machine without sysctl: silent exit 0.
 
@@ -59,6 +61,8 @@ from pathlib import Path
 
 ACK_MINUTES = 60
 CLEAR_MARGIN_PCT = 15   # free memory this far above the warn line ends a warn episode
+RECORD_MINUTES = 60     # after this, any normal reading ends the episode
+WARN_RECORD = re.compile(r'(kernel memory pressure level \d+|swap in use) \(warn\)')
 SYSCTL_TIMEOUT = 1
 PS_TIMEOUT = 1
 SYSCTL = '/usr/sbin/sysctl'
@@ -209,27 +213,52 @@ def acknowledged(ack_file):
         return False
 
 
+def episode(reason):
+    """The part of a warn reason that names its episode. Swap megabytes change on
+    every reading, so they are dropped; otherwise each prompt would warn again."""
+    return re.sub(r'swap in use \d+ MB', 'swap in use', reason)
+
+
 def recently_warned(warn_file, reason):
-    """True when the last prompt warning named this same reason; the record lives
-    until a normal reading clears it, so one episode warns once however long it lasts."""
+    """True when the last prompt warning named this same episode; a warn reading
+    never ends the record, so one episode warns once however long it lasts."""
     try:
-        return Path(warn_file).read_text(encoding='utf-8').strip() == reason
-    except OSError:
+        return Path(warn_file).read_text(encoding='utf-8').strip() == episode(reason)
+    except (OSError, UnicodeDecodeError):
         return False
 
 
-def clear_warned(warn_file):
+def is_warn_record(path):
+    """True when the file holds a warn record this hook wrote."""
     try:
-        Path(warn_file).unlink()
+        return bool(WARN_RECORD.fullmatch(path.read_text(encoding='utf-8').strip()))
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def clear_warned(warn_file, min_age_s):
+    """End the episode: remove the record once it is min_age_s old, and only when it
+    holds a warn record, so an override pointing elsewhere deletes nothing."""
+    try:
+        path = Path(warn_file)
+        age = time.time() - path.stat().st_mtime
+        if 0 <= age < min_age_s:      # a future mtime (clock set back) counts as old
+            return
+        if is_warn_record(path):
+            path.unlink()
     except OSError:
         pass
 
 
 def note_warned(warn_file, reason):
-    """Record the reason; a failure to write only means the warning repeats."""
+    """Record the episode; a failure to write only means the warning repeats. A file
+    that exists and is not a warn record is never overwritten."""
+    path = Path(warn_file)
     try:
-        Path(warn_file).parent.mkdir(parents=True, exist_ok=True)
-        Path(warn_file).write_text(reason + '\n', encoding='utf-8')
+        if path.exists() and not is_warn_record(path):
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(episode(reason) + '\n', encoding='utf-8')
     except OSError:
         pass
 
@@ -278,11 +307,14 @@ def main():
         return 0
     sev, reason = severity(sig, cfg)
     if not sev:
-        # Clear the episode only once the machine is well clear of the threshold, so a
-        # reading that flaps around it does not re-warn on every other prompt.
-        if event == 'UserPromptSubmit' and sig.level < cfg.warn_level \
-                and sig.free_pct >= cfg.warn_free_pct + CLEAR_MARGIN_PCT:
-            clear_warned(warn_file)
+        # A reading well clear of the threshold ends the episode at once. Any other
+        # normal reading ends it only once the warning is RECORD_MINUTES old, so a
+        # reading that flaps around the threshold re-warns at most that often, and a
+        # machine that recovers to just under the margin still warns on the next episode.
+        if event == 'UserPromptSubmit':
+            well_clear = sig.level < cfg.warn_level \
+                and sig.free_pct >= cfg.warn_free_pct + CLEAR_MARGIN_PCT
+            clear_warned(warn_file, 0 if well_clear else RECORD_MINUTES * 60)
         return 0
     if event == 'UserPromptSubmit' and sev == 'warn':
         if recently_warned(warn_file, reason):
