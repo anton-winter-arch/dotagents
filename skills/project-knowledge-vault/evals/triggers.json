@@ -24,6 +24,12 @@
         "why": "The scaffolder's never-overwrite gap fill."
     },
     {
+        "name": "adopt-loose-folder",
+        "query": "I've got a folder for my side project with meetingnotes.txt, a couple of meeting transcripts, a SOW, some ticket exports and scratch notes - make it work like my other project vaults",
+        "should_trigger": true,
+        "why": "Mapping an existing folder of loose material into the vault shape is the adoption step."
+    },
+    {
         "name": "grown-vault-reading",
         "query": "The meeting and chat notes in my project vault are thousands of lines now - how should agents be reading it without loading whole files?",
         "should_trigger": true,

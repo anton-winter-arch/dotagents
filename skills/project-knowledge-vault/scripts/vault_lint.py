@@ -26,11 +26,14 @@ FAMILIES: list[tuple[re.Pattern[str], set[str]]] = [
     (re.compile(r"^notes-meeting(s|-notes)\.md$"), {"meeting_note"}),
     (re.compile(r"^notes-[a-z0-9-]+\.md$"), {"note", "reference"}),
     (re.compile(r"^user-stories(-[a-z0-9-]+)?\.md$"), {"user_story"}),
-    (re.compile(r"^([a-z0-9]+-)?\d\d-[a-z0-9-]+\.md$"), {"reference"}),  # optional project alias prefix
+    (re.compile(r"^([a-z][a-z0-9]*-)?\d\d-[a-z0-9-]+\.md$"), {"reference"}),  # optional letter-led project alias
     (re.compile(r"^agents-[a-z0-9-]+\.md$"), {"reference"}),
     (re.compile(r"^code-[a-z0-9-]+\.md$"), {"code"}),
     (re.compile(r"^docs-[a-z0-9-]+\.md$"), {"doc", "reference"}),
 ]
+ALIAS_NN_RE = re.compile(r"^([a-z][a-z0-9]*)-\d\d-[a-z0-9-]+\.md$")  # letter-led, so a dated filename teaches no alias
+FAMILY_WORDS = {"notes", "user", "code", "docs", "agents"}
+ALIAS_TIER_TYPES = {"reference", "ledger", "glossary"}  # topic notes, a decision ledger, a glossary
 KEBAB_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*\.md$")
 ISO_DATE = r"\d{4}-\d{2}-\d{2}"
 # the suffix joins the date with a hyphen; a learnings sweep may follow it with " - <headline>"
@@ -187,7 +190,17 @@ class Linter:
                 if typ not in allowed:
                     self.add("family", name, 1, f"type '{typ}' is not allowed for this family (expected {', '.join(sorted(allowed))})")
                 return
+        if name.split("-", 1)[0] in self.aliases():
+            if typ not in ALIAS_TIER_TYPES:
+                self.add("family", name, 1, f"type '{typ}' is not allowed for this family (expected {', '.join(sorted(ALIAS_TIER_TYPES))})")
+            return
         self.add("family", name, 0, "filename prefix belongs to no family in the contract")
+
+    def aliases(self) -> set[str]:
+        """Project aliases, learned from the vault's own `<alias>-NN-<slug>` notes. Unnumbered
+        `<alias>-<slug>` notes then join the navigation tier, so no alias is ever configured."""
+        found = {m.group(1) for n in self.notes if (m := ALIAS_NN_RE.match(n))}
+        return found - FAMILY_WORDS
 
     def check_links(self) -> None:
         stems = {Path(n).stem: n for n in self.notes}
@@ -223,15 +236,19 @@ class Linter:
         if not lines:
             return
         dates = []
+        undated = []
         for n, level, text in headings(lines):
             if level != 2:
                 continue
-            if text == "YYYY-MM-DD":
-                continue
-            if not re.fullmatch(ISO_DATE, text):
+            if text == "YYYY-MM-DD" or re.fullmatch(ISO_DATE, text):
+                dates.append((n, text))
+            else:
+                undated.append((n, text))
+        # an appendix after the last dated entry, such as a build's own receipts, is allowed
+        for n, text in undated:
+            if not dates or n < dates[-1][0]:
                 self.add("dated", "log.md", n, f"H2 '{text}' is not an ISO date")
-                continue
-            dates.append((n, text))
+        dates = [(n, d) for n, d in dates if d != "YYYY-MM-DD"]
         for (n1, d1), (n2, d2) in zip(dates, dates[1:]):
             if d2 > d1:
                 self.add("dated", "log.md", n2, f"{d2} appears below {d1}; log.md is newest first")

@@ -2,8 +2,8 @@
 
 sprint-board owns user-stories.md; markdown-kg reads the vault as a graph root. Each test
 is the whole coupling to that skill: a divergence fails here rather than months later.
-The okf-vault check runs only when OKF_VAULT_BUILD names a build output, because the
-build lives in another repo.
+The reference-vault check runs only when PKV_REFERENCE_VAULTS lists the machine's working
+vaults, because naming them here would name a project.
 """
 from __future__ import annotations
 
@@ -103,8 +103,17 @@ def test_markdown_kg_ingest_resolves_edges_dates_and_supersession(tmp_path: Path
     assert "STANDUP" in first_meeting, ids
 
 
-@pytest.mark.skipif(not os.environ.get("OKF_VAULT_BUILD"), reason="OKF_VAULT_BUILD not set")
-def test_okf_vault_build_conforms() -> None:
-    build = Path(os.environ["OKF_VAULT_BUILD"])
-    result = run(LINT, build)
-    assert result.returncode == 0, result.stdout
+REFERENCE_VAULTS = [Path(p).expanduser() for p in os.environ.get("PKV_REFERENCE_VAULTS", "").split(os.pathsep) if p]
+STRUCTURAL = {"flat", "filename", "family", "unreadable"}  # what the template's grammar decides, not what a note says
+
+
+@pytest.mark.skipif(not REFERENCE_VAULTS, reason="PKV_REFERENCE_VAULTS not set")
+@pytest.mark.parametrize("vault", REFERENCE_VAULTS, ids=lambda p: p.name)
+def test_reference_vault_matches_the_template_structurally(vault: Path) -> None:
+    # The machine's working vaults, listed outside the repo, are the compatibility bar: a
+    # template change that makes one of them structurally non-conforming fails here.
+    # Content findings (a dangling link, a pasted heading) are the vault's own worklist.
+    assert vault.is_dir(), f"reference vault missing: {vault}"
+    result = run(LINT, vault, "--json")
+    structural = [f for f in json.loads(result.stdout) if f["check"] in STRUCTURAL]
+    assert not structural, json.dumps(structural, indent=2)

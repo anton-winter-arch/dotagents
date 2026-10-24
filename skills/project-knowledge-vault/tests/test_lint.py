@@ -59,10 +59,22 @@ def test_family_fires_on_a_wrong_type_value(tmp_path: Path) -> None:
     assert code == 1 and checks(findings) == {"family"}
 
 
-def test_family_accepts_an_alias_prefixed_numbered_note(tmp_path: Path) -> None:
+def test_family_learns_the_alias_and_admits_its_unnumbered_notes(tmp_path: Path) -> None:
     v = seed(tmp_path)
+    (v / "abc-glossary.md").write_text("---\ntype: glossary\n---\n# GLOSSARY\n")
+    code, findings = lint(v)
+    assert code == 1 and checks(findings) == {"family"}  # no abc-NN note yet, so abc is no alias
     (v / "abc-02-findings.md").write_text("---\ntype: reference\n---\n# FINDINGS\n")
+    (v / "abc-decisions.md").write_text("---\ntype: ledger\n---\n# DECISIONS\n")
     assert lint(v)[0] == 0
+    (v / "abc-topic.md").write_text("---\ntype: note\n---\n# TOPIC\n")
+    code, findings = lint(v)
+    assert code == 1 and checks(findings) == {"family"}
+    (v / "abc-topic.md").unlink()
+    (v / "2026-01-15-standup.md").write_text("---\ntype: reference\n---\n# S\n")
+    (v / "2026-notes.md").write_text("---\ntype: reference\n---\n# N\n")
+    code, findings = lint(v)
+    assert code == 1 and {f["file"] for f in findings} == {"2026-01-15-standup.md", "2026-notes.md"}  # a date is no alias
     (v / "abc-02-findings.md").write_text("---\ntype: note\n---\n# FINDINGS\n")
     code, findings = lint(v)
     assert code == 1 and checks(findings) == {"family"}
@@ -146,9 +158,14 @@ def test_dated_fires_on_an_undated_notes_h2_but_not_the_register(tmp_path: Path)
 
 def test_dated_fires_on_log_out_of_order(tmp_path: Path) -> None:
     v = seed(tmp_path)
-    (v / "log.md").write_text("# Change log\n\n## 2026-01-01\n\n- a\n\n## 2026-02-01\n\n- b\n")
+    (v / "log.md").write_text("# Change log\n\n## 2026-02-01\n\n- b\n\n## 2026-01-01\n\n- a\n\n## Build receipts\n\n- x\n")
+    assert lint(v)[0] == 0  # an appendix after the last dated entry is allowed
+    (v / "log.md").write_text("# Change log\n\n## Notes\n\n- n\n\n## 2026-01-01\n\n- a\n\n## 2026-02-01\n\n- b\n")
     code, findings = lint(v)
-    assert code == 1 and checks(findings) == {"dated"}
+    assert code == 1 and checks(findings) == {"dated"} and len(findings) == 2
+    (v / "log.md").write_text("# Change log\n\n## Notes\n\n- n\n")
+    code, findings = lint(v)
+    assert code == 1 and checks(findings) == {"dated"}  # a log with no dated entry at all
 
 
 def test_board_fires_when_user_stories_restates_the_grammar(tmp_path: Path) -> None:
