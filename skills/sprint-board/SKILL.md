@@ -19,10 +19,11 @@ Turns a goal, a codebase, a product idea or a half-drafted board into a
 sequenced backlog of epics, features and stories written into the user's own
 template, ready to copy into a tracker.
 
-## The four modes
+## The five modes
 
 Identify the mode before doing anything. Greenfield, Partial and Maintenance
-differ at Step 1 only; Audit is a different job.
+differ at Step 1 only; Audit is a different job, and Roadmap runs the procedure
+in four gated stages.
 
 | Mode | Trigger | Step 1 becomes |
 |---|---|---|
@@ -30,6 +31,7 @@ differ at Step 1 only; Audit is a different job.
 | **Partial** | A board part-built or handed down, with real IDs and an incomplete spine | Baseline: read every item, infer the intended end state, list what is missing |
 | **Maintenance** | A vault or repo where these files are the standing record | Reconcile: diff the board against the current end state |
 | **Audit** | Validate, fact-check, proofread or review a board without extending it | Skip to Step 7 |
+| **Roadmap** | `/sprint-board roadmap`, or a product roadmap to plan | Lock the roadmap first - see [Roadmap mode](#roadmap-mode) |
 
 **Audit writes no new items.** Asked to check, validate, fact-check or proofread,
 run `board_lint.py`, then `references/audit.md`, then - if a grounding source is
@@ -398,6 +400,15 @@ context is anchored on what it just wrote and is the worst judge of that.
 Give the validator the file and the goal, nothing else.
 
 Report what both passes found plainly, including anything left as TBD and why.
+
+## Roadmap mode
+
+A roadmap is the board's epics in the order the product will reach them. Run the stages in order; each one states its own gate.
+
+1. **Lock the roadmap.** Offer to interview the user with `interview-me` about the outcomes, the horizon, who reads the roadmap, and what is out of scope. Restate the answers as a short brief - outcomes in order, each with the evidence that proves it - and wait for approval. The brief is Step 1's end state and Step 3's route.
+2. **New board or delta.** Find any existing board (Step 0). With none, propose a new board. With one, run Step 2 and list the delta: outcomes no item covers, and items no outcome needs. State which it is and wait for approval. A delta never edits existing items; moving one is stage 4.
+3. **Write the new items.** Run Steps 4 to 7 for the new epics, features and stories only, with the skeleton gate at Step 5. In a delta, new items take `NNNN` placeholders under real parents.
+4. **Reorder separately.** If the new items change where existing items belong, propose the moves (item, from, to, why) and wait for approval before any existing item moves. When only the new items' order is affected, say so in the report; no approval is needed.
 
 ## Partially built boards
 
