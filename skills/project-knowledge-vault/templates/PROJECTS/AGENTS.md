@@ -194,4 +194,4 @@ As a family grows past what is useful to read, compact the oldest entries: fold 
 
 ## Nothing secret
 
-A vault travels further than the people who wrote it, and its history keeps what a later cleanup removes. No credentials of any kind, no connection strings, no hostnames, workspace URLs, account or workspace ids, and no personal data. People are named by the aliases in `01-north-star.md`. Where a real value is needed to make a note usable, name the place it is stored rather than the value.
+A vault travels further than the people who wrote it, and its history keeps what a later cleanup removes. No credentials of any kind, no connection strings, no hostnames, workspace URLs, account or workspace ids, and no personal data. People are named by the aliases in `01-north-star.md`. Where a real value is needed to make a note usable, name the place it is stored rather than the value. The graph database in `markdown-kg/` holds the full text of every note, so it stays out of git: `markdown-kg/.gitignore` holds a `*.db*` line, which the scaffolder writes and warns about when it is missing.

@@ -143,6 +143,59 @@ def test_seed_initializes_configures_and_ingests_the_graph(tmp_path: Path) -> No
     assert found.returncode == 0, found.stderr
     ids = [h["section_id"] for h in json.loads(found.stdout)["results"]]
     assert ids and not any(i.startswith(("AGENTS", "CLAUDE")) for i in ids), ids
+    assert (vault / "markdown-kg" / ".gitignore").read_text() == "*.db*\n"
+
+
+@pytest.mark.skipif(not KG.exists(), reason="markdown-kg not installed beside this skill")
+def test_legacy_graph_folder_is_reported_not_written(tmp_path: Path) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    vault = tmp_path / "v" / "PROJECTS" / "T"
+    vault.mkdir(parents=True)
+    (vault / "vault-kg").symlink_to(elsewhere)
+    result = run("--target", str(tmp_path / "v"), "--name", "T", graph=True)
+    assert result.returncode == 0 and "legacy vault-kg/" in result.stdout, result.stdout
+    assert not any(elsewhere.iterdir()) and not (vault / "markdown-kg").exists()
+    (vault / "markdown-kg").write_text("")  # a file where the folder belongs
+    result = run("--target", str(tmp_path / "v"), "--name", "T", graph=True)
+    assert result.returncode == 1 and "not a directory" in result.stdout, result.stdout
+    assert not any(elsewhere.iterdir())
+
+
+@pytest.mark.skipif(not KG.exists(), reason="markdown-kg not installed beside this skill")
+def test_existing_gitignore_without_db_line_is_warned_not_rewritten(tmp_path: Path) -> None:
+    vault = tmp_path / "PROJECTS" / "T"
+    (vault / "markdown-kg").mkdir(parents=True)
+    (vault / "markdown-kg" / ".gitignore").write_text("*.log\n")
+    result = run("--target", str(tmp_path), "--name", "T", graph=True)
+    assert result.returncode == 0 and "WARNING" in result.stdout, result.stdout
+    assert (vault / "markdown-kg" / ".gitignore").read_text() == "*.log\n"
+
+
+@pytest.mark.skipif(not KG.exists(), reason="markdown-kg not installed beside this skill")
+def test_leftover_temp_file_fails_with_a_fix(tmp_path: Path) -> None:
+    run("--target", str(tmp_path), "--name", "T", graph=True)
+    kg_dir = tmp_path / "PROJECTS" / "T" / "markdown-kg"
+    config = kg_dir / "markdown-kg-config.md"
+    text = config.read_text().replace('"path": "index.md"', '"path": "index-gone.md"')
+    config.write_text(text)
+    (kg_dir / ".markdown-kg-config.md.tmp").write_text("stale\n")
+    result = run("--target", str(tmp_path), "--name", "T", graph=True)
+    assert result.returncode == 1 and "delete it and re-run" in result.stdout, result.stdout
+    assert config.read_text() == text
+
+
+@pytest.mark.skipif(not KG.exists(), reason="markdown-kg not installed beside this skill")
+def test_malformed_config_fails_cleanly_and_is_left_intact(tmp_path: Path) -> None:
+    run("--target", str(tmp_path), "--name", "T", graph=True)
+    config = tmp_path / "PROJECTS" / "T" / "markdown-kg" / "markdown-kg-config.md"
+    for bad in ('["not", "an", "object"]', '{"profiles": ["not-a-row"]}', '{"ignore": {"path": "x"}}'):
+        text = f"# markdown-kg-config\n\n```json\n{bad}\n```\n"
+        config.write_text(text)
+        result = run("--target", str(tmp_path), "--name", "T", graph=True)
+        assert result.returncode == 1 and "Traceback" not in result.stderr, result.stderr
+        assert "could not configure" in result.stdout, result.stdout
+        assert config.read_text() == text
 
 
 @pytest.mark.skipif(not KG.exists(), reason="markdown-kg not installed beside this skill")

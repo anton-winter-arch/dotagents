@@ -8,7 +8,7 @@ description: >-
 
 A project vault is the hub object of a knowledge stack. It is one flat directory, and the filename prefix is the category: `00-brd` states the why, `01-north-star` says who the vault serves and who is who, `notes-*` capture what happened, `notes-learnings` holds what turned out to be true, `notes-questions` is the one register of open questions, and `user-stories*` hold the work, its run sheet, its backlog and its research. `index.md` and `log.md` are the OKF front door and change history. The full contract is `templates/PROJECTS/AGENTS.md`, and that file ships into every vault, so the contract has exactly one copy.
 
-The seed follows the shape of the most worked-in project vaults: chat split into client and internal files, a month H1 and jump link per month in every dated file, an UPCOMING block in the meeting notes, learnings sweeps with a one-line headline, story-keyed PR reviews, a START HERE run sheet, and an alias roster in the north-star.
+The seed has chat split into client and internal files, a month H1 and jump link per month in every dated file, an UPCOMING block in the meeting notes, learnings sweeps with a one-line headline, story-keyed PR reviews, a START HERE run sheet, and an alias roster in the north-star.
 
 ## Commands
 
@@ -18,7 +18,7 @@ lint      python3 scripts/vault_lint.py <path>/PROJECTS/<NAME> [--json]
 test      python3 -m pytest tests -q
 ```
 
-The scaffolder writes `<path>/PROJECTS/<NAME>/` from `templates/PROJECTS/`. It never overwrites: an existing file is reported as skipped, so a run against a part-built vault fills the gaps. It resolves no dates, so two runs on different days produce byte-identical notes. Then it seeds the graph: it runs markdown-kg's `init` when the vault has no graph config, merges any row from `templates/markdown-kg-profiles.md` that the config lacks, and ingests when a note or a row was added. markdown-kg is found beside this skill; when it is absent the step is reported and skipped. Exit 1 means a file could be neither written nor skipped, or the graph step failed.
+The scaffolder writes `<path>/PROJECTS/<NAME>/` from `templates/PROJECTS/`. It never overwrites: an existing file is reported as skipped, so a run against a part-built vault fills the gaps. It resolves no dates, so two runs on different days produce byte-identical notes. Then it seeds the graph: it runs markdown-kg's `init` when the vault has no graph config (a vault with only a legacy `vault-kg/` is skipped with a rename instruction), merges any row from `templates/markdown-kg-profiles.md` that the config lacks, seeds `markdown-kg/.gitignore` with `*.db*` because the database holds every note's full text, and ingests when a note or a row was added. markdown-kg is found beside this skill; when it is absent the step is reported and skipped. Exit 1 means a file could be neither written nor skipped, or the graph step failed.
 
 The linter is the anti-drift mechanism. Every check fires on positive evidence, and an unreadable file is a failure rather than a pass. Exit 0 clean, 1 on any finding.
 
@@ -52,11 +52,17 @@ A vault is append-only by design, so its `notes-*` files grow without bound, and
 - **The knowledge base, learning path and certification flow** live outside the vault. A project pushes durable facts up through `notes-learnings.md` for the certification flow to promote, and declares what it needs in the `skills:` list on `00-brd.md`, which a knowledge base diffs against its proven skills to find the gap and seed the learning path.
 - **okf-vault** (a build pipeline in another repo) produces a vault of this shape from raw sources. The relationship is a conformance check, not a dependency: point `OKF_VAULT_BUILD` at a build output and the test suite lints it.
 
+## Skills that depend on the contract
+
+Any skill that reads or writes vault files directly declares it in a `Vault contract` section that names this skill and the roles it uses: the meeting log, the run sheet, the learnings file and so on. Each dependent finds a role by its current filename, then by older names, and stops to name the candidates when a role matches no file or more than one. Dependents import no code from this skill, so each keeps working on its own and a small drift in one vault fails loudly instead of silently.
+
+Before changing a family, a filename, a `type` value or the heading grammar, grep every skills root on the machine for `project-knowledge-vault` to find the dependents. Update each one in the same pass, and keep the old name as a fallback in each until no vault uses it.
+
 ## Boundaries
 
 **Always** lint a vault before calling a change to it done. Repoint every inbound link in the same commit as a rename. Keep the contract to one copy.
 
-**Ask first** before adding a second template profile, changing a family name or `type` value (every existing vault stops conforming), or resolving a real date into a template file.
+**Ask first** before adding a second template profile, changing a family name or `type` value (every existing vault stops conforming, and every dependent skill needs the change in the same pass), or resolving a real date into a template file.
 
 **Never** teach markdown-kg the contract, restate sprint-board's anatomy in the seed, use a `kg-` frontmatter key, or put an identifier in anything under `templates/`. The templates ship into public repos and git history keeps what a later cleanup removes.
 
