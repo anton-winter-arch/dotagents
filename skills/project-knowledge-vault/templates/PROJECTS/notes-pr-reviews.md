@@ -1,40 +1,46 @@
 ---
-type: note
+type: reference
 title: notes-pr-reviews
-description: Story and pull-request reviews, each dated section carrying the item under review and its comment thread.
+description: Story and pull-request reviews, each section carrying the item under review and its comment thread.
 tags:
   - review
   - pull-request
-status: stable
-date-created: YYYY-MM-DD
-last-modified: YYYY-MM-DD
+coverage_start: YYYY-MM-DD
+updated: YYYY-MM-DD
 ---
 
 # PR-REVIEWS
+[YYYY-MONTH](#YYYY-MONTH)
 
-Newest first, one H2 per item reviewed. The value here is not the verdict but the reasoning: why a change was asked for, what it turned out to depend on, and what the reviewer found that the author had not.
+Newest first, one section per pull request. The value here is not the verdict but the reasoning: why a change was asked for, what it turned out to depend on, and what the reviewer found that the author had not. Draft comments live here in fenced blocks until they are posted.
 
-## YYYY-MM-DD-PR-<id>-<short-slug>
+> [!note] Entry format
+> One H2 per pull request, `## PR-STORY-<id>-<INITIALS>-YYYY-MM-DD`, where the initials are the author's and the date is when the review opened. Each month opens with a `# YYYY-MONTH` H1 and gets a jump link at the top of the file. A review that settles a convention larger than the change records it under DECISIONS, and it moves to [[notes-learnings]] once it proves durable.
 
-- **Item** <PR or story reference> - **Author** <ROLE> - **Reviewer** <ROLE>
-- **Outcome** approved / changes requested / closed
+`````markdown
+## PR-STORY-<id>-<INITIALS>-YYYY-MM-DD
 
-<what the change does, in one or two sentences>
+**PR DESCRIPTION**
+````
+````
 
-### COMMENTS
+**PR FILES**
+````
+````
 
-- **<file or area>** - <what was raised, and what was agreed>
+**PR COMMENTS**
+````
+````
+
+**COMMENTS-DRAFT**
+````
+````
 
 ### DECISIONS
-
 - YYYY-MM-DD - <what the review settled beyond this one change> - supersedes YYYY-MM-DD <ref>, <what changed>
+`````
 
-### ACTIONS
+---
+# YYYY-MONTH
 
-- [ ] <follow-up the review left behind> (owner: <ROLE>; opened YYYY-MM-DD)
-
-<!--
-A review that establishes a convention has settled something larger than the pull request.
-Record that under DECISIONS so it is findable by someone who was not on the thread, and fold it
-into notes-learnings.md when it proves durable.
--->
+---

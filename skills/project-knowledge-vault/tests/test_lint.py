@@ -15,7 +15,7 @@ LINT = SKILL / "scripts" / "vault_lint.py"
 
 
 def seed(tmp_path: Path) -> Path:
-    subprocess.run([sys.executable, str(SCAFFOLD), "--target", str(tmp_path), "--name", "T"], check=True, capture_output=True)
+    subprocess.run([sys.executable, str(SCAFFOLD), "--target", str(tmp_path), "--name", "T", "--no-graph"], check=True, capture_output=True)
     return tmp_path / "PROJECTS" / "T"
 
 
@@ -53,8 +53,17 @@ def test_frontmatter_fires_on_a_note_without_type(tmp_path: Path) -> None:
 
 def test_family_fires_on_a_wrong_type_value(tmp_path: Path) -> None:
     v = seed(tmp_path)
-    p = v / "notes-chat.md"
+    p = v / "notes-chat-notes-internal.md"
     p.write_text(p.read_text().replace("type: chat_log", "type: note", 1))
+    code, findings = lint(v)
+    assert code == 1 and checks(findings) == {"family"}
+
+
+def test_family_accepts_an_alias_prefixed_numbered_note(tmp_path: Path) -> None:
+    v = seed(tmp_path)
+    (v / "abc-02-findings.md").write_text("---\ntype: reference\n---\n# FINDINGS\n")
+    assert lint(v)[0] == 0
+    (v / "abc-02-findings.md").write_text("---\ntype: note\n---\n# FINDINGS\n")
     code, findings = lint(v)
     assert code == 1 and checks(findings) == {"family"}
 
@@ -109,21 +118,30 @@ def test_wikilink_ignores_code_spans_fences_and_comments(tmp_path: Path) -> None
 def test_anchor_fires_on_a_missing_heading(tmp_path: Path) -> None:
     v = seed(tmp_path)
     with (v / "notes-updates.md").open("a") as f:
-        f.write("\nDecided in [[notes-meetings#YYYY-MM-DD-KICKOFF-INTERNAL]].\n")
+        f.write("\nDecided in [[notes-meeting-notes#YYYY-MM-DD-KICKOFF]].\n")
     code, findings = lint(v)
     assert code == 1 and checks(findings) == {"anchor"}
 
 
 def test_dated_fires_on_an_undated_notes_h2_but_not_the_register(tmp_path: Path) -> None:
     v = seed(tmp_path)
-    assert lint(v)[0] == 0  # notes-questions has ## OPEN and ## ANSWERED and is exempt
-    with (v / "notes-meetings.md").open("a") as f:
+    with (v / "notes-questions.md").open("a") as f:
+        f.write("\n## PLATFORM\n\n- **Which cluster?** Raised in passing.\n")
+    assert lint(v)[0] == 0  # the register groups by topic and is exempt
+    with (v / "notes-meeting-notes.md").open("a") as f:
         f.write("\n## PREP: YYYY-MM-DD-REVIEW\n\ntalking points\n\n## Related\n\n- [[00-brd]] - the why\n")
-    assert lint(v)[0] == 0  # the two allowed undated H2s
-    with (v / "notes-chat.md").open("a") as f:
-        f.write("\n## Kickoff thread\n\ntext\n")
+    assert lint(v)[0] == 0  # the allowed undated H2s
+    with (v / "notes-learnings.md").open("a") as f:
+        f.write("\n## YYYY-MM-DD - the deploy target moved\n\n### The target is blue\n\nfact\n")
+    with (v / "notes-pr-reviews.md").open("a") as f:
+        f.write("\n## PR-STORY-123-AB-YYYY-MM-DD\n\nreview\n")
+    assert lint(v)[0] == 0  # a sweep headline and a story-keyed review
+    with (v / "notes-updates.md").open("a") as f:
+        f.write("\n## PR-STORY-456-CD-YYYY-MM-DD\n\nnot a review file\n")
+    with (v / "notes-chat-notes-client.md").open("a") as f:
+        f.write("\n## Kickoff thread\n\ntext\n\n## YYYY-MM-DD kickoff\n\nno hyphen\n")
     code, findings = lint(v)
-    assert code == 1 and checks(findings) == {"dated"}
+    assert code == 1 and checks(findings) == {"dated"} and len(findings) == 3
 
 
 def test_dated_fires_on_log_out_of_order(tmp_path: Path) -> None:
@@ -144,7 +162,7 @@ def test_board_fires_when_user_stories_restates_the_grammar(tmp_path: Path) -> N
 def test_placeholder_fires_only_beside_real_dates(tmp_path: Path) -> None:
     v = seed(tmp_path)
     p = v / "notes-updates.md"
-    p.write_text(p.read_text().replace("date-created: YYYY-MM-DD", "date-created: 2026-03-01", 1))
+    p.write_text(p.read_text().replace("coverage_start: YYYY-MM-DD", "coverage_start: 2026-03-01", 1))
     code, findings = lint(v)
     assert code == 1 and checks(findings) == {"placeholder"}
     assert all(f["file"] == "notes-updates.md" for f in findings)

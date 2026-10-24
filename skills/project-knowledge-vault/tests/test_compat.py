@@ -26,8 +26,9 @@ KG = SKILLS / "markdown-kg" / "scripts" / "markdown_kg.py"
 PROFILES = SKILL / "templates" / "markdown-kg-profiles.md"
 
 
-def seed(tmp_path: Path) -> Path:
-    subprocess.run([sys.executable, str(SCAFFOLD), "--target", str(tmp_path), "--name", "T"], check=True, capture_output=True)
+def seed(tmp_path: Path, graph: bool = False) -> Path:
+    extra = [] if graph else ["--no-graph"]
+    subprocess.run([sys.executable, str(SCAFFOLD), "--target", str(tmp_path), "--name", "T", *extra], check=True, capture_output=True)
     return tmp_path / "PROJECTS" / "T"
 
 
@@ -58,51 +59,47 @@ def test_sprint_board_scaffold_appended_to_the_seed_lints_clean(tmp_path: Path) 
 
 @pytest.mark.skipif(not KG.exists(), reason="markdown-kg not installed beside this skill")
 def test_markdown_kg_ingest_resolves_edges_dates_and_supersession(tmp_path: Path) -> None:
-    v = seed(tmp_path)
-    (v / "notes-meetings.md").write_text(
-        "---\ntype: meeting_note\ntitle: notes-meetings\ndate-created: 2026-01-01\n---\n\n# MEETING-NOTES\n\n"
-        "## 2026-02-01-STANDUP-INTERNAL\n\nThe deploy target moved to the blue cluster after the outage review.\n\n"
+    # the scaffolder initializes the graph and merges the shipped profile rows
+    v = seed(tmp_path, graph=True)
+    (v / "notes-meeting-notes.md").write_text(
+        "---\ntype: meeting_note\ntitle: notes-meeting-notes\ncoverage_start: 2026-01-01\n---\n\n# MEETING-NOTES\n"
+        "[2026-FEBRUARY](#2026-FEBRUARY)\n[2026-JANUARY](#2026-JANUARY)\n\n---\n# 2026-FEBRUARY\n\n"
+        "## 2026-02-01-STANDUP\n\nThe deploy target moved to the blue cluster after the outage review.\n\n"
         "### DECISIONS\n\n- 2026-02-01 - deploy target is the blue cluster - supersedes 2026-01-01 kickoff, capacity\n\n"
-        "## 2026-01-01-KICKOFF-INTERNAL\n\nThe deploy target is the green cluster for the first release.\n\n"
-        "**SUPERSEDED**: 2026-02-01 [[notes-meetings#2026-02-01-STANDUP-INTERNAL]]\n\n"
+        "---\n# 2026-JANUARY\n\n"
+        "## 2026-01-01-KICKOFF\n\nThe deploy target is the green cluster for the first release.\n\n"
+        "**SUPERSEDED**: 2026-02-01 [[notes-meeting-notes#2026-02-01-STANDUP]]\n\n"
         "### DECISIONS\n\n- 2026-01-01 - deploy target is the green cluster - first release\n")
     (v / "notes-learnings.md").write_text(
-        "---\ntype: note\ntitle: notes-learnings\ndate-created: 2026-02-01\n---\n\n# LEARNINGS\n\n## 2026-02-01\n\n"
-        "### The deploy target is the blue cluster\n\nSettled at [[notes-meetings#2026-02-01-STANDUP-INTERNAL]] after the outage review.\n")
-    (v / "notes-questions.md").write_text(
-        "---\ntype: note\ntitle: notes-questions\n---\n\n# QUESTIONS\n\n## OPEN\n\n## ANSWERED\n")
+        "---\ntype: reference\ntitle: notes-learnings\ncoverage_start: 2026-02-01\n---\n\n# LEARNINGS\n\n"
+        "# 2026-FEBRUARY\n\n## 2026-02-01 - the deploy target moved to blue\n\n"
+        "### The deploy target is the blue cluster\n\nSettled at [[notes-meeting-notes#2026-02-01-STANDUP]] after the outage review.\n")
     lint = run(LINT, v)
     assert lint.returncode == 0, lint.stdout
 
     ingest = run(KG, "ingest", v)
-    assert ingest.returncode == 0, ingest.stderr
+    assert ingest.returncode == 0, ingest.stderr + ingest.stdout
     m = re.search(r"edges: (\d+) resolved, (\d+) unresolved, (\d+) ambiguous", ingest.stdout)
     assert m and int(m.group(1)) > 0 and m.group(2) == "0" and m.group(3) == "0", ingest.stdout
 
     unresolved = run(KG, "links", v, "--unresolved")
     assert "no outbound links" in unresolved.stdout or unresolved.stdout.strip() == "", unresolved.stdout
 
-    # the profile snippet is valid JSON and applies without an ingest error
-    block = re.search(r"```json\n(.*?)```", PROFILES.read_text(), re.S)
-    assert block
-    config = json.loads(block.group(1))
-    (v / "markdown-kg" / "markdown-kg-config.md").write_text("# markdown-kg-config\n\n```json\n" + json.dumps(config, indent=2) + "\n```\n")
-    ingest = run(KG, "ingest", v)
-    assert ingest.returncode == 0, ingest.stderr + ingest.stdout
-
-    sections = run(KG, "sections", v, "notes-meetings", "--json")
+    # month H1s group the entries; each dated H2 stays its own unit with its own date
+    sections = run(KG, "sections", v, "notes-meeting-notes", "--json")
     assert sections.returncode == 0, sections.stderr
     rows = json.loads(sections.stdout)
-    kickoff = next((r for r in rows if r["heading_path"].endswith("KICKOFF-INTERNAL")), None)
-    standup = next((r for r in rows if r["heading_path"].endswith("STANDUP-INTERNAL")), None)
+    kickoff = next((r for r in rows if r["heading_path"].endswith("KICKOFF")), None)
+    standup = next((r for r in rows if r["heading_path"].endswith("STANDUP")), None)
     assert kickoff and standup, sections.stdout
+    assert kickoff["is_unit"] and standup["is_unit"], (kickoff, standup)
     assert kickoff["slot"] == "superseded", kickoff
     assert standup["doc_date"].startswith("2026-02-01"), standup
 
     search = run(KG, "search", v, "deploy target cluster", "--json")
     assert search.returncode == 0, search.stderr
     ids = [h["section_id"] for h in json.loads(search.stdout)["results"]]
-    first_meeting = next((i for i in ids if i.startswith("notes-meetings#")), "")
+    first_meeting = next((i for i in ids if i.startswith("notes-meeting-notes#")), "")
     assert "STANDUP" in first_meeting, ids
 
 

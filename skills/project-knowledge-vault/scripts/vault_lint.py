@@ -21,18 +21,21 @@ TOOLING_DIRS = {"markdown-kg", "vault-kg"}  # the graph engine's folder, current
 
 # filename prefix -> allowed type values, most specific first
 FAMILIES: list[tuple[re.Pattern[str], set[str]]] = [
-    (re.compile(r"^notes-chat\.md$"), {"chat_log"}),
-    (re.compile(r"^notes-meetings\.md$"), {"meeting_note"}),
-    (re.compile(r"^notes-[a-z0-9-]+\.md$"), {"note"}),
+    (re.compile(r"^notes-chat(-[a-z0-9-]+)?\.md$"), {"chat_log"}),
+    (re.compile(r"^notes-email(-[a-z0-9-]+)?\.md$"), {"email"}),
+    (re.compile(r"^notes-meeting(s|-notes)\.md$"), {"meeting_note"}),
+    (re.compile(r"^notes-[a-z0-9-]+\.md$"), {"note", "reference"}),
     (re.compile(r"^user-stories(-[a-z0-9-]+)?\.md$"), {"user_story"}),
-    (re.compile(r"^\d\d-[a-z0-9-]+\.md$"), {"reference"}),
+    (re.compile(r"^([a-z0-9]+-)?\d\d-[a-z0-9-]+\.md$"), {"reference"}),  # optional project alias prefix
     (re.compile(r"^agents-[a-z0-9-]+\.md$"), {"reference"}),
     (re.compile(r"^code-[a-z0-9-]+\.md$"), {"code"}),
-    (re.compile(r"^docs-[a-z0-9-]+\.md$"), {"doc"}),
+    (re.compile(r"^docs-[a-z0-9-]+\.md$"), {"doc", "reference"}),
 ]
 KEBAB_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*\.md$")
 ISO_DATE = r"\d{4}-\d{2}-\d{2}"
-DATED_H2_RE = re.compile(rf"^## (({ISO_DATE}|YYYY-MM-DD)(-\S.*)?|PREP: \S.*|Related)$")
+# the suffix joins the date with a hyphen; a learnings sweep may follow it with " - <headline>"
+DATED_H2_RE = re.compile(rf"^## (({ISO_DATE}|YYYY-MM-DD)(-\S.*| - \S.*)?|PREP: \S.*|Related|About this file)$")
+PR_REVIEW_H2_RE = re.compile(r"^## PR-STORY-\S+$")  # reviews key on the story, dated at the end
 ISO_RE = re.compile(rf"\b{ISO_DATE}\b")
 PLACEHOLDER_RE = re.compile(r"\bYYYY-MM-DD\b")
 WIKILINK_RE = re.compile(r"\[\[([^\]\|#]+)(?:#([^\]\|]+))?(?:\|[^\]]*)?\]\]")
@@ -208,8 +211,12 @@ class Linter:
             if not name.startswith("notes-") or name in DATED_CAPTURE_EXEMPT:
                 continue
             for n, level, text in headings(lines):
-                if level == 2 and not DATED_H2_RE.match(f"## {text}"):
-                    self.add("dated", name, n, f"H2 '{text}' is not YYYY-MM-DD-...")
+                h2 = f"## {text}"
+                if level != 2 or DATED_H2_RE.match(h2):
+                    continue
+                if name == "notes-pr-reviews.md" and PR_REVIEW_H2_RE.match(h2):
+                    continue
+                self.add("dated", name, n, f"H2 '{text}' is not YYYY-MM-DD-...")
 
     def check_log_order(self) -> None:
         lines = self.clean.get("log.md")

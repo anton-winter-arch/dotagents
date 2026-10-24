@@ -1,0 +1,4 @@
+{
+  "default": {"high": 80, "low": 60},
+  "north": {"high": 90, "low": 70}
+}

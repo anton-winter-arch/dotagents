@@ -1,12 +1,11 @@
 # markdown-kg-config rows for a project knowledge vault
 
-Run `markdown_kg.py init <vault>/PROJECTS/<NAME>` once, then merge these rows into the
-`profiles` and `ignore` arrays of `<vault>/PROJECTS/<NAME>/markdown-kg/markdown-kg-config.md`.
-Config has no CLI write path; the file is edited directly. Longest matching glob wins.
+`vault_scaffold.py` runs `markdown_kg.py init` on a new vault and merges these rows into the `profiles` and `ignore` arrays of `<vault>/markdown-kg/markdown-kg-config.md`, adding only rows whose `path` the config does not already have. For a vault seeded without the graph, run `init` by hand and merge them the same way. Config has no CLI write path; the file is edited directly. Longest matching glob wins.
 
 ```json
 {
   "ignore": [
+    {"path": "AGENTS.md", "reason": "the vault contract, not a note"},
     {"path": "CLAUDE.md", "reason": "one-line pointer to the contract, not a note"}
   ],
   "profiles": [
@@ -25,10 +24,4 @@ Config has no CLI write path; the file is edited directly. Longest matching glob
 }
 ```
 
-What each row buys: `hub` keeps `index.md` searchable while taking its edges out of the
-degree prior and out of `neighbors` walks. `log-dated` on `notes-*` gives every dated
-entry a date for recency ranking, `trajectory`, `themes` and `trends`, and the slots keep
-checklists and quoted review threads out of the authored-prose aggregates. The question
-register is a reference note because its headings are questions, not dates. Ingested
-`code-*` and `docs-*` are down-weighted so a repository dump does not outrank the notes
-written about it.
+What each row buys: `hub` keeps `index.md` searchable while taking its edges out of the degree prior and out of `neighbors` walks. `log-dated` on `notes-*` gives every dated entry a date for recency ranking, `trajectory`, `themes` and `trends`, and the slots keep checklists and quoted review threads out of the authored-prose aggregates. The engine learns the date level from the headings, so the `# YYYY-MONTH` H1s group the months while each dated H2 stays one section. The question register is a reference note because its headings are topics, not dates. Ingested `code-*` and `docs-*` are down-weighted so a repository dump does not outrank the notes written about it. The contract is ignored because every vault ships the same text, and indexing it puts the same answer in every search.

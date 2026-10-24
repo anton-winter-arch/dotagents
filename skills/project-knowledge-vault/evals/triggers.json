@@ -24,6 +24,12 @@
         "why": "The scaffolder's never-overwrite gap fill."
     },
     {
+        "name": "grown-vault-reading",
+        "query": "The meeting and chat notes in my project vault are thousands of lines now - how should agents be reading it without loading whole files?",
+        "should_trigger": true,
+        "why": "How a grown vault is read is part of the vault contract, which points at markdown-kg."
+    },
+    {
         "name": "sprint-board-not-vault",
         "query": "What should the epics, features and stories be for the ingestion platform stabilization?",
         "should_trigger": false,

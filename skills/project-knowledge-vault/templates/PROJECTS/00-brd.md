@@ -8,13 +8,12 @@ tags:
 skills:
   - <a skill this project requires>
 status: draft
-date-created: YYYY-MM-DD
-last-modified: YYYY-MM-DD
+updated: YYYY-MM-DD
 ---
 
 # Business Requirements
 
-The top of the ladder. Every story in [[user-stories]] rolls up to something stated here, and anything in flight that does not is either scope creep or a requirement nobody wrote down.
+The top of the ladder. Every story in [[user-stories]] rolls up to something stated here, and anything in flight that does not is either scope creep or a requirement nobody wrote down. Who the vault serves and what it should weight is in [[01-north-star]].
 
 ## Project
 

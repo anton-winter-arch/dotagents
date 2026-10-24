@@ -12,15 +12,27 @@ One directory. No subfolders. The **filename prefix** is the category, and the *
 
 Link resolution, the knowledge-graph ingest and bulk upload all key on a single flat namespace, and a second folder reintroduces the path fragility that resolving by filename otherwise avoids. The one exception is tooling state: the knowledge-graph engine's `markdown-kg/` folder (`vault-kg/` under its legacy name) and any dot-folder are not notes and are not part of the vault.
 
+## Reading this vault: query the graph, then read the section
+
+A vault grows by appending. Within a few months a `notes-*` file runs to thousands of lines, and reading one whole spends a session's context on material that is mostly superseded. The vault is written to be read through the **markdown-kg** knowledge graph instead, which indexes every heading as its own addressable section with its date, its links and whether it has been superseded.
+
+- **Query first.** `markdown_kg.py search <vault> "<question>"` returns ranked sections, newest and unsuperseded first. `read <vault> <section_id>` returns one section whole. Open a file directly only while it is short enough to read in one pass, and never read a long `notes-*` file top to bottom.
+- **Map before reading.** `sections <vault> <note>` lists a note's headings with dates and line ranges, so a single dated entry can be read without the rest of the file.
+- **History has its own commands.** `timeline` follows a registered entity through the dated entries, `trajectory` shows when a term rose and faded, and `backlinks` shows every section that links to a note.
+- **Re-ingest after writing.** `markdown_kg.py ingest <vault>` after a session that changed notes, or the next query answers from the old text. `links <vault> --unresolved` is the broken-link worklist.
+- **The graph root is wherever the graph was built.** The seed initializes `markdown-kg/` inside this folder. If this vault is built into another folder, the graph lives with the build and every query points there.
+
+Everything in the header grammar below exists so that this works: one idea per heading, a date in every dated heading, and a marker on every superseded section.
+
 ## The ownership gradient
 
 Sort order is also an ownership gradient, and knowing which end of it a file sits on tells you who edits it and how freely.
 
 | Position | Files | Owner | How it changes |
 |---|---|---|---|
-| Top | `NN-*`, `agents-*` | Agent | Regenerated or appended by an agent; a human edits the source, not the output |
+| Top | `NN-*`, `agents-*` | Operator or agent | `00-brd` and `01-north-star` are the operator's own steering; other numbered notes and `agents-*` are regenerated or appended by an agent, and a human edits the source, not the output |
 | Middle | `code-*`, `docs-*` | Ingested | Replaced wholesale when the upstream artifact changes; never hand-edited |
-| Bottom | `notes-*`, `user-stories-*` | Human | Hand-written in the course of the work; an agent appends and refines but does not own |
+| Bottom | `notes-*`, `user-stories*` | Human | Hand-written in the course of the work; an agent appends and refines but does not own |
 | Reserved | `index.md`, `log.md` | Shared | Maintained by whoever adds or retires a note |
 
 Collaboration happens across the gradient rather than in a designated place. The gradient tells you whose edit wins in a conflict: at the top the generator wins, at the bottom the human does.
@@ -29,23 +41,27 @@ Collaboration happens across the gradient rather than in a designated place. The
 
 | Filename | `type:` | Holds |
 |---|---|---|
-| `NN-<slug>.md` | `reference` | The numbered navigation tier. Notes that map and interpret the corpus, sorted to the top. `00-brd` is the why. |
+| `[<alias>-]NN-<slug>.md` | `reference` | The numbered navigation tier, sorted to the top. `00-brd` is the why and `01-north-star` is who the vault serves. An optional project alias prefix keeps a built vault's notes sorted together. |
 | `agents-<slug>.md` | `reference` | Agent-owned registers and logs: relay state, self-managed decision records, run history. Reserved family, seeded empty. |
 | `code-<repo>[-<subsystem>].md` | `code` | Flattened repository contents, byte-identical. Never reformatted, never compressed. Re-flatten upstream to change one. |
-| `docs-<origin>-<slug>.md` | `doc` | Ingested documents. `docs-internal-*` for material from the project's own people, `docs-research-*` for external. |
-| `notes-chat.md` | `chat_log` | Message threads worth keeping, including email. One dated section per exchange. |
-| `notes-meetings.md` | `meeting_note` | Standups, working sessions, refinements, planning. One dated section per meeting. |
-| `notes-pr-reviews.md` | `note` | Story and pull-request reviews. One dated section per item under review, carrying its comment thread. |
-| `notes-updates.md` | `note` | Status write-ups and per-topic summaries. One dated section per update. |
-| `notes-learnings.md` | `note` | Durable facts written to outlive the threads that produced them. One dated section per sweep. |
-| `notes-questions.md` | `note` | The open-question register. The only home for a question still awaiting an answer. |
+| `docs-<origin>-<slug>.md` | `doc` or `reference` | Ingested documents. `docs-internal-*` for material from the project's own people, `docs-research-*` for external. |
+| `notes-chat-notes-client.md` | `chat_log` | Chat with the client or stakeholder team. One dated section per conversation. |
+| `notes-chat-notes-internal.md` | `chat_log` | Chat among the delivery team. One dated section per conversation. |
+| `notes-email-notes.md` | `email` | Email threads worth keeping. One dated section per exchange. |
+| `notes-meeting-notes.md` | `meeting_note` | Standups, working sessions, refinements, planning. One dated section per meeting, with an UPCOMING block for prep. |
+| `notes-pr-reviews.md` | `reference` | Story and pull-request reviews. One section per pull request, holding its comment thread and draft replies. |
+| `notes-updates.md` | `reference` | Status write-ups and per-topic summaries. One dated section per update. |
+| `notes-learnings.md` | `reference` | Durable facts written to outlive the threads that produced them. One dated section per sweep. |
+| `notes-questions.md` | `reference` | The open-question register. The only home for a question still awaiting an answer. |
 | `user-stories.md` | `user_story` | The live board. |
-| `user-stories-tasks.md` | `user_story` | The run sheet for in-flight stories, and the scratchpad the human and the agent hand work back and forth in. |
+| `user-stories-runsheet.md` | `user_story` | What to do, where, in what order, and what blocks what, for the stories in flight. |
+| `user-stories-backlog.md` | `user_story` | Work not on the live board yet: blocked, untracked or parked. |
+| `user-stories-research.md` | `user_story` | Research for the open stories, with sources and labeled findings. |
 | `user-stories-completed.md` | `user_story` | Cold storage. Finished work graduates here with its body and shape intact. |
 | `index.md` | reserved | The front door. OKF §8. |
 | `log.md` | reserved | The change history. OKF §9. |
 
-**One file per theme.** Resist splitting a family by audience or channel. Internal and external conversations share `notes-chat.md`, because sequence is what makes supersession readable and two files destroy it. Note the audience inside the dated section heading instead.
+**One file per theme, with one split.** Chat is split by audience into a client file and an internal file, and nothing else is split by audience or channel. Within a file, sequence is what makes supersession readable, so a meeting with the client and one without it share `notes-meeting-notes.md`, and the heading names who was there.
 
 `code-*` and `docs-*` are created by dropping ingested content in, so this template seeds none. `agents-*` is declared and unseeded: add one when an agent actually needs a durable register, not before.
 
@@ -54,9 +70,9 @@ Collaboration happens across the gradient rather than in a designated place. The
 Filename order encodes the shape of the project, top to bottom:
 
 1. `00-brd` - **the why.** Requirements, the aggregate everything sums to.
-2. The rest of the `NN-*` navigation tier - the refined-for-use layer that maps the corpus.
+2. `01-north-star` and the rest of the `NN-*` tier - who the vault serves, and the refined-for-use layer that maps the corpus.
 3. `code-*`, `docs-*`, `notes-*` - the source corpus, what was captured.
-4. `user-stories-*` - **the what-now.** The concrete assigned work.
+4. `user-stories*` - **the what-now.** The concrete assigned work.
 
 Work filters **up**: a story is the ground-level unit, the BRD is what it all adds up to. Read top-down for the why, bottom-up for what is in flight.
 
@@ -66,33 +82,35 @@ Every note except `index.md` and `log.md` carries parseable YAML frontmatter wit
 
 ```yaml
 ---
-type: reference
-title: Ingestion Patterns
+type: meeting_note
+title: notes-meeting-notes
 description: One line. This is what index.md quotes, so write it to be read there.
 tags:
-  - ingestion
-status: stable
-date-created: YYYY-MM-DD
-last-modified: YYYY-MM-DD
+  - meeting
+coverage_start: YYYY-MM-DD
+updated: YYYY-MM-DD
 ---
 ```
 
 - `type` - required, non-empty. Use the value in the family table.
 - `title`, `description`, `tags` - recommended. `description` is a single line and is what `index.md` quotes.
-- `status` - `draft`, `stable`, or `deprecated`.
-- `date-created`, `last-modified` - ISO `YYYY-MM-DD`.
+- `coverage_start`, `coverage_end` - on dated files, the ISO date of the oldest entry, and of the newest where the file has stopped growing. A build pipeline reads `coverage_start` as the file's start date.
+- `updated` - ISO `YYYY-MM-DD`, the last material edit.
+- `status` - optional: `draft`, `stable`, or `deprecated`.
 - `skills` - on `00-brd` only, a list of the skills the project requires. This is the demand signal: a knowledge base that tracks proven skills diffs against it to find what the project needs that nobody has yet.
 
 Additional keys are allowed and consumers tolerate ones they do not recognize. Do not invent a key where an existing one fits, and do not use the `kg-` prefix, which the knowledge-graph engine reserves.
 
 ## Header grammar
 
-One H1 per note, the title. Below it, one idea per heading, because the graph addresses **sections**, not files. A heading that covers three things cannot be cited for one of them.
+One H1 per note opens it, in capitals. Below it, one idea per heading, because the graph addresses **sections**, not files. A heading that covers three things cannot be cited for one of them.
 
-**Dated capture** (`notes-*` other than the question register). Newest first. An optional `# YYYY-MONTH` H1 groups the months.
+**Dated capture** (`notes-*` other than the question register). Newest first. Each month opens with a `# YYYY-MONTH` H1, such as `# 2026-OCTOBER`, and the top of the file lists a jump link to every month, so a reader in an editor gets to a month without scrolling. Every file states its own entry format in a callout under the title.
 
 ```markdown
-## YYYY-MM-DD-EVENT-SCOPE
+# 2026-OCTOBER
+
+## YYYY-MM-DD-<WHO or EVENT>
 
 <what happened>
 
@@ -103,34 +121,52 @@ One H1 per note, the title. Below it, one idea per heading, because the graph ad
 - [ ] <action> (owner: <ROLE>; opened YYYY-MM-DD)
 ```
 
-Chronology is parsed from the heading, never inferred from position, so the date is mandatory and ISO. A proposal is not a decision; only settled things go under `### DECISIONS`. Every subsection is optional and a thin entry stays thin. Two undated H2s are allowed: `## PREP: <event>` for material prepared before an event, which the graph pins as current and undated, and a closing `## Related`.
+The suffix names who was there or what the event was: participants' initials joined with hyphens (`AB-CD`), `ALL` for a whole channel, or the event (`STANDUP`, `REFINEMENT`). Chronology is parsed from the heading, never inferred from position, so the date is mandatory and ISO, joined to the suffix with a hyphen. A proposal is not a decision; only settled things go under `### DECISIONS`. Every subsection is optional and a thin entry stays thin.
 
-`notes-learnings.md` is dated capture with one difference: each fact under a sweep is its own `###` heading, not a bullet. The graph addresses sections, and a fact that is a bullet can be neither cited nor superseded on its own without taking the whole sweep with it.
+Four exceptions, each fixed by file:
 
-**Backlog** (`user-stories.md`, `user-stories-completed.md`). The `sprint-board` skill owns the shape: its anatomy reference is the specification, its scaffolder writes the structure and its linter checks it. An item keeps that shape when it graduates to the completed file, so the same linter reads both. `user-stories-tasks.md` is a run sheet, not a board, with its own fixed sections.
+- **`notes-learnings.md`** heads each sweep `## YYYY-MM-DD - <one line saying what it found>`, and each fact under it is its own `###` heading, not a bullet. The graph addresses sections, and a fact that is a bullet can be neither cited nor superseded on its own without taking the whole sweep with it. The file opens with an `## About this file` section that says which notes a learning links to.
+- **`notes-pr-reviews.md`** heads each review `## PR-STORY-<id>-<INITIALS>-YYYY-MM-DD`, keyed by the story so that every review of one story sorts together.
+- **`notes-meeting-notes.md`** has a `# UPCOMING` block above the months, holding `## PREP: <event>` sections for things that have not happened yet. The graph pins a PREP section as current and undated; it moves into the dated history once the meeting happens.
+- Any dated file may close with `## Related`.
+
+**Backlog** (`user-stories.md`, `user-stories-completed.md`). The `sprint-board` skill owns the shape: its anatomy reference is the specification, its scaffolder writes the structure and its linter checks it. An item keeps that shape when it graduates to the completed file, so the same linter reads both. The completed file groups items under `# SWEEP-IN` as they arrive and `# SORTED` once filed.
+
+**Working files** (`user-stories-runsheet.md`, `-backlog.md`, `-research.md`). Each has fixed top-level sections, stated in the file: the run sheet's `# START HERE` and `# FOR THE AGENTS`, the backlog's `# BLOCKED`, `# BACKLOG` and `# PARKED`.
 
 **Reference** (`NN-*`, `agents-*`). One H2 per idea, closing with `## Related`.
 
 ## Links and the graph
 
-- Internal references are `[[wikilinks]]`. Markdown links are for external URLs.
+- Internal references are `[[wikilinks]]` to the bare note name. Markdown links are for external URLs and in-file jump links.
 - `index.md` is the exception: its listing uses markdown links, because OKF §8 defines it that way.
 - A `[[note#Heading]]` anchor must resolve to a real heading in that note.
 - `## Related` is the semantic edge block: `- [[target]] - why this edge exists`. Structural mentions stay inline.
 - Filenames are lowercase-kebab and **stable**. A rename breaks every inbound link, so rename deliberately and repoint in the same commit.
-- A link to a note that does not exist yet is written as a backtick code span, never a wikilink. Upgrade it when the target lands.
+- A link to a note that does not exist yet, or to a file outside the vault, is written as a backtick code span, never a wikilink. Upgrade it when the target lands.
+
+## Where things go
+
+| Content | Destination |
+|---|---|
+| What a conversation or meeting settled | the dated section in the matching `notes-*` file |
+| A durable fact | `notes-learnings.md`, under the day's sweep |
+| An unanswered question | `notes-questions.md` |
+| An action still to run | `user-stories-runsheet.md` |
+| Work not on the board yet | `user-stories-backlog.md` |
+| A note added, removed, renamed or archived | `log.md`, under today's date |
 
 ## Open questions have exactly one home
 
-`notes-questions.md` is the only place an **open** question lives. One entry per question, carrying the date opened, the owner, the question, and a wikilink to where it arose. When it is answered, the answer and its date go on the entry and it moves to `## ANSWERED`.
+`notes-questions.md` is the only place an **open** question lives. It is grouped under one H2 per topic, with one bullet per question naming the date raised, where it arose, and who must answer it. When a question is answered it leaves the register, and the answer goes to `notes-learnings.md` as a dated fact.
 
-Everywhere else, a question is a **closed record of what was asked on a date**, not a tracker. A `### QUESTIONS` bullet inside a dated section records that the question was raised then. A reference note carries no `## Open questions` section and links to the register instead.
+Everywhere else, a question is a **closed record of what was asked on a date**, not a tracker. A `### QUESTIONS` bullet inside a dated section records that the question was raised then. A reference note carries no open-questions section and links to the register instead.
 
 ## `index.md` and `log.md` follow OKF
 
 Both are reserved filenames under [Google's Open Knowledge Format v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format). Neither is a concept document and neither takes frontmatter, version fields included.
 
-`index.md` lists the bundle's contents with a description each, grouped for progressive disclosure, using markdown links.
+`index.md` lists the bundle's contents with a description each, grouped for progressive disclosure, using markdown links. The graph engine's `index` command writes `Vault Index.md` and never touches this file.
 
 `log.md` is a flat chronological history, **newest first**, grouped under ISO `YYYY-MM-DD` H2s. One line per note added, removed, renamed or materially changed.
 
@@ -158,4 +194,4 @@ As a family grows past what is useful to read, compact the oldest entries: fold 
 
 ## Nothing secret
 
-A vault travels further than the people who wrote it, and its history keeps what a later cleanup removes. No credentials of any kind, no connection strings, no hostnames, workspace URLs, account or workspace ids, and no personal data. Where a real value is needed to make a note usable, name the place it is stored rather than the value.
+A vault travels further than the people who wrote it, and its history keeps what a later cleanup removes. No credentials of any kind, no connection strings, no hostnames, workspace URLs, account or workspace ids, and no personal data. People are named by the aliases in `01-north-star.md`. Where a real value is needed to make a note usable, name the place it is stored rather than the value.
