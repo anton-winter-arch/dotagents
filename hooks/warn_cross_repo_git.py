@@ -19,25 +19,26 @@ not a sandbox. Exit 0 on every path, and silent on any internal error.
 import importlib.util
 import json
 import os
-import re
-import shlex
 import subprocess
 import sys
 from pathlib import Path
 
-_spec = importlib.util.spec_from_file_location("_input", Path(__file__).with_name("_input.py"))
-_input = importlib.util.module_from_spec(_spec)
-sys.modules["_input"] = _input
-_spec.loader.exec_module(_input)
+def _load(name: str):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{name}.py"))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_input = _load("_input")
+_shell_dirs = _load("_shell_dirs")
 
 WATCHED = {"commit", "push"}
 # A lookup gets LOOKUP_TIMEOUT s on a stalled mount; the home lookup plus MAX_LOOKUPS targets stays under the
 # binding's 10 s.
 LOOKUP_TIMEOUT = 2
 MAX_LOOKUPS = 3
-SEPARATORS = re.compile(r"\s*(?:&&|\|\||;|\||\n)\s*")
-PREFIXES = {"sudo", "env", "command", "nohup", "time", "rtk", "proxy"}
-ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 
 def toplevel(path: str) -> str | None:
@@ -55,42 +56,11 @@ def home_dir(cwd: str) -> str:
 
 def targets(command: str, cwd: str) -> list[tuple[str, str]]:
     """(subcommand, directory) for every watched git call in the command."""
-    here = cwd or os.getcwd()
     found = []
-    for segment in SEPARATORS.split(command or ""):
-        try:
-            words = shlex.split(segment)
-        except ValueError:
-            continue
-        while words and (words[0] in PREFIXES or ASSIGNMENT.match(words[0])):
-            words = words[1:]
-        if not words:
-            continue
-        if words[0] == "cd":
-            dest = words[1] if len(words) > 1 else str(Path.home())
-            here = os.path.join(here, os.path.expanduser(dest))
-            continue
+    for words, here in _shell_dirs.walk(command, cwd):
         if Path(words[0]).name != "git":
             continue
-        where, i = here, 1
-        while i < len(words) and words[i].startswith("-"):
-            w = words[i]
-            if w == "-C" and i + 1 < len(words):
-                where = os.path.join(where, os.path.expanduser(words[i + 1]))
-                i += 2
-                continue
-            if w.startswith("--work-tree="):
-                where = os.path.join(where, os.path.expanduser(w.split("=", 1)[1]))
-            elif w.startswith("--git-dir="):
-                where = os.path.dirname(os.path.join(where, os.path.expanduser(w.split("=", 1)[1])).rstrip("/"))
-            elif w in ("-c", "--git-dir", "--work-tree", "--namespace") and i + 1 < len(words):
-                if w == "--work-tree":
-                    where = os.path.join(where, os.path.expanduser(words[i + 1]))
-                elif w == "--git-dir":
-                    where = os.path.dirname(os.path.join(where, os.path.expanduser(words[i + 1])).rstrip("/"))
-                i += 2
-                continue
-            i += 1
+        where, i = _shell_dirs.git_target(words, here)
         if i < len(words) and words[i] in WATCHED:
             found.append((words[i], os.path.normpath(where)))
     return found

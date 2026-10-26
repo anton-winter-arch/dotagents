@@ -498,9 +498,9 @@ or the content (every guard, gate and content check this section lists, the
 chat-register pair included) and their four companion files, `_require.sh`,
 `reject-words.toml`, `no-meta-commentary.patterns` and the published-copy
 example list, which are copied but never wired. This folder's `hooks/`, with
-its own `manifest.json`, holds the five that enforce rules about Claude Code
+its own `manifest.json`, holds the six that serve Claude Code
 itself (`ask-before-claude-folder-edits.sh`, `read-size-advisory.sh`,
-`memory-routing.sh`, `memory_lint.py` and `cmon_nudge.py`), and that manifest
+`memory-routing.sh`, `memory_lint.py`, `cmon_nudge.py` and `voice_reply.py`), and that manifest
 also names the `rtk hook claude` entry. The test that sorts a hook: if Codex
 wrote the file or ran the command, should the hook fire. `seed_hooks.py seed` generates the `hooks`
 key of [`settings.json`](settings.json) from the two manifests, and
@@ -508,11 +508,11 @@ key of [`settings.json`](settings.json) from the two manifests, and
 entries only. The build plan and the hook-input captures are in
 `tasks/SPEC-HARNESS-SEEDING.md`.
 
-Twenty-two wired hooks: three Bash-write/delete guards (`deny-bash-file-writes.sh`,
+Twenty-six wired hooks: three Bash-write/delete guards (`deny-bash-file-writes.sh`,
 `guard-rm.sh`, `block-env-files.sh`), the `~/.claude`-edit prompt
 (`ask-before-claude-folder-edits.sh`), the SessionStart inbox check
-(`agent-mail-check.sh`), the reply-length nudge (`cmon_nudge.py`), the
-daily harness-release notice (`harness_version_check.py`), the large-file
+(`agent-mail-check.sh`), the reply-length nudge (`cmon_nudge.py`), the spoken reply summary
+(`voice_reply.py`), the daily harness-release notice (`harness_version_check.py`), the large-file
 read advisory (`read-size-advisory.sh`), the two memory-write guards
 (`memory-routing.sh` advisory-routing + `memory_lint.py` post-write lint),
 the skill-description lint (`skill_description_lint.py`, post-write),
@@ -529,10 +529,11 @@ are denied on all three in settings.json instead), the two identifier guards (`r
 `published-copy-paths.txt` seeded from the `.example.txt`), the two
 resource gates (`memory_pressure_gate.py`, `daemon_restart_storm.py`), the
 claude-mem health notice (`claude_mem_health.py`), the cross-repo git
-warning (`warn_cross_repo_git.py`), and the git-hook bypass guard
+warning (`warn_cross_repo_git.py`), the foreign-edit warning
+(`warn_foreign_edits.py`), and the git-hook bypass guard
 (`guard_git_bypass.py`, refusing an agent's `--no-verify` and hooks-path overrides).
-Nine are advisory/non-blocking (`read-size-advisory`,
-`cmon_nudge`, `harness_version_check`, `claude_mem_health`, `warn_cross_repo_git`, both `no-meta-commentary` sides,
+Eleven are advisory/non-blocking (`read-size-advisory`,
+`cmon_nudge`, `voice_reply`, `harness_version_check`, `claude_mem_health`, `warn_cross_repo_git`, `warn_foreign_edits`, both `no-meta-commentary` sides,
 `memory_lint`'s judgment checks, and `reject_identifiers`), and
 `memory-routing` is advisory until a memory folder reaches its cap;
 the rest can block.
@@ -753,6 +754,37 @@ Tests at `tests/station-hooks/test-cmon-nudge.py` (15 cases); run after any
 edit.
 
 Script: [`claude-code/hooks/cmon_nudge.py`](hooks/cmon_nudge.py).
+
+### `voice_reply.py`
+
+UserPromptSubmit and Stop - advisory only, never blocks. It reads a short
+spoken summary of each reply aloud through a local speaker command. It runs
+only in interactive terminal sessions (`CLAUDE_CODE_ENTRYPOINT=cli`, observed
+on 2.1.310; a headless `claude -p` run sees `sdk-cli`), so the bench, `/task`
+and app seats are unaffected. It is off unless `~/.claude/voice.json` (or
+`CLAUDE_VOICE_CONFIG`) holds `{"enabled": true, "command": [...]}`; the
+station seeds no config, so a machine without one stays silent. The config
+names a command every session runs, so it lives inside `~/.claude`, where
+`ask-before-claude-folder-edits.sh` asks before any file-tool write, and the
+station repo's `.gitignore` keeps it out of git. The spoken text comes from the
+model rather than the hook. While voice is on, UserPromptSubmit stops any playback and asks the
+model to end its reply with one `<speak>...</speak>` line saying what it did
+and what it needs next. Stop takes that line from the payload's
+`last_assistant_message`, strips markdown marks and passes it to the command
+as its last argument; a reply without the line is spoken as "The reply is on
+screen." The spoken text is model output, so the hook strips control
+characters, caps it at 400 characters and never lets it begin with a dash;
+`--stop` is the only option the command ever sees. The command runs detached
+so the hook returns at once, and the speaker, the user's own program outside
+this repo, owns its own lifetime and single-instance playback. The hook fails
+open on every path: no config, a bad config, a missing command or garbage
+stdin each give silence and exit 0. The `/voice on|off|status` command runs the
+same script with that argument. It rewrites only `enabled`, so a toggle never
+touches the speaker command, and `off` also stops playback; the change applies
+from the next reply. The tests are in `tests/station-hooks/test-voice-reply.py`
+(17 cases).
+
+Script: [`claude-code/hooks/voice_reply.py`](hooks/voice_reply.py).
 
 ### `harness_version_check.py`
 

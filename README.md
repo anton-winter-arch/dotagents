@@ -332,6 +332,7 @@ description is its trigger contract and its body is the workflow.
 | `/cmon` | Restates the last verbose reply in as few words as possible, then holds that register |
 | `/my-security-review` | The agent-tooling security review; dispatches `my-security-reviewer` for depth |
 | `/reflect` | Memory reconciliation (propose -> user gate -> apply); in-repo stale claims go to `/notes` |
+| `/voice` | Turns the spoken reply summaries (`voice_reply.py`) on or off, or reports their state |
 | `/wrap-up` | Closes the session cleanly: review, inbox and `/notes`, commit and push on the right branch, then `/reflect` |
 | `/spec` `/plan` `/build` `/test` `/review` `/ship` `/code-simplify` | House SOP for each stage, self-contained |
 

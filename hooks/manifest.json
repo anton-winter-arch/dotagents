@@ -117,6 +117,22 @@
       "harnesses": ["claude-code"],
       "advisory": true,
       "bindings": [{"event": "SessionStart", "sources": ["startup", "resume"], "timeout": 15}]
+    },
+    {
+      "script": "warn_foreign_edits.py",
+      "harnesses": ["claude-code"],
+      "advisory": true,
+      "gate": "FOREIGN_EDIT_MODE: record (default) logs only, warn speaks, off does nothing",
+      "bindings": [
+        {"event": "PreToolUse", "matcher": ["file-write", "shell"], "timeout": 10},
+        {"event": "PostToolUse", "matcher": ["file-write", "shell"], "timeout": 10},
+        {"event": "PostToolUseFailure", "matcher": ["file-write", "shell"], "timeout": 10},
+        {"event": "PostToolBatch", "timeout": 10},
+        {"event": "SessionStart", "sources": ["startup", "resume", "clear", "compact"], "timeout": 10},
+        {"event": "SubagentStop", "timeout": 10},
+        {"event": "UserPromptSubmit", "timeout": 10},
+        {"event": "Stop", "timeout": 10}
+      ]
     }
   ]
 }

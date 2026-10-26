@@ -18,9 +18,26 @@
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/reject_bad_commit_message.py", "timeout": 10}]},
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/guard_git_bypass.py", "timeout": 10}]},
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_cross_repo_git.py", "timeout": 10}]},
-      {"matcher": "Bash|Agent|Workflow|mcp__.*", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/memory_pressure_gate.py", "timeout": 10}]}
+      {"matcher": "Bash|Agent|Workflow|mcp__.*", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/memory_pressure_gate.py", "timeout": 10}]},
+      {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create|Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}]}
+    ],
+    "PostToolUseFailure": [
+      {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create|Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}]}
+    ],
+    "PostToolBatch": [
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}]}
+    ],
+    "SubagentStop": [
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}]}
+    ],
+    "Stop": [
+      {"hooks": [
+        {"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10},
+        {"type": "command", "command": "python3 ~/.claude/hooks/voice_reply.py", "timeout": 5}
+      ]}
     ],
     "PostToolUse": [
+      {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create|Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}]},
       {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/memory_lint.py", "timeout": 10}]},
       {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-meta-commentary-check.sh", "timeout": 5}]},
       {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/skill_description_lint.py", "timeout": 10}]}
@@ -34,14 +51,17 @@
       {"matcher": "startup", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/harness_version_check.py", "timeout": 15}]},
       {"matcher": "startup|resume|clear|compact", "hooks": [
         {"type": "command", "command": "python3 ~/.claude/hooks/daemon_restart_storm.py", "timeout": 10},
-        {"type": "command", "command": "python3 ~/.claude/hooks/memory_pressure_gate.py", "timeout": 10}
+        {"type": "command", "command": "python3 ~/.claude/hooks/memory_pressure_gate.py", "timeout": 10},
+        {"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}
       ]}
     ],
     "UserPromptSubmit": [
       {"hooks": [
         {"type": "command", "command": "python3 ~/.claude/hooks/daemon_restart_storm.py", "timeout": 10},
         {"type": "command", "command": "python3 ~/.claude/hooks/memory_pressure_gate.py", "timeout": 10},
-        {"type": "command", "command": "python3 ~/.claude/hooks/cmon_nudge.py", "timeout": 5}
+        {"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10},
+        {"type": "command", "command": "python3 ~/.claude/hooks/cmon_nudge.py", "timeout": 5},
+        {"type": "command", "command": "python3 ~/.claude/hooks/voice_reply.py", "timeout": 5}
       ]}
     ]
   }

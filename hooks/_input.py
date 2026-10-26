@@ -48,14 +48,15 @@ TOOL_CLASSES: dict[str, dict[str, list[str]]] = {
 CLASSES = ("shell", "file-write", "file-read", "search", "agent", "mcp")
 
 # Events a binding may name per harness. Claude Code's list is its documented
-# set (the home harness; the station wires four of them). Codex's list is the
+# set (the home harness), plus PostToolUseFailure and PostToolBatch, captured on
+# 2.1.280 (tests/fixtures/claude-code-foreign-edit.json). Codex's list is the
 # five that fired in the capture; its reference also names SessionEnd,
 # PermissionRequest, PreCompact, PostCompact, SubagentStart, SubagentStop and
 # Interrupt, which stay out until one is captured.
 EVENTS: dict[str, list[str]] = {
-    "claude-code": ["PreToolUse", "PostToolUse", "PermissionRequest", "UserPromptSubmit", "Stop",
-                    "SubagentStart", "SubagentStop", "SessionStart", "SessionEnd", "PreCompact",
-                    "Notification"],
+    "claude-code": ["PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "PermissionRequest",
+                    "UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop", "SessionStart", "SessionEnd",
+                    "PreCompact", "Notification"],
     "codex": ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"],
 }
 
