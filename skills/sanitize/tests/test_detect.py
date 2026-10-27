@@ -115,6 +115,19 @@ class TestPersonalShapesAndAllowances(unittest.TestCase):
     def test_guid(self):
         self.assertEqual(classes("id " + "3f2b8c1e-" + "9a4d-4e7b-8c2f-1a2b3c4d5e6f"), ["guid"])
 
+    def test_stand_in_guid_is_allowed_and_a_real_one_is_not(self):
+        # the version and variant digits are ignored; the rest, in one case, is a
+        # padded counter or one repeated digit
+        self.assertEqual(classes("id " + "00000000-" + "0000-4000-8000-000000000001"), [])
+        self.assertEqual(classes("id " + "00000000-" + "0000-0000-0000-000000000000"), [])
+        self.assertEqual(classes("id " + "ffffffff-" + "ffff-ffff-ffff-ffffffffffff"), [])
+        self.assertEqual(classes("id " + "11111111-" + "1111-4111-8111-111111111111"), [])
+        self.assertEqual(classes("id " + "AAAAAAAA-" + "AAAA-4AAA-8AAA-AAAAAAAAAAAA"), [])
+        self.assertEqual(classes("id " + "aaaaaaaa-" + "AaAa-4aaA-8AaA-aAaAaAaAaAaA"), ["guid"])
+        self.assertEqual(classes("id " + "00000000-" + "0000-4000-8000-0000000003e8"), ["guid"])
+        self.assertEqual(classes("id " + "00000000-" + "0000-4000-8000-00000000a1b2"), ["guid"])
+        self.assertEqual(classes("id " + "12345678-" + "1234-5678-1234-567812345678"), ["guid"])
+
     def test_role_code_and_catalog(self):
         self.assertEqual(classes("owner AB (" + "PM1)"), ["role_code"])
         self.assertEqual(classes("table prod" + "_gold"), ["catalog"])

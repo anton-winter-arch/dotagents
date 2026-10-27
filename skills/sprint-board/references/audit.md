@@ -129,7 +129,7 @@ already authoring get fixed in place.
 - **Missing testing approach.** Almost universal in inherited boards, because
   source prose states what must be true and not how it is observed. Derive it
   from the criteria.
-- **Placeholder role.** "As a user" where the engagement has actual named roles.
+- **Placeholder role.** "As a user" where the project has actual named roles.
 - **Absent business case.** A reason that is a restatement of the activity
   rather than the consequence of not doing it.
 - **Unowned item.** No Primary Owner where the item's level calls for one.

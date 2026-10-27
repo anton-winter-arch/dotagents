@@ -316,13 +316,14 @@ FICTIONAL_PHONE = re.compile(r"555[-. ]?01\d\d$")
 
 def synthetic(digits: str) -> bool:
     """True for a run no tracker would issue: every digit the same, a consecutive
-    ascending or descending run, or a zero-padded counter under three digits."""
-    if len(set(digits)) == 1:
+    ascending or descending run, or a zero-padded counter under three digits.
+    Hex digits count too, for a GUID's."""
+    if len(set(digits.lower())) == 1:
         return True
     stripped = digits.lstrip("0")
     if stripped != digits and len(stripped) <= 2:
         return True
-    seq = [int(c) for c in digits]
+    seq = [int(c, 16) for c in digits]
     steps = {b - a for a, b in zip(seq, seq[1:])}
     return steps in ({1}, {-1})
 
@@ -344,6 +345,13 @@ def allowed(hit: Hit, text: str) -> bool:
     if hit.cls == "work_item":
         m = WORK_ITEM.fullmatch(value)
         return bool(m and synthetic(m.group(1)))
+    if hit.cls == "guid":
+        # a stand-in such as 00000000-0000-4000-8000-000000000001: skip the version
+        # and variant digits, which a fixture writer sets to make the GUID valid
+        hexdigits = value.replace("-", "")
+        if hexdigits not in (hexdigits.lower(), hexdigits.upper()):
+            return False   # mixed case could carry data past the same-digit check
+        return synthetic(hexdigits[:12] + hexdigits[13:16] + hexdigits[17:])
     return False
 
 

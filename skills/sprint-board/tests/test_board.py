@@ -537,7 +537,7 @@ class TestCrypticWriting(unittest.TestCase):
                                    "- [ ] Correct the register on a branch")
         self.assertNotIn("role-noun", lint_text(bare))
         named = bare.replace("- [ ] Write the outcome on completion",
-                             "- [ ] Publish source-to-bronze-inventory.md")
+                             "- [ ] Publish endpoints.md")
         self.assertIn("role-noun", lint_text(named))
 
     def test_insider_deixis_is_flagged(self):

@@ -16,7 +16,7 @@ the wrong size, and what order to put them in.
 
 ## Establish the epic cadence first
 
-Level definitions are relative to how long an epic runs on this engagement, and
+Level definitions are relative to how long an epic runs on this project, and
 teams differ by an order of magnitude. An epic can be a year, a quarter, or one
 to two weeks. Ask, or read it off the existing board's history.
 

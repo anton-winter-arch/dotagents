@@ -366,34 +366,34 @@ The register above governs how much room the engineer gets. This one governs whe
 
 Five moves produce almost all of it. Each is a habit of adding, so each fix is a cut.
 
-**Name the artifact, do not describe its role.** A file has a name and the board is not entitled to invent a second one. "The register", "the inventory", "the document" and "the export" are role-nouns, and a reader holding six open items cannot resolve them. Write `source-to-bronze-inventory.md`. This is the most common of the five and the most expensive, because a role-noun stays readable to whoever wrote it and to nobody else.
+**Name the artifact, do not describe its role.** A file has a name and the board is not entitled to invent a second one. "The register", "the inventory", "the document" and "the export" are role-nouns, and a reader holding six open items cannot resolve them. Write `endpoints.md`. This is the most common of the five and the most expensive, because a role-noun stays readable to whoever wrote it and to nobody else.
 
-    - [ ] Check every source in the register against the schemas in warehouse_bronze
-    - [ ] Check every source in source-to-bronze-inventory.md against the schemas in warehouse_bronze
+    - [ ] Check every endpoint in the register against the routes in the API
+    - [ ] Check every endpoint in endpoints.md against the routes in api/routes.py
 
 **Cut the trailing rationale.** A criterion, a step or a query comment states the check. It does not argue for the check. Any clause opening with "so", "which is", "since" or "because" and closing the line is defending a decision to a reader who has already accepted it.
 
-    - [ ] Compare the register against the schemas that exist, so a difference is a finding rather than an assumption
-    - [ ] Compare the source-to-bronze-inventory.md tables against the warehouse_bronze schemas for each source
+    - [ ] Compare the register against the routes that exist, so a difference is a finding rather than an assumption
+    - [ ] Compare the endpoints.md entries against api/routes.py for each service
 
 The rationale belongs in Purpose, once, where someone deciding whether the item is worth doing will read it. Repeated onto every line beneath, it is noise.
 
-**Name the columns, do not describe their shape.** Identifying a thing by the pattern it makes is the purest form of the failure, because the reader has to reconstruct the query you already ran. "A `MERGE` with job and notebook both empty" asks them to guess which fields those are; naming `operation`, `job` and `notebook` hands it over.
+**Name the columns, do not describe their shape.** Identifying a thing by the pattern it makes is the purest form of the failure, because the reader has to reconstruct the query you already ran. "A `POST` with user and session both empty" asks them to guess which fields those are; naming `method`, `user_id` and `session_id` hands it over.
 
 **Cut insider deixis.** "Ours", "the newest commit", "the latest run" and "this one" resolve only for someone who already holds the context. "Ours" in particular assumes the reader knows where the repository boundary falls, which is the thing the item exists to establish. Say which repository, which field, which timestamp column.
 
 **State the alternative, do not describe the act of explaining it.** A criterion offering an escape hatch names the second acceptable state. It does not ask for an explanation and leave the state undefined.
 
-    - [ ] Every source has a bronze schema, or states that it does not and why
-    - [ ] Every source has a bronze schema or is listed as no bronze target
+    - [ ] Every endpoint has a route, or states that it does not and why
+    - [ ] Every endpoint has a route or is listed as deprecated
 
-A sixth case is not a rewrite. **A criterion nobody can act on is cut, not reworded.** "Each Fivetran schema records what writes it" survives a proofread because every word is defensible, and it still tells the engineer nothing: no artifact, no threshold, no destination. Reaching for a better phrasing keeps a line that was never a criterion. Delete it, and check whether the condition it gestured at is already carried by another line.
+A sixth case is not a rewrite. **A criterion nobody can act on is cut, not reworded.** "Each service records what calls it" survives a proofread because every word is defensible, and it still tells the engineer nothing: no artifact, no threshold, no destination. Reaching for a better phrasing keeps a line that was never a criterion. Delete it, and check whether the condition it gestured at is already carried by another line.
 
 The test for all six: hand the item to an engineer who has not been in any of the meetings. Every noun should resolve to something they can open, query or point at.
 
 ## Writing the title
 
-The pattern is `{verb the assignee performs} + {thing operated on} + {reason}`, in roughly twelve words. "Create new ingestion condition to avoid loading blank tables" carries all three in nine. "Add the source-to-bronze count check to the DQ monitor" carries only two, and an engineer reading it cannot tell why the check matters or when it is finished.
+The pattern is `{verb the assignee performs} + {thing operated on} + {reason}`, in roughly twelve words. "Add an upload size check to reject empty files" carries all three in nine. "Add the upload size check to the monitoring dashboard" carries only two, and an engineer reading it cannot tell why the check matters or when it is finished.
 
 - The verb is what the assignee does, not what the system ends up doing: locate, diagnose, compare, baseline, identify and mitigate. A compound verb commits to both halves, so "determine and triage" is a larger item than "determine" and carries different criteria.
 - The object is the specific thing being touched, named as the grounding source names it.
@@ -409,7 +409,7 @@ The pattern is: as a {role or team}, I or we need {new functionality}. This is
 due to {business case}. To achieve this functionality, I or we will {development
 actions}. This will enable {downstream functionality}.
 
-- The role is a real role on this engagement, not "a user". If the beneficiary
+- The role is a real role on this project, not "a user". If the beneficiary
   is the team itself, say so and name the team.
 - The business case is the specific pain or obligation driving the work, with
   the concrete consequence of not doing it. "To improve quality" is not a
@@ -436,7 +436,7 @@ not do the work.
 - Cover the negative path. At least one criterion should address what happens
   when the thing fails, is absent, or falls out of tolerance.
 - Say where the artifact ends up, by path. "Stored with the deliverables" cannot
-  be checked; `ingest-runbook.md is merged to main under docs/ingestion/` can. A
+  be checked; `deploy-runbook.md is merged to main under docs/ops/` can. A
   criterion naming an artifact names the repository or system it lands in.
 - Every criterion has to leave someone with something to do. "Unconfirmable
   entries are marked unverified rather than assumed" records a feeling and
@@ -450,7 +450,7 @@ not do the work.
   assumes the other is wrong. The working note is a fine home for the work; it
   cannot be the evidence.
 - A criterion naming no artifact, threshold or destination is cut rather than
-  rewritten. "Each Fivetran schema records what writes it" reads as a condition
+  rewritten. "Each service records what calls it" reads as a condition
   and is not one, and looking for a better phrasing preserves a line that never
   belonged. Check first whether another criterion already carries the condition
   it was pointing at.
@@ -474,7 +474,7 @@ blank and confirm the request is rejected with a field-level message" beats
 artifact must contain for the outcome to be real. For a document, name the
 contents that make it executable: the job, the parameter, the query, the index
 of what is stored where. Nominating a person outside the work to prove it reads
-as distrust on a board the client sees, so use it only where the stakes genuinely
+as distrust on a board stakeholders see, so use it only where the stakes genuinely
 warrant a second operator. For an investigation, it is the evidence that would
 change the conclusion if it came out differently. Two to four is enough; padding
 this section on a documentation story is filler.
