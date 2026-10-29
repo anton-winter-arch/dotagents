@@ -7,7 +7,7 @@ description: Close a session cleanly so the next one starts strong - review the 
 
 When this ends, the session's files are reviewed, every claim in the repo is true, the tree is committed and pushed on the right branch, memory holds what was learned, and `tasks/todo.md` holds everything the next session needs. Nothing it needs is left only in this conversation.
 
-This skill owns the order, and each sub-skill owns its procedure and gates: the reviewer owns the session's files, `notes` the repo's text, `repo-device-sync` git, and `reflect` memory. It runs once per session; after that a commit request is an ordinary commit. Where a named sub-skill or agent is not installed, its step is done by hand with git and the report says so. Tell the user at the start that up to three approval gates may come: notes' proposals, a sync stop-and-ask and reflect's slate.
+This skill owns the order, and each sub-skill owns its procedure and gates: the reviewer owns the session's files, `notes` the repo's text, `repo-device-sync` git, and `reflect` memory. It runs once per session; after that a commit request is an ordinary commit. Where a named sub-skill or agent is not installed, its step is done by hand with git and the report says so.
 
 ## 1. Assess
 
