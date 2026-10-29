@@ -1,0 +1,22 @@
+[
+  {
+    "name": "section-mode-explicit",
+    "query": "compact the 2026-07-22 meeting in notes-meetings.md",
+    "should_trigger": true
+  },
+  {
+    "name": "batch-shrink-phrasing",
+    "query": "the old July meeting blocks are huge - shrink them to key takeaways",
+    "should_trigger": true
+  },
+  {
+    "name": "transcript-replace",
+    "query": "replace the 09-18 planning transcript in my meeting notes with its summary",
+    "should_trigger": true
+  },
+  {
+    "name": "condense-standup",
+    "query": "condense the standup notes from 2026-09-15",
+    "should_trigger": true
+  }
+]

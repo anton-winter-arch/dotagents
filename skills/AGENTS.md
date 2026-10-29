@@ -23,6 +23,11 @@ The reliable form of a skill capability is a deterministic script - usually stdl
 Code runs the gate outside the model; prose asks the model to remember.
 A paragraph of instructions that a script could enforce is a defect in the skill, not a style choice.
 
+**A skill is self-contained.**
+Everything its scripts import lives inside its own folder or in the stdlib, and its tests run with `python3 -m unittest discover -s tests`.
+The one outside dependency allowed is another skill, referenced by name: its CLI, or its `scripts/` found as a sibling folder.
+A skill that must read the repo itself, such as the seeder or the skill checkers, says so in its SKILL.md.
+
 **Prose-only skills take the same discipline without the code.**
 A skill with no executable surface - pure method, standard, or advisory text - is exempt from the script rule but not from the budget: it is exactly as verbose as its purpose requires and no more.
 

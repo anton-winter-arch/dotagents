@@ -1,0 +1,32 @@
+[
+  {
+    "name": "talk-mode-readout",
+    "query": "Get me ready for Thursday's readout to the platform owners about the lookback incident.",
+    "should_trigger": true,
+    "why": "The named phrasing for TALK mode: an event the user will speak at."
+  },
+  {
+    "name": "work-mode-runsheet",
+    "query": "Make me a runsheet for promoting the connector to prod.",
+    "should_trigger": true,
+    "why": "The named phrasing for WORK mode: ordered steps for a piece of work."
+  },
+  {
+    "name": "presenting-tomorrow",
+    "query": "I'm presenting the ingestion findings to the stakeholder team tomorrow and I want to be sure nothing I say is wrong.",
+    "should_trigger": true,
+    "why": "A situation clause: about to assert product facts in front of the people who own the system."
+  },
+  {
+    "name": "learning-gap-not-readiness",
+    "query": "What do I need to learn to operate as lead engineer on this project?",
+    "should_trigger": false,
+    "why": "A knowledge-gap question, not a claims audit."
+  },
+  {
+    "name": "plain-research",
+    "query": "Research how connector rollback syncs work and write it up.",
+    "should_trigger": false,
+    "why": "Research with no event, deliverable or work item to be ready for."
+  }
+]

@@ -301,6 +301,10 @@ description is its trigger contract and its body is the workflow.
 | `obsidian` | Obsidian markdown standard plus a per-vault authoring workflow |
 | `markdown-kg` | Offline section-level knowledge graph over a markdown corpus (formerly `obsidian-kg`; that name forwards for one release) |
 | `project-knowledge-vault` | Seeds and lints a flat, OKF-compatible project vault: the contract, a scaffolder, a conformance linter and markdown-kg profile rows |
+| `gather-learnings` | Sweeps a vault's dated `notes-*` sections and the running session into `notes-learnings.md`, then drains the run sheet; ships its own copy of the vault matcher |
+| `compact-notes` | Rewrites one meeting-note section of a vault into the fixed summary format, with a backup outside the vault and a post-edit verify |
+| `get-ready` | Claims audit before a meeting (TALK) or a piece of work (WORK): every risky claim verified by search with source and date, written into the vault's run sheet |
+| `pr-review` | Drafts PR comments and replies in the user's voice, both directions, in a vault's `notes-pr-reviews.md`; `references/register.md` is the house register for anything a colleague reads |
 | `reflect` | End-of-session memory reconciliation |
 | `repo-device-sync` | Multi-device git sync ritual |
 | `sanitize` | Deterministic scrubbing engine and the station's one rule source (`detect.py`): a cleaned copy of any file or folder, a report-only tree scan, an answer gate on stdin, a parser-free verifier that reads every copy back, and the commit and push gate behind the global git hooks (secrets and hidden-character attacks block, identifier-shaped content warns); secrets, personal shapes and the station term list on raw, normalized and decoded text, no model inside, output that never holds a value |

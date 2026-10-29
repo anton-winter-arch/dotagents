@@ -1,0 +1,32 @@
+[
+  {
+    "name": "reply-to-author",
+    "query": "Draft a reply to the author on the dedupe PR. They pushed a fix for the merge key and asked if we're good to go.",
+    "should_trigger": true,
+    "why": "A comment written back into a PR thread, reviewer direction."
+  },
+  {
+    "name": "respond-to-reviewers-on-own-pr",
+    "query": "Two reviewers left comments on my PR. Help me answer them without sounding defensive.",
+    "should_trigger": true,
+    "why": "The reverse direction: replying to reviewers on the user's own branch."
+  },
+  {
+    "name": "can-i-approve",
+    "query": "Can I approve this? Their branch looks fine but another open PR touches the same staging model.",
+    "should_trigger": true,
+    "why": "An approval note is a comment in the thread, and the merge-order collision is the skill's ownership question."
+  },
+  {
+    "name": "review-the-code-itself",
+    "query": "Review this diff for bugs in the join logic. I'm not replying to anyone yet.",
+    "should_trigger": false,
+    "why": "Reviewing code is separate; no comment is being written back."
+  },
+  {
+    "name": "pr-description",
+    "query": "Write the PR description for my branch before I open it.",
+    "should_trigger": false,
+    "why": "A description is not a comment in a thread."
+  }
+]

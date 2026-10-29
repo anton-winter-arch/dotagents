@@ -1,0 +1,81 @@
+{
+    "skill_name": "compact-notes",
+    "evals": [
+        {
+            "id": 1,
+            "prompt": "compact the 2026-07-22 section of notes-meetings.md",
+            "expected_output": "One section rewritten in place into the fixed format after a backup, verified, and the vault's graph re-ingested.",
+            "expectations": [
+                "compact-notes triggers",
+                "The section is resolved with `compact.py inspect`, never addressed by date alone when headings duplicate, and its hash and subsections are kept",
+                "Names and terms in the section are resolved against the vault's graph through the markdown-kg skill, and a vault with no graph is ingested first",
+                "The draft has the stamp line `- [x] REFINED <date> (COMPACTED <date>)`, bold-led takeaways, then DECISIONS, QUESTIONS and ACTIONS, with every existing `###` subsection kept verbatim",
+                "`compact.py backup` runs and prints its path before the operator sees the draft, and the gate offers apply, revise or skip",
+                "The edit is applied with the Edit tool, then `compact.py verify` runs with --backup, --pre-hash and --pre-subs, and an exit 4 is fixed rather than accepted",
+                "The vault's graph is re-ingested after the edit"
+            ],
+            "should_trigger": true
+        },
+        {
+            "id": 2,
+            "prompt": "the old July blocks in notes-meetings.md are huge - shrink them to key takeaways",
+            "expected_output": "A batch run: candidates before 2026-08-01, each section drafted in the fixed format, one gate for the file with every backup path listed.",
+            "expectations": [
+                "compact-notes triggers",
+                "`compact.py candidates` lists the sections before the cutoff, skipping sections already stamped",
+                "Each section is backed up before the gate, and the batch gates once for the file with every backup path listed",
+                "Each rewritten section passes `compact.py verify`"
+            ],
+            "should_trigger": true
+        },
+        {
+            "id": 3,
+            "prompt": "Replace the 2026-09-18-PLANNING transcript in my meeting notes with its summary - it's a speech-to-text dump with no speaker names.",
+            "expected_output": "The transcript rules run first, then the section is rewritten in the fixed format behind a backup.",
+            "expectations": [
+                "compact-notes triggers",
+                "references/transcripts.md is applied first: the block is split by topic, phonetic misreadings are checked against the vault's graph, and a meaning-changing reading is marked inferred and raised at the gate",
+                "Speakers are attributed only from cues in the text",
+                "The rewrite is in the fixed format, and the operator's own actions are included under ACTIONS"
+            ],
+            "should_trigger": true
+        },
+        {
+            "id": 4,
+            "prompt": "compact the 2026-09-02 section of notes-learnings.md, it's gotten long",
+            "expected_output": "Refused: compact-notes touches only the meeting-note log, never notes-learnings.md.",
+            "expectations": [
+                "The request is refused with the reason that compact-notes never touches notes-learnings.md",
+                "Nothing is backed up or written"
+            ],
+            "should_trigger": true
+        },
+        {
+            "id": 5,
+            "prompt": "gather the learnings from the last three days of notes",
+            "expected_output": "gather-learnings owns a sweep of a window of notes; compact-notes does not fire.",
+            "expectations": [
+                "compact-notes does not trigger"
+            ],
+            "should_trigger": false
+        },
+        {
+            "id": 6,
+            "prompt": "The program overview deck is mostly narrative with a handful of facts. Distill it into learnings and drop it from the vault.",
+            "expected_output": "compact-notes does not fire: the input is a whole document to remove, not a meeting-note section to rewrite in place.",
+            "expectations": [
+                "compact-notes does not trigger"
+            ],
+            "should_trigger": false
+        },
+        {
+            "id": 7,
+            "prompt": "What are my open action items?",
+            "expected_output": "compact-notes does not fire: listing action items rewrites nothing.",
+            "expectations": [
+                "compact-notes does not trigger"
+            ],
+            "should_trigger": false
+        }
+    ]
+}

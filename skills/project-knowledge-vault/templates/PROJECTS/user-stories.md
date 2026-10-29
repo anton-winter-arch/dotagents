@@ -10,7 +10,7 @@ updated: YYYY-MM-DD
 
 # USER-STORIES
 
-The live board for this project, and the bottom rung of the ladder: every item here rolls up to something stated in [[00-brd]]. Work that is not on the board yet sits in [[user-stories-backlog]], the steps for work in flight are in [[user-stories-runsheet]], and finished items move to [[user-stories-completed]] rather than being deleted.
+The live board for this project, and the bottom rung of the ladder: every item here rolls up to something stated in [[00-brd]]. Work that is not on the board yet sits in [[user-stories-backlog]], the steps for work in flight are in [[user-runsheet]], and finished items move to [[user-stories-completed]] rather than being deleted.
 
 **The `sprint-board` skill owns this file's structure.** Its `references/anatomy.md` is the specification for the heading hierarchy, the parent declaration and the epic, feature and story bodies; its `board_lint.py` is the check. Neither is restated here, so that there is only ever one copy to keep current.
 

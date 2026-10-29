@@ -373,7 +373,7 @@ Five moves produce almost all of it. Each is a habit of adding, so each fix is a
 
 **Cut the trailing rationale.** A criterion, a step or a query comment states the check. It does not argue for the check. Any clause opening with "so", "which is", "since" or "because" and closing the line is defending a decision to a reader who has already accepted it.
 
-    - [ ] Compare the register against the routes that exist, so a difference is a finding rather than an assumption
+    - [ ] Compare the endpoints.md entries against api/routes.py for each service, so a difference is a finding rather than an assumption
     - [ ] Compare the endpoints.md entries against api/routes.py for each service
 
 The rationale belongs in Purpose, once, where someone deciding whether the item is worth doing will read it. Repeated onto every line beneath, it is noise.
@@ -384,8 +384,8 @@ The rationale belongs in Purpose, once, where someone deciding whether the item 
 
 **State the alternative, do not describe the act of explaining it.** A criterion offering an escape hatch names the second acceptable state. It does not ask for an explanation and leave the state undefined.
 
-    - [ ] Every endpoint has a route, or states that it does not and why
-    - [ ] Every endpoint has a route or is listed as deprecated
+    - [ ] Every endpoint in endpoints.md has a route in api/routes.py, or states that it does not and why
+    - [ ] Every endpoint in endpoints.md has a route in api/routes.py or is marked deprecated in endpoints.md
 
 A sixth case is not a rewrite. **A criterion nobody can act on is cut, not reworded.** "Each service records what calls it" survives a proofread because every word is defensible, and it still tells the engineer nothing: no artifact, no threshold, no destination. Reaching for a better phrasing keeps a line that was never a criterion. Delete it, and check whether the condition it gestured at is already carried by another line.
 
@@ -436,8 +436,8 @@ not do the work.
 - Cover the negative path. At least one criterion should address what happens
   when the thing fails, is absent, or falls out of tolerance.
 - Say where the artifact ends up, by path. "Stored with the deliverables" cannot
-  be checked; `deploy-runbook.md is merged to main under docs/ops/` can. A
-  criterion naming an artifact names the repository or system it lands in.
+  be checked; "`deploy-runbook.md` is merged to `main` under `docs/ops/`" can.
+  A criterion naming an artifact names the repository or system it lands in.
 - Every criterion has to leave someone with something to do. "Unconfirmable
   entries are marked unverified rather than assumed" records a feeling and
   changes nothing; either give the uncertainty a destination - a backlog item, a

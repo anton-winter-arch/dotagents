@@ -16,6 +16,7 @@
                "COMMENTS": "quoted", "DONE": "routine", "IN FLIGHT": "routine", "BLOCKED": "routine"}},
     {"path": "notes-questions.md", "profile": "reference"},
     {"path": "user-stories*.md", "profile": "reference"},
+    {"path": "user-runsheet.md", "profile": "reference"},
     {"path": "[0-9][0-9]-*.md", "profile": "reference"},
     {"path": "agents-*.md", "profile": "generated"},
     {"path": "code-*.md", "profile": "reference", "weight": 0.5},

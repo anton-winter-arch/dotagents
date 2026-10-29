@@ -1,0 +1,100 @@
+{
+    "skill_name": "get-ready",
+    "evals": [
+        {
+            "id": 1,
+            "prompt": "Get me ready for the readout to the platform owners on Thursday about the lookback incident.",
+            "expected_output": "Skill names TALK mode, scopes the target and audience, assembles the surface (vault through its graph, plus the project's knowledge base where it has one), extracts every assertable claim into a table ranked by blast radius, verifies the risky ones by search with source and date, and writes a dated READY section into the vault's run sheet.",
+            "expectations": [
+                "Skill establishes the audience and what they own before extracting claims, per Step 1 (claims land hardest in front of the people who own that system).",
+                "Assembles the surface explicitly and treats vault notes as hypothesis rather than fact (they may be partial), searching the vault through its graph rather than reading files whole.",
+                "Extracts claims into a table one row per assertion, classified as negative/universal, currency, number/limit, attribution, or principle: enumerated, not summarized.",
+                "Verifies capability negatives and universals FIRST as the highest-risk class, per the claim risk hierarchy.",
+                "Every verified claim carries a source and a date; an undated capability claim is treated as unverified.",
+                "Writes the brief as a `## READY: <target>, <date>` section of the vault's run sheet, containing the 'Say this INSTEAD (corrected)' subsection, not merely a list of verdicts, and creates no separate file."
+            ],
+            "should_trigger": true
+        },
+        {
+            "id": 2,
+            "prompt": "I'm presenting the ingestion findings to the stakeholder team tomorrow. Make sure I don't say anything wrong.",
+            "expected_output": "Skill runs the claims audit over the presentation surface, refutes or confirms each vendor-capability claim by search, and returns corrected wording for anything wrong plus memory-form wording for anything unverifiable.",
+            "expectations": [
+                "Capability negatives (e.g. 'X has no lookback window', 'you can't', 'the only way is') are always verified and never passed through untagged, per the dangerous-class rule.",
+                "For a negative, the verification bar is a vendor-official statement of the limit or documentation of the full control surface; absent that, the claim is converted to memory-form rather than asserted.",
+                "Refuted claims come back with the corrected sentence the user should say instead, with source and date, not just a verdict.",
+                "Unverified claims come back in scoped memory-form (e.g. 'I don't know of Y in X, worth confirming') rather than as a fact or as silence.",
+                "Currency-sensitive claims (GA status, pricing, deprecations, versions) require two independent sources, one vendor-official.",
+                "Skill does not hedge after a confident assertion; epistemic status leads the corrected wording."
+            ],
+            "should_trigger": true
+        },
+        {
+            "id": 3,
+            "prompt": "Help me achieve a clean conversation with the platform owner about the cutover next week.",
+            "expected_output": "Skill treats the goal-shaped request as a readiness target, scopes what will be asserted and decided, audits those claims, and surfaces the open questions to bring TO the room.",
+            "expectations": [
+                "Skill recognizes 'help me achieve X' as a readiness target and scopes the goal, audience, and the specific things the user intends to assert or decide.",
+                "Distinguishes claims the user will make (audited) from questions the audience owns (surfaced in the 'Bring these questions' subsection).",
+                "Includes a 'Check live before you speak' subsection for the questions only the live system or a person can settle.",
+                "Does not auto-run a full research pass; offers it as a follow-up only if verification surfaces a durable general-knowledge void.",
+                "Re-ingests the vault's graph after writing the section."
+            ],
+            "should_trigger": true
+        },
+        {
+            "id": 4,
+            "prompt": "Get ready to work this story. I need to stand up the documentation agent in dev.",
+            "expected_output": "Skill names WORK mode, drafts the ordered steps a human executes start to finish, audits those steps as claims, verifies the vendor mechanics by search, and writes the result into the project's run sheet.",
+            "expectations": [
+                "Skill names the mode as WORK in one line before working, per Step 1.",
+                "Drafts the full procedure in execution order BEFORE verifying, then audits the draft, each step treated as a claim that this control exists at this path with this effect.",
+                "Block 0 covers access and prerequisites and names which of them fail late rather than up front.",
+                "UI labels are reproduced verbatim as the vendor documentation spells them, written as a click path rather than in bold; a path that was not actually read is marked as such rather than invented.",
+                "Formatting is minimal: bold only for a short label, no bold inside sentences, no callouts or emoji, at most one table per section.",
+                "Each step has its own heading, plain sentences and top-level fenced blocks for anything typed, pasted or found-and-replaced; no nested bullets inside a step; Pass and Rollback are their own paragraphs.",
+                "Finished steps collapse into one done line, and no step asks the operator to redo a check already done.",
+                "Steps are instructions rather than explanations, one or two lines, with the rationale left to the decision record.",
+                "SQL, CLI or API calls are given in exact form as code wherever a scriptable equivalent is documented, in preference to a UI path.",
+                "Writes to the target vault's existing run sheet, then re-ingests the vault's graph. No second run sheet file is created.",
+                "No READY brief is written; that is TALK mode's output."
+            ],
+            "should_trigger": true
+        },
+        {
+            "id": 5,
+            "prompt": "Make me a runsheet for the connector promotion.",
+            "expected_output": "Skill engages in WORK mode, assembles the work item plus any governing decision record plus vendor documentation, drafts and audits the steps, and appends them to the existing run sheet under a new heading.",
+            "expectations": [
+                "'Make me a runsheet for X' triggers the skill in WORK mode rather than being answered as a plain drafting request.",
+                "Surface assembly adds the work item as written, the governing decision record, and the vendor documentation for what is being stood up.",
+                "The decision record's reasoning is not restated inside the run sheet; the run sheet carries what to do and the record carries why.",
+                "Capability negatives inside steps (for example 'there is no API for this') are verified to the same bar as any other negative, not passed through.",
+                "New content is added to the existing run sheet as a heading rather than as a new file."
+            ],
+            "should_trigger": true
+        },
+        {
+            "id": 6,
+            "prompt": "What do I actually need to learn to operate as lead engineer on this project?",
+            "expected_output": "The get-ready skill does not engage; this is a knowledge-gap question that asks what the user does not know rather than whether what they are about to say is true.",
+            "expectations": [
+                "get-ready is NOT engaged; SKILL.md says a knowledge-gap question is a different job.",
+                "No claims audit is performed and nothing is written to the run sheet.",
+                "The distinction is honored: get-ready asks 'is what I'm about to say true?'; a gap question asks 'what don't I know?'"
+            ],
+            "should_trigger": false
+        },
+        {
+            "id": 7,
+            "prompt": "Research connector rollback syncs and write it up for the knowledge base.",
+            "expected_output": "The get-ready skill does not engage; this is a direct research request with no event, deliverable or work item to be ready for, which belongs to a research skill.",
+            "expectations": [
+                "get-ready is NOT engaged; the user is asking for research, not readiness prep for an event or assertion.",
+                "Nothing is written to the run sheet.",
+                "No claims-audit table is produced for a request that has no target audience or deliverable to be ready for."
+            ],
+            "should_trigger": false
+        }
+    ]
+}

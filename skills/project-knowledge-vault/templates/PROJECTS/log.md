@@ -9,7 +9,7 @@ Everything else from a session goes where it is used:
 | A note added, removed, renamed or archived, or a supersession applied by hand | This file, under today's date |
 | A durable fact | `notes-learnings.md`, under today's sweep |
 | Provenance or a decision a reviewer needs | the item's own section in `user-stories.md` |
-| An action still to run | `user-stories-runsheet.md` |
+| An action still to run | `user-runsheet.md` |
 | Work not on the board yet | `user-stories-backlog.md` |
 | An unanswered question | `notes-questions.md` |
 

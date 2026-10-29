@@ -26,6 +26,7 @@ FAMILIES: list[tuple[re.Pattern[str], set[str]]] = [
     (re.compile(r"^notes-meeting(s|-notes)\.md$"), {"meeting_note"}),
     (re.compile(r"^notes-[a-z0-9-]+\.md$"), {"note", "reference"}),
     (re.compile(r"^user-stories(-[a-z0-9-]+)?\.md$"), {"user_story"}),
+    (re.compile(r"^user-runsheet\.md$"), {"user_story"}),
     (re.compile(r"^([a-z][a-z0-9]*-)?\d\d-[a-z0-9-]+\.md$"), {"reference"}),  # optional letter-led project alias
     (re.compile(r"^agents-[a-z0-9-]+\.md$"), {"reference"}),
     (re.compile(r"^code-[a-z0-9-]+\.md$"), {"code"}),

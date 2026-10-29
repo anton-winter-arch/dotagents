@@ -12,12 +12,12 @@ available to Claude Code (and other skill-aware agents) on every device.
 Third-party/upstream skills are **not** published here - they are consumed from
 installed plugins (e.g. `agent-skills@addy-agent-skills`), which auto-update and
 expose namespaced `plugin:skill` entries. This repo carries only what the user
-authors or forks (**29 skills** `agent-conference`, `agent-cc-configs-sync`,
+authors or forks (**33 skills** `agent-conference`, `agent-cc-configs-sync`,
 `agent-mail`, `agent-review`, `ai-engineering`, `ai-slop-magic-eraser`,
-`cmon`, `code-kg`, `compress-media`,
-`deep-research`, `focus`, `frontend-aesthetics`, `hi`, `local-model-task`,
-`markdown-kg`, `meta-loop`,
-`my-security-review-checklist`, `notes`, `obsidian`,
+`cmon`, `code-kg`, `compact-notes`, `compress-media`,
+`deep-research`, `focus`, `frontend-aesthetics`, `gather-learnings`, `get-ready`,
+`hi`, `local-model-task`, `markdown-kg`, `meta-loop`,
+`my-security-review-checklist`, `notes`, `obsidian`, `pr-review`,
 `project-knowledge-vault`, `reflect`, `repo-device-sync`,
 `sanitize`, `skill-authoring`, `sprint-board`, `support-local`, `task`, `teach-me`,
 `wrap-up`, plus the `obsidian-kg` pointer that forwards to `markdown-kg` for one

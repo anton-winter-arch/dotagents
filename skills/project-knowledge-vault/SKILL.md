@@ -6,7 +6,7 @@ description: >-
 
 # project-knowledge-vault
 
-A project vault is the hub object of a knowledge stack. It is one flat directory, and the filename prefix is the category: `00-brd` states the why, `01-north-star` says who the vault serves and who is who, `notes-*` capture what happened, `notes-learnings` holds what turned out to be true, `notes-questions` is the one register of open questions, and `user-stories*` hold the work, its run sheet, its backlog and its research. `index.md` and `log.md` are the OKF front door and change history. The full contract is `templates/PROJECTS/AGENTS.md`, and that file ships into every vault, so the contract has exactly one copy.
+A project vault is the hub object of a knowledge stack. It is one flat directory, and the filename prefix is the category: `00-brd` states the why, `01-north-star` says who the vault serves and who is who, `notes-*` capture what happened, `notes-learnings` holds what turned out to be true, `notes-questions` is the one register of open questions, `user-stories*` hold the work, its backlog and its research, and `user-runsheet` holds the steps for the work in flight. `index.md` and `log.md` are the OKF front door and change history. The full contract is `templates/PROJECTS/AGENTS.md`, and that file ships into every vault, so the contract has exactly one copy.
 
 The seed has chat split into client and internal files, a month H1 and jump link per month in every dated file, an UPCOMING block in the meeting notes, learnings sweeps with a one-line headline, story-keyed PR reviews, a START HERE run sheet, and an alias roster in the north-star.
 
@@ -15,10 +15,10 @@ The seed has chat split into client and internal files, a month H1 and jump link
 ```
 seed      python3 scripts/vault_scaffold.py --target <path> --name <NAME> [--dry-run] [--no-graph]
 lint      python3 scripts/vault_lint.py <path>/PROJECTS/<NAME> [--json]
-test      python3 -m pytest tests -q
+test      python3 -m unittest discover -s tests
 ```
 
-The scaffolder writes `<path>/PROJECTS/<NAME>/` from `templates/PROJECTS/`. It never overwrites: an existing file is reported as skipped, so a run against a part-built vault fills the gaps. It resolves no dates, so two runs on different days produce byte-identical notes. Then it seeds the graph: it runs markdown-kg's `init` when the vault has no graph config (a vault with only a legacy `vault-kg/` is skipped with a rename instruction), merges any row from `templates/markdown-kg-profiles.md` that the config lacks, seeds `markdown-kg/.gitignore` with `*.db*` because the database holds every note's full text, and ingests when a note or a row was added. markdown-kg is found beside this skill; when it is absent the step is reported and skipped. Exit 1 means a file could be neither written nor skipped, or the graph step failed.
+The scaffolder writes `<path>/PROJECTS/<NAME>/` from `templates/PROJECTS/`. It never overwrites: an existing file is reported as skipped, so a run against a part-built vault fills the gaps. A vault that holds a role under an older filename (`user-stories-runsheet.md` or `user-stories-tasks.md` for the run sheet) is not given the new name as a second file. It resolves no dates, so two runs on different days produce byte-identical notes. Then it seeds the graph: it runs markdown-kg's `init` when the vault has no graph config (a vault with only a legacy `vault-kg/` is skipped with a rename instruction), merges any row from `templates/markdown-kg-profiles.md` that the config lacks, seeds `markdown-kg/.gitignore` with `*.db*` because the database holds every note's full text, and ingests when a note or a row was added. markdown-kg is found beside this skill; when it is absent the step is reported and skipped. Exit 1 means a file could be neither written nor skipped, or the graph step failed.
 
 The linter is the anti-drift mechanism. Every check fires on positive evidence, and an unreadable file is a failure rather than a pass. Exit 0 clean, 1 on any finding.
 
@@ -26,7 +26,7 @@ The linter is the anti-drift mechanism. Every check fires on positive evidence, 
 |---|---|
 | `flat` | any subdirectory other than `markdown-kg/`, the legacy `vault-kg/` or a dot-folder |
 | `frontmatter` | a note without parseable YAML carrying a non-empty `type` |
-| `family` | a `type` outside the family table for that prefix, or a prefix in no family; an alias learned from the vault's own `<alias>-NN-*` notes admits its unnumbered `<alias>-<slug>` notes |
+| `family` | a `type` outside the family table for that prefix, or a prefix in no family; `user-runsheet.md` and the older `user-stories-*` run sheet names are both `user_story`; an alias learned from the vault's own `<alias>-NN-*` notes admits its unnumbered `<alias>-<slug>` notes |
 | `reserved` | `index.md` or `log.md` missing, or any frontmatter on either |
 | `filename` | anything not lowercase-kebab |
 | `wikilink` | a `[[target]]` with no note in the vault |

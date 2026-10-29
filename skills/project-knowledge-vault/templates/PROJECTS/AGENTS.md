@@ -32,7 +32,7 @@ Sort order is also an ownership gradient, and knowing which end of it a file sit
 |---|---|---|---|
 | Top | `NN-*`, `agents-*` | Operator or agent | `00-brd` and `01-north-star` are the operator's own steering; other numbered notes and `agents-*` are regenerated or appended by an agent, and a human edits the source, not the output |
 | Middle | `code-*`, `docs-*` | Ingested | Replaced wholesale when the upstream artifact changes; never hand-edited |
-| Bottom | `notes-*`, `user-stories*` | Human | Hand-written in the course of the work; an agent appends and refines but does not own |
+| Bottom | `notes-*`, `user-stories*`, `user-runsheet` | Human | Hand-written in the course of the work; an agent appends and refines but does not own |
 | Reserved | `index.md`, `log.md` | Shared | Maintained by whoever adds or retires a note |
 
 Collaboration happens across the gradient rather than in a designated place. The gradient tells you whose edit wins in a conflict: at the top the generator wins, at the bottom the human does.
@@ -55,7 +55,7 @@ Collaboration happens across the gradient rather than in a designated place. The
 | `notes-learnings.md` | `reference` | Durable facts written to outlive the threads that produced them. One dated section per sweep. |
 | `notes-questions.md` | `reference` | The open-question register. The only home for a question still awaiting an answer. |
 | `user-stories.md` | `user_story` | The live board. |
-| `user-stories-runsheet.md` | `user_story` | What to do, where, in what order, and what blocks what, for the stories in flight. |
+| `user-runsheet.md` | `user_story` | The run sheet: what to do, where, in what order, and what blocks what, for the stories in flight. Formerly `user-stories-runsheet.md` and before that `user-stories-tasks.md`; a dependent skill maps either older name. |
 | `user-stories-backlog.md` | `user_story` | Work not on the live board yet: blocked, untracked or parked. |
 | `user-stories-research.md` | `user_story` | Research for the open stories, with sources and labeled findings. |
 | `user-stories-completed.md` | `user_story` | Cold storage. Finished work graduates here with its body and shape intact. |
@@ -73,7 +73,7 @@ Filename order encodes the shape of the project, top to bottom:
 1. `00-brd` - **the why.** Requirements, the aggregate everything sums to.
 2. `01-north-star` and the rest of the `NN-*` tier - who the vault serves, and the refined-for-use layer that maps the corpus.
 3. `code-*`, `docs-*`, `notes-*` - the source corpus, what was captured.
-4. `user-stories*` - **the what-now.** The concrete assigned work.
+4. `user-stories*` and `user-runsheet` - **the what-now.** The concrete assigned work and the steps for it.
 
 Work filters **up**: a story is the ground-level unit, the BRD is what it all adds up to. Read top-down for the why, bottom-up for what is in flight.
 
@@ -133,7 +133,7 @@ Four exceptions, each fixed by file:
 
 **Backlog** (`user-stories.md`, `user-stories-completed.md`). The `sprint-board` skill owns the shape: its anatomy reference is the specification, its scaffolder writes the structure and its linter checks it. An item keeps that shape when it graduates to the completed file, so the same linter reads both. The completed file groups items under `# SWEEP-IN` as they arrive and `# SORTED` once filed.
 
-**Working files** (`user-stories-runsheet.md`, `-backlog.md`, `-research.md`). Each has fixed top-level sections, stated in the file: the run sheet's `# START HERE` and `# FOR THE AGENTS`, the backlog's `# BLOCKED`, `# BACKLOG` and `# PARKED`.
+**Working files** (`user-runsheet.md`, `user-stories-backlog.md`, `user-stories-research.md`). Each has fixed top-level sections, stated in the file: the run sheet's `# START HERE` and `# FOR THE AGENTS`, the backlog's `# BLOCKED`, `# BACKLOG` and `# PARKED`.
 
 **Reference** (`NN-*`, `agents-*`). One H2 per idea, closing with `## Related`.
 
@@ -153,7 +153,7 @@ Four exceptions, each fixed by file:
 | What a conversation or meeting settled | the dated section in the matching `notes-*` file |
 | A durable fact | `notes-learnings.md`, under the day's sweep |
 | An unanswered question | `notes-questions.md` |
-| An action still to run | `user-stories-runsheet.md` |
+| An action still to run | `user-runsheet.md` |
 | Work not on the board yet | `user-stories-backlog.md` |
 | A note added, removed, renamed or archived | `log.md`, under today's date |
 
@@ -174,7 +174,7 @@ Material rarely arrives in the vault's shape. A file is classified by what it ho
 | Code snippets, scripts, configs, repository dumps | `code-<repo>[-<subsystem>].md` |
 | User stories, tickets, agile boards, backlog exports | `user-stories.md` while open, `user-stories-completed.md` once closed |
 | Work intake requests and work not yet on the board | `user-stories-backlog.md` |
-| Ordered steps someone works through | `user-stories-runsheet.md` |
+| Ordered steps someone works through | `user-runsheet.md` |
 | Requirements and scope | `00-brd.md`; audience, team and standing facts go to `01-north-star.md` |
 
 A file that mixes kinds is filed by its main content, and its other parts are linked from the notes they belong to rather than split out.

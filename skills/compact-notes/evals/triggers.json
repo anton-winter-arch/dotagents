@@ -1,0 +1,62 @@
+[
+  {
+    "name": "section-mode-explicit",
+    "query": "compact the 2026-07-22 meeting in notes-meetings.md",
+    "should_trigger": true,
+    "why": "names the skill's exact unit of work: one meeting section, compaction intent"
+  },
+  {
+    "name": "batch-shrink-phrasing",
+    "query": "the old July meeting blocks are huge - shrink them to key takeaways",
+    "should_trigger": true,
+    "why": "batch compaction phrased as shrinking to takeaways"
+  },
+  {
+    "name": "summarize-into-format",
+    "query": "summarize today's meeting notes into the format",
+    "should_trigger": true,
+    "why": "an in-place summary in the fixed format is the skill's one job"
+  },
+  {
+    "name": "clean-up-transcript",
+    "query": "clean up this meeting transcript from the planning session",
+    "should_trigger": true,
+    "why": "a speech-to-text meeting section rewritten in place"
+  },
+  {
+    "name": "condense-standup",
+    "query": "condense the standup notes from 2026-09-15",
+    "should_trigger": true,
+    "why": "a synonym for compaction on a meeting section"
+  },
+  {
+    "name": "distill-is-not-compact",
+    "query": "the bronze inventory doc is low-signal now - distill it and drop it from the corpus",
+    "should_trigger": false,
+    "why": "a whole document leaving the corpus, not a section rewritten in place"
+  },
+  {
+    "name": "learnings-sweep-request",
+    "query": "gather the learnings from the last three days of notes",
+    "should_trigger": false,
+    "why": "a learnings sweep is gather-learnings"
+  },
+  {
+    "name": "split-is-not-compact",
+    "query": "this note is way too big, split it into one note per subfolder",
+    "should_trigger": false,
+    "why": "splitting a note rewrites no section"
+  },
+  {
+    "name": "action-items-list",
+    "query": "what are my open action items?",
+    "should_trigger": false,
+    "why": "a read-only listing rewrites nothing"
+  },
+  {
+    "name": "socratic-session",
+    "query": "let's do a socratic session on the 09-16 client chat",
+    "should_trigger": false,
+    "why": "a question-by-question clarity pass on a chat log, not a meeting section rewritten into the format"
+  }
+]

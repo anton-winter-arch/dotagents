@@ -23,7 +23,7 @@ The contract every note here satisfies is in [AGENTS.md](AGENTS.md). Read it bef
 ## Work
 
 - [user-stories](user-stories.md) - The live board.
-- [user-stories-runsheet](user-stories-runsheet.md) - What to do, where, in what order, and what blocks what.
+- [user-runsheet](user-runsheet.md) - What to do, where, in what order, and what blocks what.
 - [user-stories-backlog](user-stories-backlog.md) - Work that is not on the live board yet: blocked, untracked or parked.
 - [user-stories-research](user-stories-research.md) - Research for the open stories, with sources and what was confirmed.
 - [user-stories-completed](user-stories-completed.md) - Cold storage for finished work.

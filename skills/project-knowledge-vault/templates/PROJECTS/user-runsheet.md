@@ -1,6 +1,6 @@
 ---
 type: user_story
-title: user-stories-runsheet
+title: user-runsheet
 description: Run sheet for the open stories. What to do, where, in what order, and what blocks what.
 tags:
   - user-stories
@@ -8,7 +8,7 @@ tags:
 updated: YYYY-MM-DD
 ---
 
-# USER-STORIES-RUNSHEET
+# USER-RUNSHEET
 
 One paragraph on what is in flight right now, naming each story on [[user-stories]] that this sheet covers.
 

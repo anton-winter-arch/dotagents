@@ -33,6 +33,9 @@ TEMPLATE_DIR = SKILL_DIR / "templates" / "PROJECTS"
 PROFILES = SKILL_DIR / "templates" / "markdown-kg-profiles.md"
 KG = SKILL_DIR.parent / "markdown-kg" / "scripts" / "markdown_kg.py"
 JSON_BLOCK = re.compile(r"```json\n(.*?)```", re.S)
+# A role whose file was renamed: a vault holding the older name already fills the role,
+# so seeding the new name would give it two files for one role.
+OLDER_NAMES = {"user-runsheet.md": ("user-stories-runsheet.md", "user-stories-tasks.md")}
 
 
 def template_files() -> list[Path]:
@@ -57,6 +60,10 @@ def scaffold(target: Path, name: str, dry_run: bool = False) -> tuple[list[str],
             continue
         if out.exists():
             skipped.append(src.name)
+            continue
+        older = next((n for n in OLDER_NAMES.get(src.name, ()) if (dest / n).exists()), None)
+        if older:
+            skipped.append(f"{src.name} (the vault already has {older}, its older name)")
             continue
         if dry_run:
             written.append(src.name)

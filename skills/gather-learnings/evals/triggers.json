@@ -1,0 +1,32 @@
+[
+  {
+    "name": "gather-this-week",
+    "query": "Gather the learnings from this week's notes in the project vault.",
+    "should_trigger": true,
+    "why": "The named phrasing: a window of notes swept into notes-learnings.md."
+  },
+  {
+    "name": "write-session-into-learnings",
+    "query": "Write what we just found about the retry window into the learnings file.",
+    "should_trigger": true,
+    "why": "The session itself is a source, and the learnings file has one write path."
+  },
+  {
+    "name": "drain-the-run-sheet",
+    "query": "Clear the run sheet, everything on it shipped yesterday.",
+    "should_trigger": true,
+    "why": "Draining the run sheet is this skill's section 6, so the durable facts are lifted first."
+  },
+  {
+    "name": "compact-one-meeting",
+    "query": "Compact the 2026-07-22 meeting notes into the summary format.",
+    "should_trigger": false,
+    "why": "One meeting section rewritten in place is compact-notes."
+  },
+  {
+    "name": "repo-living-docs",
+    "query": "Update this repo's todo and plan files with what we did today.",
+    "should_trigger": false,
+    "why": "A repo's own living docs are the notes skill, not a vault sweep."
+  }
+]

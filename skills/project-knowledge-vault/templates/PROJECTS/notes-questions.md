@@ -1,7 +1,7 @@
 ---
 type: reference
 title: notes-questions
-description: Open questions with no answer yet. Findings go to notes-learnings; actions go to user-stories-runsheet.
+description: Open questions with no answer yet. Findings go to notes-learnings; actions go to user-runsheet.
 tags:
   - questions
   - register
@@ -10,7 +10,7 @@ updated: YYYY-MM-DD
 
 # QUESTIONS
 
-Questions rather than findings, so they sit here rather than in [[notes-learnings]], and rather than in [[user-stories-runsheet]], which holds actions. This is the only place an open question is tracked. A question leaves this file when it is answered, and the answer goes to [[notes-learnings]] as a dated fact.
+Questions rather than findings, so they sit here rather than in [[notes-learnings]], and rather than in [[user-runsheet]], which holds actions. This is the only place an open question is tracked. A question leaves this file when it is answered, and the answer goes to [[notes-learnings]] as a dated fact.
 
 Elsewhere in the vault a question is a closed record of what was asked on a date: a `### QUESTIONS` bullet under a dated section says the question was raised then, and does not track it.
 
