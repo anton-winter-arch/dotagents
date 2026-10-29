@@ -5,6 +5,8 @@ how binaries are skipped. Every term is invented.
 Run: python3 -m unittest discover -s skills/sanitize/tests -v
 """
 
+from __future__ import annotations
+
 import base64
 import csv
 import importlib.util

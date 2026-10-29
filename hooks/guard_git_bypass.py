@@ -26,6 +26,8 @@ a relative `install.sh` call from inside `hooks/git/` are not seen.
 Exit 2 with the reason on stderr to refuse; exit 0 otherwise, including on any error
 of its own.
 """
+from __future__ import annotations
+
 import importlib.util
 import re
 import shlex

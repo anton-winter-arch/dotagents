@@ -229,7 +229,7 @@ class RepoChecks(unittest.TestCase):
         self.assertFalse(names & {"AGENTS.md", "CLAUDE.md", "README.md"}, names)
         self.assertNotIn(sh.LEDGER_NAME, names)
         self.assertIn("_require.sh", names)
-        self.assertIn("reject-words.toml", names)
+        self.assertIn("reject-words.json", names)
 
     def test_live_repo_seeds_no_markdown(self):
         _, files = sh.load_seeds(REPO, "claude-code")

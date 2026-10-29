@@ -24,6 +24,8 @@ caller reads only those sections rather than a 272KB file.
 stdlib only, one consumer (the gather-learnings skill).
 """
 
+from __future__ import annotations
+
 import argparse
 import datetime as dt
 import sys

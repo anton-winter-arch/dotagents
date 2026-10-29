@@ -12,6 +12,8 @@ trap the checker exists to catch, and it must exit non-zero. A missing file must
 not, because backfill is opportunistic.
 """
 
+from __future__ import annotations
+
 import json
 import subprocess
 import sys

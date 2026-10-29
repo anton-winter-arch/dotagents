@@ -9,6 +9,8 @@ with the reason on stderr; a clean SKILL.md, any other file, and fixture paths
 exit 0; a missing checker or unreadable payload fails OPEN (exit 0).
 """
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess

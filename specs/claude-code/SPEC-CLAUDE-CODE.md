@@ -496,7 +496,7 @@ The hook scripts live in two repository folders and are copied flat into
 holds the seventeen scripts that enforce rules about the repository, the machine
 or the content (every guard, gate and content check this section lists, the
 chat-register pair included) and their four companion files, `_require.sh`,
-`reject-words.toml`, `no-meta-commentary.patterns` and the published-copy
+`reject-words.json`, `no-meta-commentary.patterns` and the published-copy
 example list, which are copied but never wired. This folder's `hooks/`, with
 its own `manifest.json`, holds the six that serve Claude Code
 itself (`ask-before-claude-folder-edits.sh`, `read-size-advisory.sh`,
@@ -519,7 +519,7 @@ the skill-description lint (`skill_description_lint.py`, post-write),
 the chat-register pair (`no-meta-commentary.sh` pre-write +
 `no-meta-commentary-check.sh` post-write, sharing
 `no-meta-commentary.patterns`), the word-list guard
-(`reject_words.py`, reading `reject-words.toml`), the invisible-character guard
+(`reject_words.py`, reading `reject-words.json`), the invisible-character guard
 (`reject_invisibles.py`), the private-folder guard
 (`guard-private.sh`, closing the shell path to `~/.claude/private` and
 `~/.claude/state` and file placement in `~/.claude-mem/bin`; the file tools
@@ -932,19 +932,21 @@ Scripts: [`hooks/no-meta-commentary.sh`](../../hooks/no-meta-commentary.sh),
 in the repository's shared folder (moved 2026-10-13: the register rule binds any
 agent writing a file).
 
-### `reject_words.py` + `reject-words.toml`
+### `reject_words.py` + `reject-words.json`
 
 PreToolUse guard (matcher `Write|Edit|MultiEdit|NotebookEdit|Update|Create`,
 wired in §7 directly after `no-meta-commentary.sh`) - GLOBAL, **blocking**
 through a `permissionDecision: deny`. It refuses a doc-file write (`.md`,
 `.mdx`, `.markdown`, `.txt`, `.rst`, any case) that adds a word or phrase from
-`reject-words.toml`, matched whole and case-insensitive. Code and data files are
+`reject-words.json`, matched whole and case-insensitive. Code and data files are
 never checked, and a word joined to others by a hyphen or underscore is a name,
 slug or identifier and passes. This is the write-side enforcement of the
 AGENTS.md plain-words rule.
 
-The list is one TOML table per category: `words`, `why`, `instead`, and an
-optional `ask` holding the question that separates the legitimate exception.
+The list is one JSON object with one entry per category. Each category holds
+`words`, `why`, `instead` and an optional `ask`, the question that separates the
+legitimate exception. Two entries are not categories: the `_about` string is a
+note, and the `exempt` object is described below.
 The deny reason gives one block per category hit, so it steers the rewrite
 instead of only refusing. `REJECT_WORDS_FILE` overrides the list path. The
 shipped categories are `figurative-load` and `vague-vocabulary`; add one when a
@@ -958,7 +960,7 @@ ignored. Path-excluded are the sites that quote the words on purpose:
 `*/hooks/*`, `*/tests/*`, `*/fixtures/*` and `*/skills/ai-slop-magic-eraser/*`.
 A file that is somebody else's words verbatim (a quoted source, a transcript)
 is exempt as a whole when its YAML frontmatter `tags` holds a tag from the
-list's `[exempt]` table, which ships with `verbatim`. The hook reads the
+list's `exempt` entry, which ships with `verbatim`. The hook reads the
 frontmatter from the incoming content for a Write and from the file on disk for
 an Edit, and a tag anywhere else in the file does not count.
 
@@ -969,14 +971,13 @@ deny creates an empty marker named `sha256(path + incoming text)` under
 unlinks it and is allowed once. The model certifies its own exception, so this
 is a prompt to rewrite rather than a hard wall. Fails open on a garbage or
 malformed payload, a missing or unparseable list, or an unwritable state dir.
-Stdlib python3; on a python3 older than 3.11, which has no `tomllib`, the list
-loads empty and the guard passes everything. Tests:
-`tests/station-hooks/test-reject-words.py` (24 cases, including the verbatim
+The hook is stdlib python3 and runs on 3.9 or newer. Tests:
+`tests/station-hooks/test-reject-words.py` (25 cases, including the verbatim
 exemption, symlinks planted at the session and marker paths and an unwritable
 state dir); run after any edit.
 
-Script: [`claude-code/hooks/reject_words.py`](hooks/reject_words.py), list
-[`claude-code/hooks/reject-words.toml`](hooks/reject-words.toml).
+Script: [`hooks/reject_words.py`](../../hooks/reject_words.py), list
+[`hooks/reject-words.json`](../../hooks/reject-words.json).
 
 ### `reject_invisibles.py`
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PreToolUse(Write|Edit|MultiEdit|NotebookEdit) - deny a doc-file write that
-ADDS a word from reject-words.toml, and steer the rewrite. GLOBAL.
+ADDS a word from reject-words.json, and steer the rewrite. GLOBAL.
 
 The list is grouped into categories. Each category names its words, why they
 are rejected, what to write instead, and optionally the question that separates
@@ -22,12 +22,12 @@ matching retry is allowed once.
 
 A file that is somebody else's text verbatim (a quoted source, a transcript)
 is exempt as a whole when its YAML frontmatter `tags` holds one of the tags the
-list's `[exempt]` table names. The frontmatter is read from the file on disk
+list's `exempt` entry names. The frontmatter is read from the file on disk
 when one exists and from the incoming content only for a new file, so the tag
 cannot arrive in the same write as the word; a tag anywhere else in the file
 does not count.
 
-List location: reject-words.toml beside this script, or REJECT_WORDS_FILE.
+List location: reject-words.json beside this script, or REJECT_WORDS_FILE.
 Fail-open: a garbage payload, a missing or unparseable list, or an unwritable
 state dir allows the write.
 """
@@ -51,17 +51,21 @@ EXEMPT = ("/hooks/", "/tests/", "/fixtures/", "/skills/ai-slop-magic-eraser/")
 
 def list_path():
     env = os.environ.get("REJECT_WORDS_FILE")
-    return Path(env) if env else Path(__file__).resolve().with_name("reject-words.toml")
+    return Path(env) if env else Path(__file__).resolve().with_name("reject-words.json")
+
+
+def read_list(path):
+    """The list as a dict; {} when missing, unparseable or not an object."""
+    try:
+        data = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def load_categories(path):
-    """Return [(name, compiled pattern, spec dict)]; [] on any problem,
-    including a python3 older than 3.11, which has no tomllib."""
-    try:
-        import tomllib
-        data = tomllib.loads(Path(path).read_text())
-    except (ImportError, OSError, ValueError):
-        return []
+    """Return [(name, compiled pattern, spec dict)]; [] on any problem."""
+    data = read_list(path)
     cats = []
     for name, spec in data.items():
         if not isinstance(spec, dict) or not isinstance(spec.get("words"), list):
@@ -79,13 +83,11 @@ def load_categories(path):
 
 
 def exempt_tags(path):
-    """The [exempt] table's tags list; () when absent or malformed."""
+    """The exempt entry's tags list; () when absent or malformed."""
     try:
-        import tomllib
-        data = tomllib.loads(Path(path).read_text())
-        tags = (data.get("exempt") or {}).get("tags")
+        tags = (read_list(path).get("exempt") or {}).get("tags")
         return tuple(t.strip().lower() for t in tags if isinstance(t, str) and t.strip()) if isinstance(tags, list) else ()
-    except (ImportError, OSError, ValueError, AttributeError):
+    except AttributeError:
         return ()
 
 

@@ -31,6 +31,8 @@ worktree scope) is never scanned, because `git status` would run that command; t
 session's first look at a repo, so a filter added to a watched repo's config later in the session is
 not seen, and submodules are not entered at all.
 """
+from __future__ import annotations
+
 import fcntl
 import importlib.util
 import json

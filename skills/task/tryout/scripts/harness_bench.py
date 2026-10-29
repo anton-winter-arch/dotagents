@@ -16,6 +16,8 @@ proxy log, the sandbox profile and run.json. Exit codes: 0 every rep ran and was
 could not be graded (harness or proxy failure; recorded in its run.json).
 """
 
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json

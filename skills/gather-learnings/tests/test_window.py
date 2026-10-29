@@ -1,5 +1,7 @@
 """Tests for scripts/window.py and the loose dated-heading matcher it reads through in
 scripts/vault_patterns.py."""
+from __future__ import annotations
+
 import contextlib
 import datetime as dt
 import io

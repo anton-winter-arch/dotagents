@@ -10,6 +10,8 @@ reply (the final text block of the turn) exceeds the threshold, counting words
 outside fenced code. Fails open.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess

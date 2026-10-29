@@ -14,10 +14,12 @@ the shell tool is `Bash` with `command` as in Claude Code, but every edit is
 paths and the new text are parsed out of the patch; `tool_response` is a plain
 string; the payload has `turn_id` and `model` and no `prompt_id`; and Codex
 sets no environment variable of its own, so the harness is told apart by the
-payload when the environment says nothing. Stdlib only, Python 3.10 or newer. A hook that loads this file through
+payload when the environment says nothing. Stdlib only, Python 3.9 or newer. A hook that loads this file through
 importlib must register the module in sys.modules before exec_module, or the
 dataclass below cannot resolve its annotations.
 """
+from __future__ import annotations
+
 import json
 import os
 import re

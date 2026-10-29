@@ -9,6 +9,8 @@ advisory (exit 0, delivered as PostToolUse additionalContext on stdout); a
 non-memory path is ignored (exit 0); the lint fails OPEN.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess

@@ -7,6 +7,8 @@ Cases follow the implemented patterns and limits, including silent long-line
 skips and the lack of JSON output when no UI targets are found.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess

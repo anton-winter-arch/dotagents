@@ -15,6 +15,8 @@ own housekeeping keeps that property and the log shows it.
         [--think LEVEL] [--temperature T] [--upstream 127.0.0.1:11434]
 """
 
+from __future__ import annotations
+
 import argparse
 import hashlib
 import http.client

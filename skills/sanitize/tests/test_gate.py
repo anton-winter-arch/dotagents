@@ -7,6 +7,8 @@ detector-shaped value is joined at runtime, so this file's source holds none of 
 Run: python3 -m unittest discover -s skills/sanitize/tests -v
 """
 
+from __future__ import annotations
+
 import os
 import subprocess
 import sys

@@ -131,8 +131,12 @@ mechanism, the at-risk query and the recovery.
 
 ## Report
 
-A compact table: branch → state found → action taken → final state. One line for
-uncommitted work.
+After a successful pull or push, update any tracked doc that records the last
+sync, pull or push state. Do this without asking, and do not mention docs that
+were already current.
+
+Then report a compact table whose columns are branch, state found, action taken
+and final state, with one line for uncommitted work.
 
 ## Not this
 

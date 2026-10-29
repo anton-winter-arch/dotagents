@@ -18,6 +18,8 @@ Commands
 --home DIR stands in for the user's home (tests and dry runs); --repo DIR for
 this repository. Stdlib only.
 """
+from __future__ import annotations
+
 import argparse
 import difflib
 import importlib.util

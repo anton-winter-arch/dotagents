@@ -8,6 +8,8 @@ that a path an ignore rule already covers is never reported, and that a path
 no rule covers always is, tracked or not.
 """
 
+from __future__ import annotations
+
 import json
 import subprocess
 import sys

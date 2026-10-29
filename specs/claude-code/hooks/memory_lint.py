@@ -17,6 +17,8 @@ Stdlib only, no network. Fails OPEN: any error in the lint itself exits 0 so a
 lint bug can never block a real memory write.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import re

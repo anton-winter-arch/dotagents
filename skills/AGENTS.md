@@ -25,6 +25,7 @@ A paragraph of instructions that a script could enforce is a defect in the skill
 
 **A skill is self-contained.**
 Everything its scripts import lives inside its own folder or in the stdlib, and its tests run with `python3 -m unittest discover -s tests`.
+That `python3` can be the 3.9 that stock macOS ships, so skill scripts follow the Python version rule in [`../hooks/AGENTS.md`](../hooks/AGENTS.md).
 The one outside dependency allowed is another skill, referenced by name: its CLI, or its `scripts/` found as a sibling folder.
 A skill that must read the repo itself, such as the seeder or the skill checkers, says so in its SKILL.md.
 

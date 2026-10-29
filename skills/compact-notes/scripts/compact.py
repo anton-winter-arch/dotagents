@@ -19,6 +19,8 @@ subsection did not survive the edit, or the backup is missing or does not hold t
 pre-edit section); 6 backup refused (a different file already holds the path, or the
 path would leave the backup root).
 """
+from __future__ import annotations
+
 import argparse
 import datetime
 import json

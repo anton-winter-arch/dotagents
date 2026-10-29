@@ -16,6 +16,8 @@ The target is worked out from the command text: a leading `cd <dir>`, `git -C <d
 a variable or reached through `bash -c` is not seen; this is the honest-case warning,
 not a sandbox. Exit 0 on every path, and silent on any internal error.
 """
+from __future__ import annotations
+
 import importlib.util
 import json
 import os

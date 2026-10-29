@@ -9,42 +9,31 @@ import importlib.util
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 HOOK = Path(os.environ.get("HOOK_UNDER_TEST") or Path(__file__).resolve().parents[2] / "hooks" / "reject_words.py")
-SHIPPED = HOOK.with_name("reject-words.toml")
+SHIPPED = HOOK.with_name("reject-words.json")
 spec = importlib.util.spec_from_file_location("reject_words", HOOK)
 rw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(rw)
 
-LIST = """
-[filler]
-words = ["frobnicate", "deep dive"]
-why = "Filler."
-instead = "Say what happened."
-ask = "is this a literal frob?"
-
-[plain]
-words = ["widgetry"]
-why = "Vague."
-instead = "Name the widget."
-
-[broken]
-words = "not a list"
-
-[exempt]
-tags = ["verbatim"]
-"""
+LIST_DATA = {
+    "_about": "A note string, not a category.",
+    "filler": {"words": ["frobnicate", "deep dive"], "why": "Filler.",
+               "instead": "Say what happened.", "ask": "is this a literal frob?"},
+    "plain": {"words": ["widgetry"], "why": "Vague.", "instead": "Name the widget."},
+    "broken": {"words": "not a list"},
+    "exempt": {"tags": ["verbatim"]},
+}
+LIST = json.dumps(LIST_DATA)
 
 
 class Loading(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.path = Path(self.tmp.name) / "list.toml"
+        self.path = Path(self.tmp.name) / "list.json"
         self.path.write_text(LIST)
         self.cats = rw.load_categories(self.path)
 
@@ -55,13 +44,14 @@ class Loading(unittest.TestCase):
         self.assertEqual([c[0] for c in self.cats], ["filler", "plain"])
 
     def test_missing_or_garbage_list_loads_nothing(self):
-        self.assertEqual(rw.load_categories(Path(self.tmp.name) / "none.toml"), [])
-        self.path.write_text("[[[ not toml")
+        self.assertEqual(rw.load_categories(Path(self.tmp.name) / "none.json"), [])
+        self.path.write_text("{{ not json")
         self.assertEqual(rw.load_categories(self.path), [])
 
-    def test_python_without_tomllib_loads_nothing(self):
-        with mock.patch.dict(sys.modules, {"tomllib": None}):
-            self.assertEqual(rw.load_categories(self.path), [])
+    def test_a_list_that_is_not_an_object_loads_nothing(self):
+        self.path.write_text('["frobnicate"]')
+        self.assertEqual(rw.load_categories(self.path), [])
+        self.assertEqual(rw.exempt_tags(self.path), ())
 
     def test_counts_words_and_phrases_by_category(self):
         got = rw.hits("We Frobnicate, then a deep\n dive into widgetry.", self.cats)
@@ -93,9 +83,9 @@ class Hook(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        (self.root / "list.toml").write_text(LIST)
+        (self.root / "list.json").write_text(LIST)
         self.env = dict(os.environ, XDG_STATE_HOME=str(self.root / "state"),
-                        REJECT_WORDS_FILE=str(self.root / "list.toml"))
+                        REJECT_WORDS_FILE=str(self.root / "list.json"))
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -168,8 +158,8 @@ class Hook(unittest.TestCase):
             self.assertIsNotNone(self.run_hook({"file_path": self.doc(), "content": body}), body)
 
     def test_no_exempt_table_means_no_exemption(self):
-        lst = self.root / "noexempt.toml"
-        lst.write_text(LIST.split("[exempt]")[0])
+        lst = self.root / "noexempt.json"
+        lst.write_text(json.dumps({k: v for k, v in LIST_DATA.items() if k != "exempt"}))
         env = dict(self.env, REJECT_WORDS_FILE=str(lst))
         res = self.run_hook({"file_path": self.doc(), "content": "---\ntags: [verbatim]\n---\nfrobnicate"}, env=env)
         self.assertIsNotNone(res)
@@ -181,7 +171,7 @@ class Hook(unittest.TestCase):
         self.assertEqual(rw.frontmatter_tags("no frontmatter"), set())
 
     def test_missing_list_and_garbage_payload_fail_open(self):
-        env = dict(self.env, REJECT_WORDS_FILE=str(self.root / "missing.toml"))
+        env = dict(self.env, REJECT_WORDS_FILE=str(self.root / "missing.json"))
         self.assertIsNone(self.run_hook({"file_path": self.doc(), "content": "frobnicate"}, env=env))
         out = subprocess.run(["python3", str(HOOK)], input="not json",
                              capture_output=True, text=True, env=self.env, timeout=10)

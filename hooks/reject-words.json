@@ -1,0 +1,18 @@
+{
+  "_about": "The reject_words.py hook reads this list. Each category holds words (whole words or phrases, case-insensitive; a word joined by a hyphen or underscore never matches), why (one sentence), instead (what to write) and an optional ask (the question that separates the legitimate exception; resubmitting the identical write once answers it). Add a category when a word keeps coming back after being corrected by hand. The exempt entry is not a category: its tags list the frontmatter tags that mark a whole file as somebody else's words.",
+  "exempt": {
+    "tags": ["verbatim"]
+  },
+  "figurative-load": {
+    "words": ["carry", "carries", "carried", "carrying", "load-bearing"],
+    "why": "Used figuratively, these read as machine-written filler and are cringeworthy in documentation.",
+    "instead": "Name the actual relation: holds, stores, includes, names, sets, depends on, is required for.",
+    "ask": "do these words describe carrying or propping up a literal physical object or structure? if not, use other words and stop generating AI slop, please and thank you!"
+  },
+  "vague-vocabulary": {
+    "words": ["estate"],
+    "why": "A consultant word for the systems we work on; the reader needs the specific thing.",
+    "instead": "Say which it is: the platform, the connectors, the repo.",
+    "ask": "is this about real property?"
+  }
+}

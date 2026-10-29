@@ -23,6 +23,8 @@ be the vault's own or one ingested from a copy of it elsewhere (`--graph`).
     python3 prior_state.py <vault> [--graph <folder>] [--today YYYY-MM-DD]
 """
 
+from __future__ import annotations
+
 import argparse
 import datetime as dt
 import json
