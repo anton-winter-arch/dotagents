@@ -8,6 +8,8 @@
       {"matcher": "Read|Edit|Write|MultiEdit|NotebookEdit|Update|Create|Bash|Grep|Glob", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/block-env-files.sh"}]},
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/ask-clipboard-reads.sh", "timeout": 10}]},
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/deny_debugger_attach.py", "timeout": 5}]},
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/download_guard.py", "timeout": 10}]},
+      {"matcher": "WebFetch", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/web_fetch_guard.py", "timeout": 10}]},
       {"matcher": "AskUserQuestion|ExitPlanMode", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/peer_turn_no_dialog.py", "timeout": 5}]},
       {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/ask-before-claude-folder-edits.sh"}]},
       {"matcher": "Read", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/read-size-advisory.sh", "timeout": 5}]},
@@ -24,7 +26,11 @@
       {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create|Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}]}
     ],
     "PostToolUseFailure": [
-      {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create|Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}]}
+      {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create|Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}]},
+      {"matcher": "WebFetch", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/web_fetch_guard.py", "timeout": 5}]}
+    ],
+    "SessionEnd": [
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/web_session_end.py", "timeout": 10}]}
     ],
     "PostToolBatch": [
       {"hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}]}
@@ -41,7 +47,8 @@
       {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create|Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}]},
       {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/memory_lint.py", "timeout": 10}]},
       {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-meta-commentary-check.sh", "timeout": 5}]},
-      {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/skill_description_lint.py", "timeout": 10}]}
+      {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/skill_description_lint.py", "timeout": 10}]},
+      {"matcher": "WebFetch", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/web_fetch_guard.py", "timeout": 5}]}
     ],
     "SessionStart": [
       {"matcher": "startup|resume", "hooks": [

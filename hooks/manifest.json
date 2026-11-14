@@ -144,6 +144,25 @@
         {"event": "UserPromptSubmit", "timeout": 10},
         {"event": "Stop", "timeout": 10}
       ]
+    },
+    {
+      "script": "web_fetch_guard.py",
+      "harnesses": ["claude-code"],
+      "bindings": [
+        {"event": "PreToolUse", "matcher": ["web"], "timeout": 10},
+        {"event": "PostToolUse", "matcher": ["web"], "timeout": 5},
+        {"event": "PostToolUseFailure", "matcher": ["web"], "timeout": 5}
+      ]
+    },
+    {
+      "script": "download_guard.py",
+      "harnesses": ["claude-code"],
+      "bindings": [{"event": "PreToolUse", "matcher": ["shell"], "timeout": 10}]
+    },
+    {
+      "script": "web_session_end.py",
+      "harnesses": ["claude-code"],
+      "bindings": [{"event": "SessionEnd", "timeout": 10}]
     }
   ]
 }

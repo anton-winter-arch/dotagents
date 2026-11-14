@@ -383,6 +383,14 @@ The principles each block enforces:
     install <target>` stay available for a deliberate update. `autoUpdatesChannel`
     is `latest`: with the auto-updater off it steers nothing automatic, and a
     deliberate `claude update` is expected to follow it (not probed).
+11. **Agents are good citizens of the web** - a page fetch or a download goes out from the station's own address, so the station governs it.
+    A host's refusal (401, 403, 429 or 503) is final for the session, requests to one host are spaced and capped, and no agent disguises a request or routes it around a site's filtering.
+    Three hooks hold that (§8): `web_fetch_guard.py` on the fetch tool, `download_guard.py` on shell fetches, and `web_session_end.py` at session end.
+    Subagents read pages with the fetch tool and never download; the main session downloads a batch from a manifest with `web_download.py`, which paces, stops at a refusal, honors robots rules and scans the batch once.
+    A government or military host, in the country forms too, is `ask` for the main session and `deny` for a subagent.
+    No permission rule repeats that; the hooks are the one place it lives, and a hook that does not run (hooks disabled, no `python3`, a timeout) lets the fetch through.
+    All web state is one small folder per session under the system temp folder, removed at session end.
+    WebSearch runs on the vendor's side under the harness's own session budget.
 
 Template:
 
@@ -489,9 +497,10 @@ use. The canonical list and the honest per-tool header conventions live in
 
 The hook scripts live in two repository folders and are copied flat into
 `~/.claude/hooks/`. The repository's `hooks/`, with `hooks/manifest.json`,
-holds the eighteen scripts that enforce rules about the repository, the machine
+holds the twenty-five scripts that enforce rules about the repository, the machine
 or the content (every guard, gate and content check this section lists, the
-chat-register pair included) and their four companion files, `_require.sh`,
+chat-register pair included) and their eight companion files, `_input.py`,
+`_shell_dirs.py`, `_web_guard.py`, `web_download.py`, `_require.sh`,
 `reject-words.json`, `no-meta-commentary.patterns` and the published-copy
 example list, which are copied but never wired. This folder's `hooks/`, with
 its own `manifest.json`, holds the six that serve Claude Code
@@ -503,7 +512,7 @@ key of [`settings.json`](settings.json) from the two manifests, and
 entries only. The build plan and the hook-input captures are in
 `tasks/SPEC-HARNESS-SEEDING.md`.
 
-Twenty-nine wired hooks: three Bash-write/delete guards (`deny-bash-file-writes.sh`,
+Thirty-one wired hooks: three Bash-write/delete guards (`deny-bash-file-writes.sh`,
 `guard-rm.sh`, `block-env-files.sh`), the clipboard-read prompt
 (`ask-clipboard-reads.sh`), the `~/.claude`-edit prompt
 (`ask-before-claude-folder-edits.sh`), the SessionStart inbox check
@@ -529,8 +538,11 @@ warning (`warn_cross_repo_git.py`), the foreign-edit warning
 (`warn_foreign_edits.py`), the git-hook bypass guard
 (`guard_git_bypass.py`, refusing an agent's `--no-verify` and hooks-path overrides),
 the debugger guard (`deny_debugger_attach.py`, refusing an agent's `lldb`, `gdb`,
-`debugserver` and `DevToolsSecurity` commands), and the dialog guard
-(`peer_turn_no_dialog.py`, refusing a question or plan dialog on a turn the user did not start).
+`debugserver` and `DevToolsSecurity` commands), the dialog guard
+(`peer_turn_no_dialog.py`, refusing a question or plan dialog on a turn the user did not start),
+and the three web hooks (`web_fetch_guard.py`, remembering a host's refusal and spacing page fetches;
+`download_guard.py`, governing shell fetches and where a download lands; `web_session_end.py`, scanning
+the session's downloads and removing its web state).
 Ten are advisory/non-blocking (`read-size-advisory`,
 `cmon_nudge`, `harness_version_check`, `claude_mem_health`, `warn_cross_repo_git`, `warn_foreign_edits`, both `no-meta-commentary` sides,
 `memory_lint`'s judgment checks, and `reject_identifiers`), and
@@ -1252,6 +1264,72 @@ It exits 0 on any error of its own, a missing sibling module included.
 Tests: `tests/station-hooks/test-deny-debugger-attach.py`.
 
 Script: [`../../hooks/deny_debugger_attach.py`](../../hooks/deny_debugger_attach.py).
+
+### `web_fetch_guard.py`
+
+Hooks on the fetch tool (matcher `WebFetch`): PreToolUse **blocking** (a JSON `deny` or `ask`), PostToolUse and PostToolUseFailure recording only.
+A fetch leaves from the station's own address, so a host that refuses one must not be asked again.
+After a call the hook reads the result's status; a 401, 403, 429 or 503 records the host as blocked for the session.
+Before a call a blocked host, or a host past 20 requests in the session, is refused: `deny` for a subagent, `ask` for the main session.
+Otherwise the call is booked a slot at least 2 seconds after the previous one to that host and waits for it inside the hook; a wait over 6 seconds is refused with the time stated, and its slot is given back.
+A government or military host, in the country forms too (`gov.uk`), is `deny` for a subagent and `ask` for the main session; that rule reads only the address, so it holds with no session id and with unusable state.
+Nothing clears a refusal inside a session, an approved `ask` included.
+Only the result's own `code` counts after a call that returned, so a page that mentions a status does not block its host.
+Loopback hosts are not tracked.
+The state is one JSON file per session, `<system temp>/web-guard-<uid>/<session id>/state.json`, written under a file lock by [`_web_guard.py`](../../hooks/_web_guard.py), so a session's subagents share it and two sessions share nothing.
+The state folders are used only when they are private folders this user owns; otherwise the hooks do nothing.
+That a refused fetch returns its status as `code` in an ordinary result was read from session transcripts on 2.1.310; the hook payload is assumed to match and falls back to a status named in the error text.
+The hook does not see a fetch made another way: the shell is `download_guard.py`'s, and a browser tool is not covered.
+It fails open on any error of its own.
+Tests: `tests/station-hooks/test-web-fetch-guard.py`.
+
+Script: [`../../hooks/web_fetch_guard.py`](../../hooks/web_fetch_guard.py).
+
+### `download_guard.py`
+
+PreToolUse guard (matcher `Bash`) - **blocking** (a JSON `deny` or `ask`), with one advisory output.
+It reads each simple command whose program is `curl` or `wget`, a Python one-liner that fetches an address, or a run of `web_download.py`.
+A subagent is refused any such fetch from a host that is not loopback: it reads pages with the fetch tool, and for files it returns a manifest to the main session.
+The main session gets `ask` when the fetch sends a browser's User-Agent, uses an impersonation tool, names a proxy or is piped straight into a shell; when the host is a government or military one; and when the host refused a request earlier in the session.
+An identifying User-Agent and an auth header are honest access and pass.
+A download, whether by an output option or by a redirect of the output into a file, is refused when its target is under the user's Downloads, Desktop or Documents folder or inside a git repository; a target under a temp root passes.
+On a session's first download the hook adds a reminder to scan the files before any tool opens them, and it does not repeat within 30 minutes.
+The program is read as `deny_debugger_attach.py` reads it, also inside a loop or branch body, so a command that only mentions these words passes.
+A Python program fed on a here-document is read from its body.
+It does not see an address held in a variable, a fetch inside a script file, a `bash -c` string, where a Python fetch writes its file, or a fetch piped into `tar`, and it does not read a command over 32,000 characters.
+A command with none of the fetch words exits before any other module is loaded.
+It fails open on any error of its own.
+Tests: `tests/station-hooks/test-download-guard.py`.
+
+Script: [`../../hooks/download_guard.py`](../../hooks/download_guard.py).
+
+### `web_session_end.py`
+
+SessionEnd hook - non-blocking.
+When the session recorded download folders and the `local-security` command is installed, it starts `local-security scan path <folders>` as a detached process and does not wait: a finding reaches the user through that tool's own alerts.
+Only folders that still exist strictly inside a temp root are passed, as absolute paths; a temp root itself is never recorded or scanned.
+Then it removes the session's `web-guard` state folder and nothing else.
+A session that ends without this event leaves that folder for the operating system to clear.
+Tests: `tests/station-hooks/test-web-fetch-guard.py`.
+
+Script: [`../../hooks/web_session_end.py`](../../hooks/web_session_end.py).
+
+### `web_download.py` (a command, not a hook)
+
+The batch downloader the main session runs: `python3 ~/.agents/hooks/web_download.py <manifest> [--out <folder>] [--allow-host <host>]`.
+The manifest has one JSON object per line with a `url`, and optionally a `name` and a `why`.
+For each item it refuses anything but https, a government or military host not named with `--allow-host`, and a host already blocked in the session; reads the host's robots rules once and skips a disallowed path; waits for the host's slot; and sends one request with one fixed User-Agent.
+There is no option to change the User-Agent or to name a proxy; a contact address a site asks for comes from the `WEB_DOWNLOAD_CONTACT` environment variable.
+A 401, 403, 429 or 503 blocks the host and its remaining items are not sent; a redirect to another site, or down from https, is not followed.
+One item may take ten minutes and 200 MB by default; an item that fails, for any reason, never costs the batch its scan.
+Files land in a batch folder that must be under a temp root, and each item gets one line in `download-log.jsonl` there: time, address, final host, status, bytes, SHA-256, file type and verdict.
+The batch is then scanned once, with `local-security scan path` where that command is installed and accepts the folder, else with the `scan` skill's script.
+The fallback runs only when that command is missing or exits 2; a timeout behind another scan or a tool failure is reported as not scanned, so a second scanner never starts beside one already running.
+The summary is counts plus every refusal, skip and failed scan; exit 0 means every item fetched and the scan clean.
+`download_guard.py` asks the user when a run names `--allow-host`.
+Tests: `tests/station-hooks/test-web-download.py`, against a loopback server.
+
+Script: [`../../hooks/web_download.py`](../../hooks/web_download.py).
 
 ### `peer_turn_no_dialog.py`
 

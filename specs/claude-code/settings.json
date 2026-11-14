@@ -103,6 +103,11 @@
             "type": "command",
             "command": "python3 ~/.claude/hooks/warn_cross_repo_git.py",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/download_guard.py",
+            "timeout": 10
           }
         ]
       },
@@ -170,6 +175,16 @@
           {
             "type": "command",
             "command": "python3 ~/.claude/hooks/warn_foreign_edits.py",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/web_fetch_guard.py",
             "timeout": 10
           }
         ]
@@ -303,6 +318,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/web_fetch_guard.py",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUseFailure": [
@@ -313,6 +338,16 @@
             "type": "command",
             "command": "python3 ~/.claude/hooks/warn_foreign_edits.py",
             "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/web_fetch_guard.py",
+            "timeout": 5
           }
         ]
       }
@@ -345,6 +380,17 @@
           {
             "type": "command",
             "command": "python3 ~/.claude/hooks/warn_foreign_edits.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/web_session_end.py",
             "timeout": 10
           }
         ]

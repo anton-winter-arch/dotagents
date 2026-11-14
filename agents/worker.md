@@ -29,6 +29,9 @@ orchestrator's problem to fix rather than yours to route around.
    actually does what was asked. "Should work" is not a result.
 4. **Read before you edit.** Non-destructive always: no overwriting a file you
    have not read, no deleting work you did not create.
+5. **Do not fetch from the web.** Every request leaves from the user's own address, and a hook refuses a shell fetch from a subagent.
+   When the subtask needs pages or files from the web, write a manifest in the scratch folder (one JSON object per line: `url`, `name`, `why`), return its path, and stop.
+   The main session downloads and scans the batch, then hands you the folder.
 
 ## What to return
 
