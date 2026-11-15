@@ -65,6 +65,8 @@ Commands:
   config <vault>                        what each config row matched
   refs <vault> <path>                   sections that link to a non-note file
   code <vault> <note>                   a note's linked files, as code-kg sees them
+  code <vault> <note> --mentions        plus the files and symbols it names in code spans
+  spans <vault> [text ...]              code spans shaped like a path or a name
 """
 from __future__ import annotations
 
@@ -117,7 +119,7 @@ HEADING_MAX = 120
 # Bump when a parser or schema change must re-index a vault whose files have
 # not changed. The manifest folds it in, so the next read command re-ingests
 # once instead of serving sections the old parser cut.
-INDEX_REV = 4
+INDEX_REV = 5
 
 PROFILES = {"log-dated", "reference", "dimension", "list", "generated", "hub",
             "freeform"}
@@ -352,6 +354,14 @@ CREATE TABLE IF NOT EXISTS file_links(    -- links to files that are not notes
   PRIMARY KEY (src, section_id, syntax, target)
 );
 CREATE INDEX IF NOT EXISTS file_links_path ON file_links(path);
+CREATE TABLE IF NOT EXISTS code_spans(    -- inline code shaped like a path or name
+  note_id    TEXT NOT NULL,
+  section_id TEXT NOT NULL DEFAULT '',
+  text       TEXT NOT NULL,               -- the span as written, backticks off
+  line       INTEGER NOT NULL,            -- 1-indexed line of its first use here
+  PRIMARY KEY (note_id, section_id, text)
+);
+CREATE INDEX IF NOT EXISTS code_spans_text ON code_spans(text);
 CREATE TABLE IF NOT EXISTS entities(
   canonical TEXT PRIMARY KEY,
   type      TEXT NOT NULL DEFAULT '',
@@ -1494,6 +1504,35 @@ def scan_inline_tags(text: str) -> list[tuple[str, int]]:
     return out
 
 
+CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+# A span that could name a file or a symbol: one token of path and name
+# characters with a letter in it, optionally called (`name()`). A flag
+# (`--verbose`), an expression and a phrase are not names.
+CODE_NAME_RE = re.compile(r"(?!-)(?=[^A-Za-z]*[A-Za-z])[\w./~@:#-]{2,200}"
+                          r"(?:\(\))?")
+
+
+def scan_code_spans(text: str) -> list[tuple[str, int]]:
+    """(span, 1-indexed line) for every inline code span shaped like a path
+    or a name, outside frontmatter, fenced code and comments. Docs write
+    code names in backticks, and entity matching never reads inside them, so
+    these spans are what a note says about code without linking to it."""
+    _, body_start = parse_frontmatter(text)
+    fmask = fence_mask(text)
+    cmask = _comment_mask(text)
+    out, pos = [], 0
+    for i, raw in enumerate(text.splitlines(keepends=True)):
+        start, pos = pos, pos + len(raw)
+        if (start < body_start or fmask[i] or cmask[i] or "`" not in raw
+                or len(raw) > SCAN_LINE_MAX):
+            continue
+        for m in CODE_SPAN_RE.finditer(raw):
+            span = m.group(1).strip()
+            if CODE_NAME_RE.fullmatch(span):
+                out.append((span, i + 1))
+    return out
+
+
 # ---------- dates: inferred, never a hardcoded format ----------
 def date_shape(text: str) -> tuple[tuple, tuple] | None:
     """Decompose a string into a date shape without assuming any format.
@@ -2227,7 +2266,7 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
                   "members", "entities", "entity_aliases", "mentions",
                   "ignored", "annotations", "annotation_candidates", "meta",
                   "anchors", "link_fields", "inline_tags", "entity_skips",
-                  "file_links"):
+                  "file_links", "code_spans"):
         con.execute(f"DELETE FROM {table}")
     con.execute("INSERT INTO sections_fts(sections_fts) VALUES ('delete-all')")
 
@@ -2485,6 +2524,11 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
             "INSERT INTO inline_tags(note_id, section_id, tag, count)"
             " VALUES (?,?,?,?)",
             [(nid, sec, tag, n) for (sec, tag), n in sorted(tag_counts.items())])
+        con.executemany(
+            "INSERT OR IGNORE INTO code_spans(note_id, section_id, text,"
+            " line) VALUES (?,?,?,?)",
+            [(nid, _section_on_line(sections, line), span, line)
+             for span, line in scan_code_spans(text)])
 
     for (token, kind), n in sorted(cand_counts.items()):
         con.execute(
@@ -4786,17 +4830,69 @@ def find_code_repo(vault: Path) -> Path | None:
     return None
 
 
-def code_report(vault: Path, name: str, limit: int = 30) -> dict:
+MENTION_CAP = 500       # distinct spans one `code --mentions` call resolves
+
+
+def note_mentions(spans: dict[str, list[str]], repo: Path | None,
+                  missing: list[str], linked: set[str]) -> list[dict]:
+    """What code-kg makes of a note's code spans: a file, a symbol, several
+    definitions (`ambiguous`), or one definition the name alone is weak
+    evidence for (`weak`). A span that names nothing is left out. With no
+    code graph to ask, every span comes back with a status of None.
+
+    A symbol is `corroborated` when the same note also names or links the
+    file that defines it. A bare name can coincide with an unrelated word
+    (a config key called `project_dir`, say); the file beside it is the
+    second piece of evidence. A path is its own evidence."""
+    answers: dict[str, dict] = {}
+    if repo is not None and spans:
+        got, why = sibling_json("resolve", str(repo),
+                                *list(spans)[:MENTION_CAP])
+        if isinstance(got, list):
+            answers = {r["text"]: r for r in got
+                       if isinstance(r, dict) and "text" in r}
+            if len(spans) > MENTION_CAP:
+                missing.append(f"{len(spans) - MENTION_CAP} of {len(spans)}"
+                               " spans not resolved")
+        else:
+            missing.append(why or "code-kg resolve: unexpected answer")
+    out = []
+    for text, sections in spans.items():
+        r = answers.get(text, {})
+        if r.get("status") == "none":
+            continue
+        out.append({"text": text, "status": r.get("status"),
+                    "file": r.get("file"), "symbol": r.get("symbol"),
+                    "kind": r.get("kind"), "lines": r.get("lines"),
+                    "count": r.get("count"),
+                    "candidates": r.get("candidates", []),
+                    "sections": sections})
+    named = linked | {m["file"] for m in out if m["status"] == "file"}
+    for m in out:
+        m["corroborated"] = m["status"] == "file" or (
+            m["status"] == "symbol" and m["file"] in named)
+    return out
+
+
+def code_report(vault: Path, name: str, limit: int = 30,
+                mentions: bool = False) -> dict:
     """The files one note links to, each with what the code graph holds for
     it: role, language, liveness tier, and inbound edges counted by kind.
-    Whatever is missing - that skill, its database, a file it does not
-    hold - is said in `missing` or on the file, and the links themselves
-    are always returned."""
+    With `mentions`, also the files and symbols the note names in code
+    spans. Whatever is missing - that skill, its database, a file it does
+    not hold - is said in `missing` or on the file, and the links
+    themselves are always returned."""
     con = open_fresh(vault)
     nid = resolve_note_arg(con, name)
     rows = con.execute(
         "SELECT path, section_id FROM file_links WHERE src=?"
         " ORDER BY path, section_id", (nid,)).fetchall()
+    spans: dict[str, list[str]] = {}
+    if mentions:
+        for text, sid in con.execute(
+                "SELECT text, section_id FROM code_spans WHERE note_id=?"
+                " ORDER BY text, section_id", (nid,)):
+            spans.setdefault(text, []).append(sid)
     con.close()
     files: dict[str, dict] = {}
     for path, sid in rows:
@@ -4844,12 +4940,34 @@ def code_report(vault: Path, name: str, limit: int = 30) -> dict:
         if left:
             missing.append(f"{left} of {len(files)} files not looked up:"
                            f" raise --limit (now {limit})")
-    return {"note": nid, "repo": str(repo) if repo else None,
-            "files": list(files.values()), "missing": missing}
+    out = {"note": nid, "repo": str(repo) if repo else None,
+           "files": list(files.values()), "missing": missing}
+    if mentions:
+        out["spans"] = len(spans)
+        out["mentions"] = note_mentions(
+            spans, repo if tiers is not None else None, missing,
+            {f["repo_path"] for f in files.values() if f["repo_path"]})
+    return out
 
 
 def cmd_code(args: argparse.Namespace) -> int:
-    payload = code_report(vault_dir(args.vault), args.note, args.limit)
+    payload = code_report(vault_dir(args.vault), args.note, args.limit,
+                          args.mentions)
+
+    def render_mentions(p):
+        print(f"mentions: {len(p['mentions'])} of {p['spans']} code spans")
+        for m in p["mentions"]:
+            line = f"  `{m['text']}`"
+            if m["status"] in ("file", "symbol"):
+                line += f"  {m['file']}"
+                if m["symbol"]:
+                    line += f"  {m['symbol']}  L{m['lines']}"
+            elif m["status"] == "ambiguous":
+                line += f"  ambiguous: {m['count']} definitions"
+            elif m["status"] == "weak":
+                c = m["candidates"][0]
+                line += f"  weak: {c['file']}  {c['symbol']}"
+            print(line)
 
     def render(p):
         print(f"{p['note']}: {len(p['files'])} linked files"
@@ -4867,8 +4985,47 @@ def cmd_code(args: argparse.Namespace) -> int:
             print(line)
             for sid in f["sections"]:
                 print(f"      in {sid}")
+        if "mentions" in p:
+            render_mentions(p)
         for line in p["missing"]:
             print(f"  {line}")
+        return 0
+    return emit(args, payload, render)
+
+
+SPAN_COLS = ("text", "src", "note_path", "section_id", "heading_path",
+             "line_start", "line_end", "line")
+
+
+def cmd_spans(args: argparse.Namespace) -> int:
+    """With no text: every distinct code span and how many sections hold
+    it. With texts: the sections that hold each one."""
+    con = open_fresh(vault_dir(args.vault))
+    if args.text:
+        payload = []
+        for text in sorted(set(args.text)):
+            payload += [dict(zip(SPAN_COLS, r)) for r in con.execute(
+                "SELECT c.text, c.note_id, n.path, c.section_id,"
+                " COALESCE(s.heading_path, '(top)'), s.line_start,"
+                " s.line_end, c.line FROM code_spans c"
+                " JOIN notes n ON n.id = c.note_id"
+                " LEFT JOIN sections s ON s.id = c.section_id"
+                " WHERE c.text=? ORDER BY c.note_id, c.line", (text,))]
+    else:
+        payload = [{"text": t, "sections": n} for t, n in con.execute(
+            "SELECT text, count(*) FROM code_spans GROUP BY text"
+            " ORDER BY text")]
+    con.close()
+
+    def render(rows_):
+        if not rows_:
+            print("no code spans")
+        for r in rows_:
+            if "src" in r:
+                print(f"`{r['text']}`  {r['section_id'] or r['src']}"
+                      f"  line {r['line']}")
+            else:
+                print(f"{r['sections']:>5}  `{r['text']}`")
         return 0
     return emit(args, payload, render)
 
@@ -6005,6 +6162,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("note")
     p.add_argument("--limit", type=int, default=30,
                    help="files looked up in the code graph")
+    p.add_argument("--mentions", action="store_true",
+                   help="also the files and symbols the note names in code"
+                        " spans, resolved by code-kg")
+
+    p = add("spans", cmd_spans, "inline code spans shaped like a path or a"
+                                " name; with texts, the sections that hold"
+                                " them")
+    p.add_argument("text", nargs="*")
 
     p = add("entity", cmd_entity, "a registered entity and its mentions")
     p.add_argument("name")

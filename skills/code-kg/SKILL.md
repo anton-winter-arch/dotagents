@@ -53,6 +53,8 @@ machine-readable.
 | `annotations <repo> [--marker M] [--path GLOB]` | comment markers (TODO, FIXME, HACK, XXX, NOTE, BUG, custom) with line and enclosing symbol |
 | `config <repo>` | what each config row matched; warns on a row that matched nothing |
 | `docs <repo> <path>` | the doc sections that link to a file, with line ranges, from every `markdown-kg` vault indexed inside the repo; without that skill or a vault database it says so in one line and lists the doc links this graph holds |
+| `docs <repo> <path> --mentions` | also the sections that name the file, or a symbol defined in it, in a code span. `corroborated` is true when the same doc also names or links the file; a bare name without that can be a coincidence |
+| `resolve <repo> <text> ...` | what a name written in a doc refers to: `file`, `symbol`, `ambiguous` (several definitions, listed, never guessed), `weak` (one definition, but an ordinary word or a member written without its class) or `none` |
 
 `init` ends with a health readout: detected profile, aliases loaded (and
 from where), entry-point count with a warning at zero, parse errors with

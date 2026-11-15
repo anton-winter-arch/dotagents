@@ -905,7 +905,137 @@ class TestDocs(unittest.TestCase):
         self.assertIn("markdown-kg", got["missing"][0])
         self.assertEqual(len(got["doc_links"]), 2)
         self.assertEqual(sorted(p.name for p in (self.repo / "docs").iterdir()),
-                         ["data", "design", "guide.md", "index.md"])
+                         ["data", "design", "guide.md", "index.md",
+                          "reference.md"])
+
+    # ---- names written in code spans ----
+    def resolve(self, *texts: str) -> dict:
+        rc, out, err = run("resolve", "--json", "--", str(self.repo), *texts)
+        self.assertEqual(rc, 0, err)
+        return {r["text"]: r for r in json.loads(out)}
+
+    def test_resolve_a_path(self):
+        got = self.resolve("src/tidelog/reader.py", "./src/tidelog/reader.py",
+                           "tidelog/reader.py", "reader.py",
+                           "src/tidelog/reader.py:4-12", "reader.py:7",
+                           "__init__.py", "/src/tidelog/reader.py",
+                           "~/src/tidelog/reader.py", "tidelog/", "gone.py")
+        self.assertEqual(
+            {t: (r["status"], r["file"]) for t, r in got.items()},
+            {"src/tidelog/reader.py": ("file", "src/tidelog/reader.py"),
+             "./src/tidelog/reader.py": ("file", "src/tidelog/reader.py"),
+             "tidelog/reader.py": ("file", "src/tidelog/reader.py"),
+             "reader.py": ("file", "src/tidelog/reader.py"),
+             "src/tidelog/reader.py:4-12": ("file", "src/tidelog/reader.py"),
+             "reader.py:7": ("file", "src/tidelog/reader.py"),
+             "__init__.py": ("file", "src/tidelog/__init__.py"),
+             "/src/tidelog/reader.py": ("none", None),
+             "~/src/tidelog/reader.py": ("none", None),
+             "tidelog/": ("none", None),
+             "gone.py": ("none", None)})
+
+    def test_resolve_a_path_ending_two_files_share(self):
+        (self.repo / "scripts" / "cli.py").write_text("x = 1\n",
+                                                      encoding="utf-8")
+        got = self.resolve("cli.py", "tidelog/cli.py")
+        self.assertEqual(got["cli.py"]["status"], "ambiguous")
+        self.assertEqual(sorted(c["file"] for c in got["cli.py"]["candidates"]),
+                         ["scripts/cli.py", "src/tidelog/cli.py"])
+        self.assertEqual(got["tidelog/cli.py"]["file"], "src/tidelog/cli.py")
+
+    def test_resolve_a_name(self):
+        got = self.resolve(
+            "parse_line", "parse_line()", "Station", "high_low",
+            "Station.read_day", "Station::read_day", "Station#summary",
+            "reader.parse_line", "tidelog.reader.read_day",
+            "report.parse_line", "read_day", "main", "export", "summary",
+            "TIDELOG_HOME", "len")
+        self.assertEqual(
+            {t: (r["status"], r["file"], r["symbol"]) for t, r in got.items()},
+            {"parse_line": ("symbol", "src/tidelog/reader.py", "parse_line"),
+             "parse_line()": ("symbol", "src/tidelog/reader.py", "parse_line"),
+             "Station": ("symbol", "src/tidelog/station.py", "Station"),
+             "high_low": ("symbol", "src/tidelog/report.py", "high_low"),
+             "Station.read_day":
+                 ("symbol", "src/tidelog/station.py", "Station.read_day"),
+             "Station::read_day":
+                 ("symbol", "src/tidelog/station.py", "Station.read_day"),
+             "Station#summary":
+                 ("symbol", "src/tidelog/station.py", "Station.summary"),
+             "reader.parse_line":
+                 ("symbol", "src/tidelog/reader.py", "parse_line"),
+             "tidelog.reader.read_day":
+                 ("symbol", "src/tidelog/reader.py", "read_day"),
+             # A qualifier that names another module matches nothing.
+             "report.parse_line": ("none", None, None),
+             # Two definitions: never guessed.
+             "read_day": ("ambiguous", None, None),
+             # One definition, but an ordinary word, or a member written
+             # without its class: reported, not linked.
+             "main": ("weak", None, None),
+             "export": ("weak", None, None),
+             "summary": ("weak", None, None),
+             "TIDELOG_HOME": ("none", None, None),
+             "len": ("none", None, None)})
+        self.assertEqual(got["parse_line"]["lines"], "4-12")
+        self.assertEqual(got["parse_line"]["kind"], "function")
+
+    def test_docs_mentions(self):
+        self.index_vault()
+        got = self.json("docs", "src/tidelog/reader.py", "--mentions")
+        self.assertEqual(
+            [(m["doc"], m["heading_path"], m["line"], m["text"], m["symbol"])
+             for m in got["mentions"]],
+            [("docs/reference.md", "Reference > Reading", 7, "parse_line",
+              "parse_line"),
+             ("docs/reference.md", "Reference > Reading", 9,
+              "src/tidelog/reader.py:4-12", None),
+             ("docs/reference.md", "Reference > Reporting", 14,
+              "tidelog.reader.parse_line", "parse_line")])
+        # `read_day()` has two definitions, so it is not a mention of either.
+        station = self.json("docs", "src/tidelog/station.py", "--mentions")
+        self.assertEqual(sorted(m["text"] for m in station["mentions"]),
+                         ["Station", "Station.read_day"])
+
+    def test_docs_mentions_cap_the_spans_one_file_is_asked_about(self):
+        """A line suffix is dropped before a path is matched, so a vault
+        can name one file in any number of distinct spans."""
+        (self.repo / "docs" / "flood.md").write_text(
+            "# Flood\n\n" + "\n".join(
+                f"`reader.py:{i}`" for i in range(1, 1206)) + "\n",
+            encoding="utf-8")
+        self.index_vault()
+        got = self.json("docs", "src/tidelog/reader.py", "--mentions")
+        self.assertEqual(len(got["mentions"]), code_kg.MENTION_TEXTS)
+        self.assertEqual(len(got["missing"]), 1)
+        self.assertIn("208 of 1208", got["missing"][0])
+
+    def test_docs_without_the_flag_is_as_before(self):
+        self.index_vault()
+        self.assertEqual(sorted(self.json("docs", "src/tidelog/reader.py")),
+                         ["doc_links", "file", "missing", "sections"])
+
+    def test_docs_mentions_agree_with_the_vault_side(self):
+        """Every name the vault side resolves into a file is a mention the
+        code side lists for that file, and the reverse."""
+        self.index_vault()
+        r = subprocess.run(
+            [sys.executable, str(code_kg.SIBLING_CLI), "code", "--json",
+             "--mentions", "--", str(self.repo / "docs"), "reference"],
+            capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        vault_side = {(m["file"], m["text"], m["corroborated"])
+                      for m in json.loads(r.stdout)["mentions"]
+                      if m["status"] in ("file", "symbol")}
+        self.assertEqual(len(vault_side), 9)
+        code_side = set()
+        for f in sorted({v[0] for v in vault_side}):
+            code_side |= {(f, m["text"], m["corroborated"]) for m in
+                          self.json("docs", f, "--mentions")["mentions"]}
+        self.assertEqual(code_side, vault_side)
+        # Nothing in the note names or links station.py.
+        self.assertEqual({c for f, _, c in vault_side
+                          if f == "src/tidelog/station.py"}, {False})
 
     def test_a_vault_folder_without_a_database(self):
         (self.repo / "docs" / "markdown-kg").mkdir()

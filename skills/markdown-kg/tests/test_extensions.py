@@ -1652,6 +1652,318 @@ class CodeTests(LinkedCase):
         self.assertEqual(sum("code-kg" in ln for ln in out.splitlines()), 1)
 
 
+@unittest.skipUnless(kg.SIBLING_CLI.is_file(), "the code-kg skill is absent")
+class LopsidedCountTests(LinkedCase):
+    """The three commands held to counts worked out from how the tree is
+    generated, never read back from an engine. The tree is lopsided on
+    purpose: one file linked from 25 sections in 13 notes, one note that
+    links 25 files, 15 files nothing links to, 5 notes that link no file,
+    and a second vault that sees one more link than the first."""
+
+    def setUp(self):
+        super().setUp()
+        pkg = self.repo / "src" / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        for i in range(40):
+            body = ("VALUE = 0\n" if i == 0 or i > 10
+                    else "from pkg.m00 import VALUE\n")
+            # One name defined once in the repo, one defined in every module.
+            body += (f"\n\ndef unique_fn_{i:02d}():\n    return {i}\n"
+                     "\n\ndef shared_helper():\n    return 0\n")
+            (pkg / f"m{i:02d}.py").write_text(body, encoding="utf-8")
+        # hub: 5 sections of 5 files each; m01 is written twice in one.
+        self.note("hub.md", "# Hub\n\n" + "\n".join(
+            f"## Part {s}\n\n" + " ".join(
+                f"[m{i:02d}](../src/pkg/m{i:02d}.py)"
+                for i in range(s * 5, s * 5 + 5))
+            + (" and [again](../src/pkg/m01.py)" if s == 0 else "") + "\n"
+            for s in range(5)))
+        # fan notes: note i links m00 from i % 3 + 1 sections.
+        for i in range(12):
+            self.note(f"fan/n{i:02d}.md", f"# Fan {i}\n\n" + "\n".join(
+                f"## Use {s}\n\nSee [m00](../../src/pkg/m00.py).\n"
+                for s in range(i % 3 + 1)))
+        for i in range(5):
+            self.note(f"quiet/q{i}.md",
+                      f"# Quiet {i}\n\nOnly the [hub](../hub.md).\n")
+        # name notes: note i names one function, its file and the shared
+        # helper in each of i + 1 sections; the roll call names 20 functions.
+        for i in range(6):
+            self.note(f"names/k{i:02d}.md", f"# Names {i}\n\n" + "\n".join(
+                f"## Step {s}\n\nCall `unique_fn_00` from `m00.py`, never"
+                " `shared_helper`.\n" for s in range(i + 1)))
+        self.note("names/all.md", "# Roll call\n\n" + ", ".join(
+            f"`unique_fn_{i:02d}()`" for i in range(20)) + ".\n")
+        self.limits(1)
+        self.code_kg("ingest", str(self.repo))
+        self.fan_sections = sum(i % 3 + 1 for i in range(12))      # 24
+
+    def docs(self, path: str, *flags: str) -> dict:
+        r = subprocess.run(
+            [sys.executable, str(kg.SIBLING_CLI), "docs", "--json", *flags,
+             "--", str(self.repo), path], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_refs_counts(self):
+        m00 = self.json("refs", "../src/pkg/m00.py")
+        self.assertEqual(len(m00), 1 + self.fan_sections)
+        self.assertEqual(len({r["src"] for r in m00}), 13)
+        self.assertEqual(len(self.json("refs", "../src/pkg/m01.py")), 1)
+        self.assertEqual(len(self.json("refs", "../src/pkg/m24.py")), 1)
+        self.assertEqual(self.json("refs", "../src/pkg/m25.py"), [])
+        total = sum(len(self.json("refs", f"../src/pkg/m{i:02d}.py"))
+                    for i in range(40))
+        self.assertEqual(total, 25 + self.fan_sections)
+
+    def test_code_counts(self):
+        hub = self.json("code", "hub", "--limit", "100")
+        self.assertEqual(hub["missing"], [])
+        self.assertEqual([f["repo_path"] for f in hub["files"]],
+                         [f"src/pkg/m{i:02d}.py" for i in range(25)])
+        self.assertEqual({f["indexed"] for f in hub["files"]}, {True})
+        self.assertEqual({len(f["sections"]) for f in hub["files"]}, {1})
+        # 10 modules import m00, and 13 notes link it.
+        self.assertEqual(hub["files"][0]["inbound"],
+                         {"from-import": 10, "link": 13})
+        self.assertEqual(hub["files"][24]["inbound"], {"link": 1})
+        for i in range(12):
+            files = self.json("code", f"fan/n{i:02d}", "--limit", "0")["files"]
+            self.assertEqual([len(f["sections"]) for f in files], [i % 3 + 1])
+        for i in range(5):
+            self.assertEqual(self.json("code", f"quiet/q{i}")["files"], [])
+
+    def test_docs_counts_and_agreement_with_refs(self):
+        for name, want in (("m00", 1 + self.fan_sections), ("m01", 1),
+                           ("m24", 1), ("m25", 0), ("m39", 0)):
+            got = self.docs(f"src/pkg/{name}.py")
+            self.assertEqual(got["missing"], [])
+            self.assertEqual(len(got["sections"]), want, name)
+            self.assertEqual(
+                sorted((s["doc"], s["section_id"]) for s in got["sections"]),
+                sorted(("docs/" + r["note_path"], r["section_id"]) for r in
+                       self.json("refs", f"../src/pkg/{name}.py")), name)
+        m00 = self.docs("src/pkg/m00.py")
+        self.assertEqual(len({r["src"] for r in m00["doc_links"]}), 13)
+        self.assertEqual(len(m00["doc_links"]), 1 + self.fan_sections)
+
+    def test_mention_counts_from_the_code_side(self):
+        m00 = self.docs("src/pkg/m00.py", "--mentions")["mentions"]
+        texts = [m["text"] for m in m00]
+        # 21 sections in the six name notes, and the roll call once.
+        self.assertEqual({t: texts.count(t) for t in set(texts)},
+                         {"unique_fn_00": 21, "unique_fn_00()": 1,
+                          "m00.py": 21})
+        self.assertEqual(len({m["doc"] for m in m00}), 7)
+        for name, want in (("m05", 1), ("m19", 1), ("m20", 0), ("m39", 0)):
+            got = self.docs(f"src/pkg/{name}.py", "--mentions")["mentions"]
+            self.assertEqual(len(got), want, name)
+
+    def test_mention_counts_from_the_vault_side(self):
+        got = self.json("code", "names/k03", "--mentions")
+        self.assertEqual(got["spans"], 3)
+        by_text = {m["text"]: m for m in got["mentions"]}
+        self.assertEqual(
+            {t: (m["status"], m["file"], len(m["sections"]))
+             for t, m in by_text.items()},
+            {"unique_fn_00": ("symbol", "src/pkg/m00.py", 4),
+             "m00.py": ("file", "src/pkg/m00.py", 4),
+             "shared_helper": ("ambiguous", None, 4)})
+        self.assertEqual(by_text["shared_helper"]["count"], 40)
+        self.assertEqual(len(by_text["shared_helper"]["candidates"]), 10)
+        roll = self.json("code", "names/all", "--mentions")["mentions"]
+        self.assertEqual([(m["status"], m["file"]) for m in roll],
+                         [("symbol", f"src/pkg/m{i:02d}.py")
+                          for i in range(20)])
+        self.assertEqual(self.json("code", "quiet/q0", "--mentions")
+                         ["mentions"], [])
+
+    def test_both_sides_agree_on_every_mention(self):
+        vault_side = set()
+        for note in [f"names/k{i:02d}" for i in range(6)] + [
+                "names/all", "reference"]:
+            for m in self.json("code", note, "--mentions")["mentions"]:
+                if m["status"] in ("file", "symbol"):
+                    vault_side |= {(m["file"], sid, m["text"],
+                                    m["corroborated"])
+                                   for sid in m["sections"]}
+        code_side = set()
+        for f in sorted({v[0] for v in vault_side}):
+            code_side |= {(f, m["section_id"], m["text"], m["corroborated"])
+                          for m in self.docs(f, "--mentions")["mentions"]}
+        self.assertEqual(code_side, vault_side)
+        self.assertEqual(len(vault_side), 21 + 21 + 20 + 9)
+
+    def test_a_second_vault_that_sees_one_more_link(self):
+        (self.repo / "NOTES.md").write_text(
+            "# Notes\n\nStart at [m00](src/pkg/m00.py).\n", encoding="utf-8")
+        run("ingest", str(self.repo))
+        got = self.docs("src/pkg/m00.py")
+        by_vault = {}
+        for s in got["sections"]:
+            by_vault[s["vault"]] = by_vault.get(s["vault"], 0) + 1
+        self.assertEqual(by_vault, {"docs": 1 + self.fan_sections,
+                                    ".": 2 + self.fan_sections})
+        self.assertEqual(self.docs("src/pkg/m39.py")["sections"], [])
+
+
+class CodeSpanScanTests(unittest.TestCase):
+    def scan(self, text: str) -> list:
+        return kg.scan_code_spans(text)
+
+    def test_spans_shaped_like_a_path_or_a_name(self):
+        text = ("Use `parse_line`, `read_day()`, `Station.read_day`,"
+                " `src/x.py:4-12`, `a::b`, `Cls#meth` and ``doubled``.\n")
+        self.assertEqual([t for t, _ in self.scan(text)], [
+            "parse_line", "read_day()", "Station.read_day", "src/x.py:4-12",
+            "a::b", "Cls#meth", "doubled"])
+
+    def test_spans_that_are_not_names(self):
+        text = ("`--verbose` `x = 1` `two words` `42` `a` `f(x)` `$HOME`"
+                " `{json}` `" + "n" * 201 + "`\n")
+        self.assertEqual(self.scan(text), [])
+
+    def test_code_blocks_comments_and_frontmatter_hold_no_spans(self):
+        text = ("---\ntitle: `in_frontmatter`\n---\n# T\n\n`kept` here.\n\n"
+                "```\n`in_fence`\n```\n\n<!--\n`in_comment`\n-->\n\n"
+                "And `also_kept`.\n")
+        self.assertEqual(self.scan(text), [("kept", 6), ("also_kept", 16)])
+
+
+class SpansTests(LinkedCase):
+    def test_every_distinct_span_with_its_section_count(self):
+        got = {r["text"]: r["sections"] for r in self.json("spans")}
+        self.assertEqual(sorted(t for t in got if t != "docs/"), sorted([
+            "parse_line", "read_day()", "Station.read_day", "Station",
+            "src/tidelog/reader.py:4-12", "report.py", "high_low", "main",
+            "cli.py", "export", "legacy_export.py",
+            "tidelog.reader.parse_line", "TIDELOG_HOME",
+            "/etc/tidelog.conf"]))
+        self.assertEqual(set(got.values()), {1})
+
+    def test_the_sections_that_hold_given_spans(self):
+        got = self.json("spans", "parse_line", "main", "not_written")
+        self.assertEqual(
+            [(r["text"], r["src"], r["note_path"], r["heading_path"],
+              r["line"]) for r in got],
+            [("main", "reference", "reference.md", "Reference > Reporting",
+              13),
+             ("parse_line", "reference", "reference.md",
+              "Reference > Reading", 7)])
+        for r in got:
+            self.assertLessEqual(r["line_start"], r["line"])
+            self.assertGreaterEqual(r["line_end"], r["line"])
+
+    def test_a_revision_bump_fills_the_table(self):
+        con = sqlite3.connect(kg.db_path(self.vault))
+        con.execute("DROP TABLE code_spans")
+        con.execute("UPDATE meta SET value='stale' WHERE key='manifest'")
+        con.commit()
+        con.close()
+        self.assertEqual(len(self.json("spans", "high_low")), 1)
+
+    def test_the_ingest_report_has_no_new_key(self):
+        self.assertNotIn("code_spans", self.json("ingest"))
+
+
+@unittest.skipUnless(kg.SIBLING_CLI.is_file(), "the code-kg skill is absent")
+class CodeMentionTests(LinkedCase):
+    def setUp(self):
+        super().setUp()
+        self.code_kg("ingest", str(self.repo))
+
+    def mentions(self, note: str = "reference") -> dict:
+        got = self.json("code", note, "--mentions")
+        self.assertEqual(got["missing"], [])
+        return {m["text"]: m for m in got["mentions"]}
+
+    def test_each_span_resolves_or_says_why_not(self):
+        got = self.mentions()
+        self.assertEqual(
+            {t: (m["status"], m["file"], m["symbol"])
+             for t, m in got.items()},
+            {"parse_line": ("symbol", "src/tidelog/reader.py", "parse_line"),
+             "tidelog.reader.parse_line":
+                 ("symbol", "src/tidelog/reader.py", "parse_line"),
+             "Station": ("symbol", "src/tidelog/station.py", "Station"),
+             "Station.read_day":
+                 ("symbol", "src/tidelog/station.py", "Station.read_day"),
+             "high_low": ("symbol", "src/tidelog/report.py", "high_low"),
+             "src/tidelog/reader.py:4-12":
+                 ("file", "src/tidelog/reader.py", None),
+             "report.py": ("file", "src/tidelog/report.py", None),
+             "cli.py": ("file", "src/tidelog/cli.py", None),
+             "legacy_export.py":
+                 ("file", "src/tidelog/legacy_export.py", None),
+             "read_day()": ("ambiguous", None, None),
+             "main": ("weak", None, None),
+             "export": ("weak", None, None)})
+
+    def test_an_ambiguous_or_weak_name_lists_its_candidates(self):
+        got = self.mentions()
+        self.assertEqual(
+            sorted((c["file"], c["symbol"])
+                   for c in got["read_day()"]["candidates"]),
+            [("src/tidelog/reader.py", "read_day"),
+             ("src/tidelog/station.py", "Station.read_day")])
+        self.assertEqual([(c["file"], c["symbol"])
+                          for c in got["main"]["candidates"]],
+                         [("src/tidelog/cli.py", "main")])
+
+    def test_each_mention_names_its_sections(self):
+        got = self.mentions()
+        self.assertEqual(
+            self.rows("SELECT heading FROM sections WHERE id=?",
+                      got["parse_line"]["sections"][0]), [("Reading",)])
+        self.assertEqual(
+            self.rows("SELECT heading FROM sections WHERE id=?",
+                      got["high_low"]["sections"][0]), [("Reporting",)])
+
+    def test_a_symbol_is_corroborated_when_the_note_names_its_file(self):
+        """`parse_line` and `high_low` sit in a note that also names
+        reader.py and report.py; nothing in it names station.py."""
+        got = self.mentions()
+        self.assertEqual(
+            {t: m["corroborated"] for t, m in got.items()},
+            {"parse_line": True, "tidelog.reader.parse_line": True,
+             "high_low": True, "Station": False, "Station.read_day": False,
+             "src/tidelog/reader.py:4-12": True, "report.py": True,
+             "cli.py": True, "legacy_export.py": True,
+             "read_day()": False, "main": False, "export": False})
+
+    def test_a_link_to_the_file_corroborates_too(self):
+        self.note("linked.md", "# Linked\n\nSee [the station]"
+                  "(../src/tidelog/station.py) and its `Station` class.\n")
+        got = self.mentions("linked")
+        self.assertTrue(got["Station"]["corroborated"])
+
+    def test_spans_counts_what_matched_nothing(self):
+        got = self.json("code", "reference", "--mentions")
+        self.assertEqual(got["spans"], 14)
+        self.assertEqual(len(got["mentions"]), 12)
+
+    def test_without_the_flag_the_answer_is_as_before(self):
+        got = self.json("code", "reference")
+        self.assertEqual(sorted(got), ["files", "missing", "note", "repo"])
+
+    def test_the_sibling_skill_absent(self):
+        old = kg.SIBLING_CLI
+        self.addCleanup(setattr, kg, "SIBLING_CLI", old)
+        kg.SIBLING_CLI = self.tmp / "nowhere" / "scripts" / "code_kg.py"
+        got = self.json("code", "reference", "--mentions")
+        self.assertEqual(len(got["missing"]), 1)
+        self.assertEqual(got["spans"], 14)
+        self.assertEqual({m["status"] for m in got["mentions"]}, {None})
+        self.assertEqual(len(got["mentions"]), 14)
+
+    def test_prose(self):
+        rc, out, _ = run("code", str(self.vault), "reference", "--mentions")
+        self.assertEqual(rc, 0)
+        self.assertIn("`parse_line`  src/tidelog/reader.py  parse_line", out)
+        self.assertIn("`read_day()`  ambiguous: 2 definitions", out)
+
+
 class CodeWithoutDatabaseTests(LinkedCase):
     def test_no_code_database(self):
         got = self.json("code", "guide")

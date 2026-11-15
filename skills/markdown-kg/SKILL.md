@@ -158,8 +158,8 @@ path and no submission protocol. Field reference: `references/config.md`.
    score; below about 0.3, treat the groups as a hint rather than as real
    structure.
 
-   A link to a file that is not a note (code, data, an embedded image) is
-   kept with the section it was written in.
+   A link to a file that is not a note (code, data, a wikilink embed of an
+   image) is kept with the section it was written in.
 
    ```bash
    python3 <skill-dir>/scripts/markdown_kg.py refs <vault> ../src/tool.py
@@ -173,6 +173,21 @@ path and no submission protocol. Field reference: `references/config.md`.
    counted by kind. It needs that skill installed beside this one and the
    repo indexed by it; without either it says so in one line and still
    lists the links.
+
+   ```bash
+   python3 <skill-dir>/scripts/markdown_kg.py code  <vault> "Some Note" --mentions
+   python3 <skill-dir>/scripts/markdown_kg.py spans <vault> parse_line reader.py
+   ```
+
+   `--mentions` adds the files and symbols the note names in inline code
+   without linking them, resolved by `code-kg`. Each has a status: `file`
+   or `symbol` is a match; `ambiguous` has several definitions and lists
+   them; `weak` has one definition, but the name is an ordinary word or a
+   member written without its class. A span that names nothing is left
+   out. Treat a `symbol` as certain only when
+   `corroborated` is true, which means the note also names or links the
+   defining file. `spans` lists the code spans themselves; given span
+   texts, it lists the sections that hold them.
 
    Every edge above is EXTRACTED provenance - explicit link syntax in the
    corpus. An INFERRED relation is a recorded judgment, written only by an

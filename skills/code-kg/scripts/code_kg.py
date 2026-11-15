@@ -53,6 +53,8 @@ Commands:
   annotations <repo> [--marker M]        comment markers: TODO, FIXME, custom
   config <repo>                          what each config row matched
   docs <repo> <path>                     doc sections that link to a file
+  docs <repo> <path> --mentions          plus the sections that name it in a code span
+  resolve <repo> <text> ...              what a name written in a doc refers to
 """
 from __future__ import annotations
 
@@ -4640,6 +4642,117 @@ def cmd_index(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------- names: what a doc can call a file or a symbol ----------
+_LINE_REF_RE = re.compile(r":\d+(?:-\d+)?$")
+_EXT_RE = re.compile(r"\.[A-Za-z0-9]{1,8}$")
+RESOLVE_CANDIDATES = 10     # candidates listed for one ambiguous name
+
+
+def _specific(name: str) -> bool:
+    """A name unlikely to be an ordinary word: an inner underscore, mixed
+    case or a digit. `parse_line` and `Station` are; `main` and `open` are
+    not, and a doc that writes one of those may mean anything."""
+    core = name.strip("_")
+    return ("_" in core or any(c.isdigit() for c in core)
+            or (core != core.lower() and core != core.upper()))
+
+
+def name_index(con: sqlite3.Connection) -> tuple[set, dict, dict]:
+    """Project files, files by base name, and symbols by their last name
+    part. Dependency code is left out: a doc names the project's own."""
+    files = {r[0] for r in con.execute(
+        "SELECT id FROM files WHERE origin='project'")}
+    by_base: dict[str, list[str]] = {}
+    for f in sorted(files):
+        by_base.setdefault(posixpath.basename(f), []).append(f)
+    by_name: dict[str, list[tuple]] = {}
+    for row in con.execute(
+            "SELECT s.qualname, s.file_id, s.kind, s.line_start, s.line_end,"
+            " s.name FROM symbols s JOIN files f ON f.id = s.file_id"
+            " WHERE f.origin='project' ORDER BY s.file_id, s.qualname"):
+        by_name.setdefault(row[5], []).append(row[:5])
+    return files, by_base, by_name
+
+
+def resolve_name(text: str, index: tuple[set, dict, dict]) -> dict:
+    """What one name written in a doc refers to. Every match is exact, and
+    the order runs from most to least certain:
+
+      a path             the file with that path, or the one file whose
+                         path ends with it (`reader.py`, `pkg/reader.py`)
+      a qualified name   `Class.method`, `module.function`, `a::b`, `A#b`
+      a bare name        a top-level definition, when it is the only
+                         definition of that name and the name is specific
+
+    Several matches are `ambiguous` and are listed, never guessed. One
+    match that the name alone is weak evidence for - an ordinary word, or a
+    member written without its class - is `weak`: listed, not linked. A
+    trailing `()` and a trailing `:line` or `:from-to` are not part of the
+    name, and an absolute or home path never names a repo file."""
+    files, by_base, by_name = index
+    out = {"text": text, "status": "none", "file": None, "symbol": None,
+           "kind": None, "lines": None, "count": 0, "candidates": []}
+    t = _LINE_REF_RE.sub("", text[:-2] if text.endswith("()") else text)
+    if t.startswith("./"):
+        t = t[2:]
+    if not t or t[0] in "/~":
+        return out
+
+    def symbol(c: tuple) -> dict:
+        return {"file": c[1], "symbol": c[0], "kind": c[2],
+                "lines": f"{c[3]}-{c[4]}"}
+
+    def settle(cands: list, status: str) -> dict:
+        out["count"] = len(cands)
+        if len(cands) == 1 and status != "weak":
+            out.update(status=status, **cands[0])
+        elif cands:
+            out.update(status="weak" if len(cands) == 1 else "ambiguous",
+                       candidates=cands[:RESOLVE_CANDIDATES])
+        return out
+
+    if t in files:
+        return settle([{"file": t}], "file")
+    if "/" in t or _EXT_RE.search(t):
+        hits = [{"file": f} for f in by_base.get(posixpath.basename(t), ())
+                if ("/" + f).endswith("/" + t)]
+        if hits or "/" in t:
+            return settle(hits, "file")
+    q = t.replace("::", ".").replace("#", ".")
+    cands = by_name.get(q.rsplit(".", 1)[-1], [])
+    if "." in q:
+        tail = "." + q
+        return settle([symbol(c) for c in cands if ("." + c[0]).endswith(tail)
+                       or ("." + c[1].rsplit(".", 1)[0].replace("/", ".")
+                           + "." + c[0]).endswith(tail)], "symbol")
+    weak = len(cands) == 1 and (cands[0][0] != q or not _specific(q))
+    return settle([symbol(c) for c in cands], "weak" if weak else "symbol")
+
+
+def cmd_resolve(args: argparse.Namespace) -> int:
+    con = open_fresh(repo_dir(args.repo))
+    index = name_index(con)
+    con.close()
+    payload = [resolve_name(t, index) for t in args.text]
+
+    def render(rows):
+        for r in rows:
+            if r["status"] in ("file", "symbol"):
+                where = r["file"] + (f"  {r['symbol']}  L{r['lines']}"
+                                     if r["symbol"] else "")
+            elif r["status"] == "none":
+                where = "names nothing here"
+            else:
+                where = (f"{r['status']}: " + ", ".join(
+                    c["file"] + (f" {c['symbol']}" if c.get("symbol") else "")
+                    for c in r["candidates"]))
+                if r["count"] > len(r["candidates"]):
+                    where += f" (+{r['count'] - len(r['candidates'])} more)"
+            print(f"  `{r['text']}`  {where}")
+        return 0
+    return emit(args, payload, render)
+
+
 # ---------- docs: the markdown-kg skill ----------
 # The markdown-kg skill is reached as a sibling folder and through its command
 # line only: `--json` out, never its database file, so a schema change there
@@ -4690,15 +4803,51 @@ def find_vaults(repo: Path) -> list[str]:
     return sorted(out)
 
 
-def docs_report(repo: Path, name: str) -> dict:
+MENTION_CHUNK = 200     # span texts sent to markdown-kg in one call
+MENTION_TEXTS = 1000    # distinct spans one vault is asked about per file
+
+
+def vault_mentions(vault_dir_: str, fid: str,
+                   index: tuple[set, dict, dict]) -> tuple[list, str]:
+    """The sections of one vault that name a file, or a symbol defined in
+    it, in a code span: (rows, note), the note saying what failed or was
+    left out. The vault lists its distinct spans, each is resolved here by
+    the one resolver, and the vault is asked again for the sections of
+    those that land in the file. A vault can write a path with any line
+    suffix, so the spans asked about are capped."""
+    spans, why = sibling_json("spans", vault_dir_)
+    if not isinstance(spans, list):
+        return [], why or "markdown-kg spans: unexpected answer"
+    named: dict[str, str | None] = {}
+    for row in spans:
+        r = resolve_name(str(row.get("text", "")), index)
+        if r["status"] in ("file", "symbol") and r["file"] == fid:
+            named[r["text"]] = r["symbol"]
+    out, texts, note = [], sorted(named), ""
+    if len(texts) > MENTION_TEXTS:
+        note = (f"{len(texts) - MENTION_TEXTS} of {len(texts)} spans that"
+                " name this file not asked about")
+        texts = texts[:MENTION_TEXTS]
+    for i in range(0, len(texts), MENTION_CHUNK):
+        rows, why = sibling_json("spans", vault_dir_,
+                                 *texts[i:i + MENTION_CHUNK])
+        if not isinstance(rows, list):
+            return [], why or "markdown-kg spans: unexpected answer"
+        out += [{**r, "symbol": named.get(r.get("text"))} for r in rows]
+    return out, note
+
+
+def docs_report(repo: Path, name: str, mentions: bool = False) -> dict:
     """The doc sections that link to one file. `doc_links` is what this
     graph holds: the markdown files with a link edge to it, by line.
     `sections` comes from markdown-kg, asked once per vault inside the repo:
-    the section each link was written in, with its id and line range.
-    Whatever is missing - that skill, a vault, its database - is said in
-    `missing`, and `doc_links` is always returned."""
+    the section each link was written in, with its id and line range. With
+    `mentions`, also the sections that name the file, or a symbol defined
+    in it, in a code span. Whatever is missing - that skill, a vault, its
+    database - is said in `missing`, and `doc_links` is always returned."""
     con = open_fresh(repo)
     fid = resolve_file_arg(con, name)
+    index = name_index(con) if mentions else None
     doc_links = [{"src": s, "kind": k, "line": ln} for s, k, ln in con.execute(
         "SELECT e.src, e.kind, e.line FROM edges e JOIN files f"
         " ON f.id = e.src WHERE e.dst=? AND f.language='markdown'"
@@ -4706,28 +4855,49 @@ def docs_report(repo: Path, name: str) -> dict:
     con.close()
     vaults = find_vaults(repo)
     sections: list[dict] = []
+    named: list[dict] = []
     missing: list[str] = []
     if not vaults:
         missing.append("no markdown-kg database inside this repo: run that"
                        " skill's `ingest` on the docs folder")
+
+    def placed(rows: list, vault: str) -> list[dict]:
+        return [{**r, "vault": vault, "doc": posixpath.normpath(
+            posixpath.join(vault, r["note_path"]))} for r in rows]
+
     for vault in vaults[:VAULT_CAP]:
         got, why = sibling_json("refs", str(repo / vault),
                                 posixpath.relpath(fid, vault))
-        if isinstance(got, list):
-            sections.extend(
-                {**r, "vault": vault, "doc": posixpath.normpath(
-                    posixpath.join(vault, r["note_path"]))} for r in got)
-        elif why not in missing:
-            missing.append(why or "markdown-kg refs: unexpected answer")
+        if isinstance(got, list) and index is not None:
+            sections.extend(placed(got, vault))
+            got, why = vault_mentions(str(repo / vault), fid, index)
+            named.extend(placed(got, vault))
+        elif isinstance(got, list):
+            sections.extend(placed(got, vault))
+        else:
+            why = why or "markdown-kg refs: unexpected answer"
+        if why and why not in missing:
+            missing.append(why)
     if len(vaults) > VAULT_CAP:
         missing.append(f"{len(vaults) - VAULT_CAP} of {len(vaults)} vaults"
                        " not asked")
-    return {"file": fid, "sections": sections, "doc_links": doc_links,
-            "missing": missing}
+    out = {"file": fid, "sections": sections, "doc_links": doc_links,
+           "missing": missing}
+    if mentions:
+        # A symbol is corroborated when the same doc also names or links
+        # this file: a bare name can coincide with an unrelated word, and
+        # the file beside it is the second piece of evidence.
+        backing = ({s["doc"] for s in sections}
+                   | {m["doc"] for m in named if m["symbol"] is None})
+        for m in named:
+            m["corroborated"] = m["symbol"] is None or m["doc"] in backing
+        out["mentions"] = sorted(named, key=lambda m: (
+            m["vault"], m["doc"], m["line"], m["text"]))
+    return out
 
 
 def cmd_docs(args: argparse.Namespace) -> int:
-    payload = docs_report(repo_dir(args.repo), args.path)
+    payload = docs_report(repo_dir(args.repo), args.path, args.mentions)
 
     def render(p):
         print(f"{p['file']}: {len(p['sections'])} doc sections,"
@@ -4738,6 +4908,9 @@ def cmd_docs(args: argparse.Namespace) -> int:
             print(f"  {s['doc']}{lines}  {s['heading_path']}")
         for r in p["doc_links"]:
             print(f"  {r['src']}:{r['line']}  ({r['kind']})")
+        for m in p.get("mentions", []):
+            what = f"  {m['symbol']}" if m["symbol"] else ""
+            print(f"  {m['doc']}:{m['line']}  names `{m['text']}`{what}")
         for line in p["missing"]:
             print(f"  {line}")
         return 0
@@ -4824,6 +4997,11 @@ def main(argv: list[str] | None = None) -> int:
     add("config", cmd_config)
     p = add("docs", cmd_docs)
     p.add_argument("path")
+    p.add_argument("--mentions", action="store_true",
+                   help="also the sections that name the file, or a symbol"
+                        " in it, in a code span")
+    p = add("resolve", cmd_resolve)
+    p.add_argument("text", nargs="+")
 
     args = ap.parse_args(argv)
     out, err = sys.stdout, sys.stderr

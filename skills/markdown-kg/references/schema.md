@@ -15,6 +15,7 @@ Read this before writing raw SQL against the DB; prefer the CLI subcommands othe
 - [link_fields](#link_fields)
 - [inline_tags](#inline_tags)
 - [file_links](#file_links)
+- [code_spans](#code_spans)
 - [members](#members)
 - [entities / entity_aliases / mentions](#entities--entity_aliases--mentions)
 - [ignored](#ignored)
@@ -190,12 +191,24 @@ and rebuilds the table, and `refs` and `code` read it.
 | `path` | the vault-relative path the target names. A file outside the vault keeps its leading `../` |
 | `syntax` | `md` for an inline or reference-style markdown link; `wiki` for a wikilink or embed whose extension is an asset type |
 
-A markdown link is read from the source file's folder, or from the vault root
-with a leading `/`, and nothing is checked on disk: a link to a file that is
-gone still has its row. A wikilink names a file the way Obsidian finds one, by
-the end of its path, so its `path` is what was written and `refs` matches it
-against the end of the path asked for. A markdown image (`![alt](file.png)`) is
+A markdown link is resolved relative to the source file's folder, or to the
+vault root when it starts with `/`, and nothing is checked on disk: a link to a
+file that is gone still has its row. A wikilink names a file by the end of its
+path, as Obsidian resolves it, so its `path` is the target as written, and
+`refs` matches it against the end of the requested path. A markdown image (`![alt](file.png)`) is
 not a link and has no row.
+
+## code_spans
+
+The inline code spans that are shaped like a path or a name, with columns
+`(note_id, section_id, text, line)`: one row per distinct span per section,
+and `line` is the span's first use in that section. A span qualifies when it is one token of
+letters, digits and `_ . / ~ @ : # -` with a letter in it, 2 to 200 characters,
+optionally ending in `()`, and not starting with `-`. Spans in frontmatter,
+fenced code and comments are not read. Nothing is resolved at ingest: the
+table holds what the note says, and `code --mentions` asks the `code-kg` skill
+what each span refers to at read time, so a change in the code never makes
+this table stale. Every ingest wipes and rebuilds it, and `spans` reads it.
 
 ## members
 
