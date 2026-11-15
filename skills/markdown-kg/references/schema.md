@@ -14,6 +14,7 @@ Read this before writing raw SQL against the DB; prefer the CLI subcommands othe
 - [anchors](#anchors)
 - [link_fields](#link_fields)
 - [inline_tags](#inline_tags)
+- [file_links](#file_links)
 - [members](#members)
 - [entities / entity_aliases / mentions](#entities--entity_aliases--mentions)
 - [ignored](#ignored)
@@ -174,6 +175,27 @@ letters, digits, `_`, `-` and `/` after a `#` that starts a line or follows
 whitespace, with at least one letter. A `#` in code, in a comment or in
 frontmatter is never a tag. The `tags` table stays frontmatter-only, and
 `tags --inline` reads both. Every ingest wipes and rebuilds this table.
+
+## file_links
+
+One row per link to a file that is not a note: code, data, a folder, an
+embedded image. These links never become rows in `edges`. Every ingest wipes
+and rebuilds the table, and `refs` and `code` read it.
+
+| column | meaning |
+|---|---|
+| `src` | source note id |
+| `section_id` | the section the link was written in, found by the line it sits on |
+| `target` | the target as written (md targets URL-decoded) |
+| `path` | the vault-relative path the target names. A file outside the vault keeps its leading `../` |
+| `syntax` | `md` for an inline or reference-style markdown link; `wiki` for a wikilink or embed whose extension is an asset type |
+
+A markdown link is read from the source file's folder, or from the vault root
+with a leading `/`, and nothing is checked on disk: a link to a file that is
+gone still has its row. A wikilink names a file the way Obsidian finds one, by
+the end of its path, so its `path` is what was written and `refs` matches it
+against the end of the path asked for. A markdown image (`![alt](file.png)`) is
+not a link and has no row.
 
 ## members
 

@@ -52,6 +52,7 @@ machine-readable.
 | `components <repo> [NAME]` | declared components: members, edges that cross between them, unassigned files |
 | `annotations <repo> [--marker M] [--path GLOB]` | comment markers (TODO, FIXME, HACK, XXX, NOTE, BUG, custom) with line and enclosing symbol |
 | `config <repo>` | what each config row matched; warns on a row that matched nothing |
+| `docs <repo> <path>` | the doc sections that link to a file, with line ranges, from every `markdown-kg` vault indexed inside the repo; without that skill or a vault database it says so in one line and lists the doc links this graph holds |
 
 `init` ends with a health readout: detected profile, aliases loaded (and
 from where), entry-point count with a warning at zero, parse errors with

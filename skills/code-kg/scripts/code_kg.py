@@ -9,8 +9,9 @@ Stdlib only, Python 3.9+. Storage is `<repo>/.code-kg/code-kg.db` (SQLite +
 FTS5) beside `<repo>/.code-kg/config.json`. The repo directory is always a CLI
 argument: nothing here is tied to any particular repo, machine, or agent, and
 nothing here ever sends repo text anywhere - the whole engine is offline. The
-one command that executes anything is `coverage run`, and it refuses to run
-without an explicit `--yes`.
+one command that executes anything from the repo is `coverage run`, and it
+refuses to run without an explicit `--yes`. `docs` runs the markdown-kg
+skill's command line, found as a sibling folder, and nothing from the repo.
 
 Design goals (mirrored from markdown_kg.py, the markdown sibling):
   * deterministic - `ingest` is a pure parse of the repo: same bytes produce
@@ -51,6 +52,7 @@ Commands:
   components <repo> [name]               declared components and their edges
   annotations <repo> [--marker M]        comment markers: TODO, FIXME, custom
   config <repo>                          what each config row matched
+  docs <repo> <path>                     doc sections that link to a file
 """
 from __future__ import annotations
 
@@ -391,9 +393,10 @@ def connect(repo: Path, must_exist: bool = False) -> sqlite3.Connection:
         sys.exit(f"error: no database at {db} - run `ingest` on this repo first")
     db.parent.mkdir(parents=True, exist_ok=True)
     gi = db.parent / ".gitignore"
-    if not gi.exists():
+    if not os.path.lexists(gi):
         # Seeded on first contact, not only by `init`: the db must never be
         # committable in the target repo however the folder came to exist.
+        # `lexists`, because a dangling link here would be written through.
         gi.write_text(f"{DB_NAME}\ncoverage-tmp.json\n", encoding="utf-8")
     con = sqlite3.connect(db)
     con.executescript(SCHEMA)
@@ -4637,6 +4640,110 @@ def cmd_index(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------- docs: the markdown-kg skill ----------
+# The markdown-kg skill is reached as a sibling folder and through its command
+# line only: `--json` out, never its database file, so a schema change there
+# cannot break a read here. VAULT_KG_DBS is where that skill keeps the
+# database of a vault it has indexed; the file marks the vault and is never
+# opened from here.
+SIBLING_CLI = (Path(__file__).resolve().parent.parent.parent
+               / "markdown-kg" / "scripts" / "markdown_kg.py")
+SIBLING_TIMEOUT = 120
+VAULT_KG_DBS = ("markdown-kg/markdown-kg.db", "vault-kg/vault-kg.db")
+VAULT_CAP = 20          # vaults one `docs` call asks
+
+
+def sibling_json(*argv: str) -> tuple[object, str]:
+    """One markdown-kg read command: (parsed answer, '') or (None, one
+    line saying why there is none). That skill refreshes its own database
+    first when the vault has changed. `--` ends the options, because the
+    paths that follow come from repo content."""
+    if not SIBLING_CLI.is_file():
+        return None, "the markdown-kg skill is not installed beside this one"
+    try:
+        r = subprocess.run(
+            [sys.executable, str(SIBLING_CLI), argv[0], "--json", "--",
+             *argv[1:]], capture_output=True, encoding="utf-8",
+            errors="replace", timeout=SIBLING_TIMEOUT,
+            env={**os.environ, "PYTHONUTF8": "1"})
+        if r.returncode == 0:
+            return json.loads(r.stdout), ""
+        why = (r.stderr.strip().splitlines() or ["no output"])[-1][:300]
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        why = type(e).__name__
+    return None, f"markdown-kg {argv[0]}: {why}"
+
+
+def find_vaults(repo: Path) -> list[str]:
+    """Repo-relative folders that hold a markdown-kg database, `.` for the
+    repo root: the vaults that skill has indexed. A vault whose engine
+    folder or database is a symlink is passed over: that skill's refresh
+    would write wherever the link points."""
+    out = []
+    for root, dirs, _ in os.walk(repo):
+        dbs = [Path(root) / db for db in VAULT_KG_DBS]
+        if any(db.is_file() for db in dbs) and not any(
+                db.is_symlink() or db.parent.is_symlink() for db in dbs):
+            out.append(Path(root).relative_to(repo).as_posix())
+        dirs[:] = [d for d in dirs
+                   if d not in SKIP_FOLDERS and not d.startswith(".")]
+    return sorted(out)
+
+
+def docs_report(repo: Path, name: str) -> dict:
+    """The doc sections that link to one file. `doc_links` is what this
+    graph holds: the markdown files with a link edge to it, by line.
+    `sections` comes from markdown-kg, asked once per vault inside the repo:
+    the section each link was written in, with its id and line range.
+    Whatever is missing - that skill, a vault, its database - is said in
+    `missing`, and `doc_links` is always returned."""
+    con = open_fresh(repo)
+    fid = resolve_file_arg(con, name)
+    doc_links = [{"src": s, "kind": k, "line": ln} for s, k, ln in con.execute(
+        "SELECT e.src, e.kind, e.line FROM edges e JOIN files f"
+        " ON f.id = e.src WHERE e.dst=? AND f.language='markdown'"
+        " ORDER BY e.src, e.line", (fid,))]
+    con.close()
+    vaults = find_vaults(repo)
+    sections: list[dict] = []
+    missing: list[str] = []
+    if not vaults:
+        missing.append("no markdown-kg database inside this repo: run that"
+                       " skill's `ingest` on the docs folder")
+    for vault in vaults[:VAULT_CAP]:
+        got, why = sibling_json("refs", str(repo / vault),
+                                posixpath.relpath(fid, vault))
+        if isinstance(got, list):
+            sections.extend(
+                {**r, "vault": vault, "doc": posixpath.normpath(
+                    posixpath.join(vault, r["note_path"]))} for r in got)
+        elif why not in missing:
+            missing.append(why or "markdown-kg refs: unexpected answer")
+    if len(vaults) > VAULT_CAP:
+        missing.append(f"{len(vaults) - VAULT_CAP} of {len(vaults)} vaults"
+                       " not asked")
+    return {"file": fid, "sections": sections, "doc_links": doc_links,
+            "missing": missing}
+
+
+def cmd_docs(args: argparse.Namespace) -> int:
+    payload = docs_report(repo_dir(args.repo), args.path)
+
+    def render(p):
+        print(f"{p['file']}: {len(p['sections'])} doc sections,"
+              f" {len(p['doc_links'])} doc links")
+        for s in p["sections"]:
+            lines = (f"  L{s['line_start']}-{s['line_end']}"
+                     if s["section_id"] else "")
+            print(f"  {s['doc']}{lines}  {s['heading_path']}")
+        for r in p["doc_links"]:
+            print(f"  {r['src']}:{r['line']}  ({r['kind']})")
+        for line in p["missing"]:
+            print(f"  {line}")
+        return 0
+    return emit(args, payload, render)
+
+
 # ---------- CLI ----------
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="code_kg.py", description=__doc__,
@@ -4715,6 +4822,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="only files matching this glob")
     p.add_argument("--limit", type=int, default=50)
     add("config", cmd_config)
+    p = add("docs", cmd_docs)
+    p.add_argument("path")
 
     args = ap.parse_args(argv)
     out, err = sys.stdout, sys.stderr

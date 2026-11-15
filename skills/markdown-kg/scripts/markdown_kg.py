@@ -63,10 +63,13 @@ Commands:
   related <vault> <note>                notes ranked by link-graph proximity
   communities <vault>                   clusters of notes that link together
   config <vault>                        what each config row matched
+  refs <vault> <path>                   sections that link to a non-note file
+  code <vault> <note>                   a note's linked files, as code-kg sees them
 """
 from __future__ import annotations
 
 import argparse
+import bisect
 import fnmatch
 import hashlib
 import heapq
@@ -77,6 +80,7 @@ import posixpath
 import re
 import shutil
 import sqlite3
+import subprocess
 import sys
 import urllib.parse
 from datetime import date, datetime, timezone
@@ -113,7 +117,7 @@ HEADING_MAX = 120
 # Bump when a parser or schema change must re-index a vault whose files have
 # not changed. The manifest folds it in, so the next read command re-ingests
 # once instead of serving sections the old parser cut.
-INDEX_REV = 3
+INDEX_REV = 4
 
 PROFILES = {"log-dated", "reference", "dimension", "list", "generated", "hub",
             "freeform"}
@@ -336,6 +340,18 @@ CREATE TABLE IF NOT EXISTS inline_tags(   -- `#tags` written in body text
   count      INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (note_id, section_id, tag)
 );
+CREATE TABLE IF NOT EXISTS file_links(    -- links to files that are not notes
+  src        TEXT NOT NULL,               -- note id
+  section_id TEXT NOT NULL DEFAULT '',    -- section the link was written in
+  target     TEXT NOT NULL,               -- target as written
+  path       TEXT NOT NULL,               -- vault-relative path it names; starts
+                                          -- `../` when the file is outside the
+                                          -- vault. A wikilink keeps what was
+                                          -- written: it names the end of a path
+  syntax     TEXT NOT NULL,               -- 'wiki' | 'md'
+  PRIMARY KEY (src, section_id, syntax, target)
+);
+CREATE INDEX IF NOT EXISTS file_links_path ON file_links(path);
 CREATE TABLE IF NOT EXISTS entities(
   canonical TEXT PRIMARY KEY,
   type      TEXT NOT NULL DEFAULT '',
@@ -1286,6 +1302,18 @@ def resolve_md_note(target: str, src_rel: str, ids: list[str], known,
     return (None, "unresolved") if is_md else None
 
 
+def file_link_path(written: str, src_rel: str) -> str:
+    """The vault-relative path a markdown link to a non-note file names,
+    read the way `resolve_md_note` reads a note target: from the source
+    file's folder, or from the vault root with a leading `/`. A path that
+    leaves the vault keeps its leading `../`, which is how a docs folder
+    inside a repo reaches the code beside it."""
+    if written.startswith("/"):
+        return posixpath.normpath(written.lstrip("/") or ".")
+    return posixpath.normpath(posixpath.join(posixpath.dirname(src_rel),
+                                             written))
+
+
 # ---------- anchors: links that name a heading or a block ----------
 BLOCK_ID_RE = re.compile(r"(?:^|\s)\^([A-Za-z0-9-]+)[ \t]*$")
 _ANCHOR_MARKUP_RE = re.compile(r"[*_`~\[\]#|^:]|%%")
@@ -2198,7 +2226,8 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
     for table in ("notes", "properties", "tags", "aliases", "edges", "sections",
                   "members", "entities", "entity_aliases", "mentions",
                   "ignored", "annotations", "annotation_candidates", "meta",
-                  "anchors", "link_fields", "inline_tags", "entity_skips"):
+                  "anchors", "link_fields", "inline_tags", "entity_skips",
+                  "file_links"):
         con.execute(f"DELETE FROM {table}")
     con.execute("INSERT INTO sections_fts(sections_fts) VALUES ('delete-all')")
 
@@ -2373,14 +2402,27 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
         text, sections = doc["text"], doc["sections"]
         rows: list[tuple] = []
         anchor_rows: list[tuple] = []
+        file_rows: list[tuple] = []
+        # The two link scanners read the code-stripped text, which keeps
+        # every line of the note and not every character, so an offset from
+        # them falls short of its place in `text` by all the code above it.
+        # The line is exact, so the section is found by line.
+        starts = _line_starts(strip_code(text))
+
+        def section_of(off: int) -> str:
+            return _section_on_line(sections,
+                                    bisect.bisect_right(starts, off))
+
         for target, anchor, kind, off in scan_wikilinks(text):
-            sec = _section_at(sections, off)
+            sec = section_of(off)
             dst, status = nid, "resolved"       # a same-note link
             if target:
                 base = target.rsplit("/", 1)[-1]
                 ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
                 if ext in ASSET_EXTS:
                     report["skipped_assets"] += 1
+                    file_rows.append((nid, sec, target, posixpath.normpath(
+                        target.strip("/")), "wiki"))
                     continue
                 dst, status = wiki_dst(target)
                 rows.append((nid, dst, target, "wiki", kind, status, sec))
@@ -2388,7 +2430,7 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
                 anchor_rows.append(anchor_row(nid, sec, dst, target, anchor,
                                               "wiki", status))
         for target, anchor, style, off in scan_md_links(text):
-            sec = _section_at(sections, off)
+            sec = section_of(off)
             dst, status = nid, "resolved"       # a same-note link
             written = urllib.parse.unquote(target)
             if target:
@@ -2397,6 +2439,8 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
                 if found is None:
                     if style == "inline":
                         report["skipped_assets"] += 1
+                    file_rows.append((nid, sec, written, file_link_path(
+                        written, doc["rel"]), "md"))
                     continue
                 dst, status = found
                 rows.append((nid, dst, written, "md", "link", status, sec))
@@ -2416,6 +2460,9 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
             "INSERT OR IGNORE INTO anchors(src, section_id, dst, target,"
             " anchor, dst_section, dst_line, syntax, status)"
             " VALUES (?,?,?,?,?,?,?,?,?)", anchor_rows)
+        con.executemany(
+            "INSERT OR IGNORE INTO file_links(src, section_id, target, path,"
+            " syntax) VALUES (?,?,?,?,?)", file_rows)
         for field, origin, syntax, target, off in scan_field_links(text):
             if syntax == "wiki":
                 dst, status = wiki_dst(target)
@@ -2477,6 +2524,23 @@ def _section_at(sections: list[dict], offset: int) -> str:
     for sec in sections:
         if sec["char_start"] <= offset < sec["char_end"]:
             size = sec["char_end"] - sec["char_start"]
+            if best_size is None or size < best_size:
+                best, best_size = sec["id"], size
+    return best
+
+
+def _line_starts(text: str) -> list[int]:
+    """The offset each line of a text starts at, for `bisect`: the number
+    of starts at or before an offset is its 1-indexed line."""
+    return [0] + [m.end() for m in re.finditer("\n", text)]
+
+
+def _section_on_line(sections: list[dict], line: int) -> str:
+    """The smallest indexed section whose line range holds a line."""
+    best, best_size = "", None
+    for sec in sections:
+        if sec["line_start"] <= line <= sec["line_end"]:
+            size = sec["line_end"] - sec["line_start"]
             if best_size is None or size < best_size:
                 best, best_size = sec["id"], size
     return best
@@ -4631,6 +4695,184 @@ def cmd_relations(args: argparse.Namespace) -> int:
     return emit(args, payload, render)
 
 
+# ---------- links to files, and the code-kg skill ----------
+def file_refs(con: sqlite3.Connection, path: str) -> list[dict]:
+    """The sections that link to one file, by vault-relative path. A
+    markdown link matches on the path it resolves to. A wikilink names a
+    file the way Obsidian finds one, by the end of its path, so it matches
+    when the path ends with what was written."""
+    path = posixpath.normpath(path)
+    tail = "/" + path.lower()
+    rows = con.execute(
+        "SELECT f.src, n.path, f.section_id, COALESCE(s.heading_path, ''),"
+        " s.line_start, s.line_end, f.target, f.syntax, f.path"
+        " FROM file_links f JOIN notes n ON n.id = f.src"
+        " LEFT JOIN sections s ON s.id = f.section_id"
+        " WHERE f.path = ? OR f.syntax = 'wiki'"
+        " ORDER BY f.src, s.line_start, f.target", (path,)).fetchall()
+    return [{"src": r[0], "note_path": r[1], "section_id": r[2],
+             "heading_path": r[3] or "(top)", "line_start": r[4],
+             "line_end": r[5], "target": r[6], "syntax": r[7]}
+            for r in rows
+            if r[8] == path or tail.endswith("/" + r[8].lower())]
+
+
+def cmd_refs(args: argparse.Namespace) -> int:
+    vault = vault_dir(args.vault)
+    con = open_fresh(vault)
+    payload = file_refs(con, args.path)
+    con.close()
+
+    def render(rows_):
+        if not rows_:
+            print(f"no section links to {posixpath.normpath(args.path)}")
+            return 0
+        for r in rows_:
+            where = (f"{r['section_id']}  L{r['line_start']}-{r['line_end']}"
+                     if r["section_id"] else f"{r['src']}  (top)")
+            print(f"{where}  ({r['syntax']} as {r['target']!r})")
+        return 0
+    return emit(args, payload, render)
+
+
+# The code-kg skill is reached as a sibling folder and through its command
+# line only: `--json` out, never its database file, so a schema change there
+# cannot break a read here. CODE_KG_DB is where that skill keeps the database
+# of a repo it has indexed; the file marks the repo and is never opened from
+# here.
+SIBLING_CLI = (Path(__file__).resolve().parent.parent.parent
+               / "code-kg" / "scripts" / "code_kg.py")
+SIBLING_TIMEOUT = 120
+CODE_KG_DB = ".code-kg/code-kg.db"
+
+
+def sibling_json(*argv: str) -> tuple[object, str]:
+    """One code-kg read command: (parsed answer, '') or (None, one line
+    saying why there is none). That skill refreshes its own database first
+    when the repo has changed. `--` ends the options, because the paths
+    that follow come from vault text."""
+    if not SIBLING_CLI.is_file():
+        return None, "the code-kg skill is not installed beside this one"
+    try:
+        r = subprocess.run(
+            [sys.executable, str(SIBLING_CLI), argv[0], "--json", "--",
+             *argv[1:]], capture_output=True, encoding="utf-8",
+            errors="replace", timeout=SIBLING_TIMEOUT,
+            env={**os.environ, "PYTHONUTF8": "1"})
+        if r.returncode == 0:
+            return json.loads(r.stdout), ""
+        why = (r.stderr.strip().splitlines() or ["no output"])[-1][:300]
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        why = type(e).__name__
+    return None, f"code-kg {argv[0]}: {why}"
+
+
+def find_code_repo(vault: Path) -> Path | None:
+    """The nearest folder at or above the vault that code-kg has indexed,
+    looking no higher than the repo the vault is in (the first folder that
+    holds `.git`) and never as high as the home folder. A symlinked engine
+    folder or database is passed over: that skill's refresh would write
+    wherever the link points."""
+    home = Path.home()
+    for d in (vault, *vault.parents):
+        if d == home:
+            break
+        db = d / CODE_KG_DB
+        if (db.is_file() and not db.is_symlink()
+                and not db.parent.is_symlink()):
+            return d
+        if os.path.lexists(d / ".git"):
+            break
+    return None
+
+
+def code_report(vault: Path, name: str, limit: int = 30) -> dict:
+    """The files one note links to, each with what the code graph holds for
+    it: role, language, liveness tier, and inbound edges counted by kind.
+    Whatever is missing - that skill, its database, a file it does not
+    hold - is said in `missing` or on the file, and the links themselves
+    are always returned."""
+    con = open_fresh(vault)
+    nid = resolve_note_arg(con, name)
+    rows = con.execute(
+        "SELECT path, section_id FROM file_links WHERE src=?"
+        " ORDER BY path, section_id", (nid,)).fetchall()
+    con.close()
+    files: dict[str, dict] = {}
+    for path, sid in rows:
+        f = files.setdefault(path, {
+            "path": path, "repo_path": None, "sections": [], "indexed": None,
+            "role": None, "language": None, "tier": None, "inbound": None})
+        if sid and sid not in f["sections"]:
+            f["sections"].append(sid)
+    missing: list[str] = []
+    tiers = None
+    repo = find_code_repo(vault)
+    if repo is None:
+        missing.append(f"no code-kg database at or above {vault}: run that"
+                       " skill's `ingest` on the repo")
+    else:
+        dead, why = sibling_json("dead", str(repo))
+        if isinstance(dead, dict) and isinstance(dead.get("tiers"), dict):
+            tiers = {f: tier for tier, members in dead["tiers"].items()
+                     for f in members}
+        else:
+            missing.append(why or "code-kg dead: unexpected answer")
+    if tiers is not None:
+        prefix = vault.relative_to(repo).as_posix()
+        asked = 0
+        for f in files.values():
+            rp = posixpath.normpath(posixpath.join(prefix, f["path"]))
+            if rp == ".." or rp.startswith("../"):
+                f["indexed"] = False        # the link leaves the repo
+                continue
+            f["repo_path"] = rp
+            if asked >= limit:
+                continue
+            asked += 1
+            got, _ = sibling_json("file", str(repo), rp)
+            # code-kg also resolves a path by its ending; only the exact
+            # file is the one the note linked.
+            f["indexed"] = isinstance(got, dict) and got.get("file") == rp
+            if f["indexed"]:
+                f["role"], f["language"] = got.get("role"), got.get("language")
+                f["tier"] = tiers.get(rp)
+                kinds = [k for _, k in sorted({
+                    (e["src"], e["kind"]) for e in got.get("inbound", [])})]
+                f["inbound"] = {k: kinds.count(k) for k in sorted(set(kinds))}
+        left = sum(1 for f in files.values() if f["indexed"] is None)
+        if left:
+            missing.append(f"{left} of {len(files)} files not looked up:"
+                           f" raise --limit (now {limit})")
+    return {"note": nid, "repo": str(repo) if repo else None,
+            "files": list(files.values()), "missing": missing}
+
+
+def cmd_code(args: argparse.Namespace) -> int:
+    payload = code_report(vault_dir(args.vault), args.note, args.limit)
+
+    def render(p):
+        print(f"{p['note']}: {len(p['files'])} linked files"
+              + (f", code graph at {p['repo']}" if p["repo"] else ""))
+        for f in p["files"]:
+            line = f"  {f['repo_path'] or f['path']}"
+            if f["indexed"]:
+                line += "  " + ", ".join(
+                    x for x in (f["role"], f["tier"]) if x)
+                if f["inbound"]:
+                    line += "  inbound: " + ", ".join(
+                        f"{k} {n}" for k, n in f["inbound"].items())
+            elif f["indexed"] is False:
+                line += "  not in the code graph"
+            print(line)
+            for sid in f["sections"]:
+                print(f"      in {sid}")
+        for line in p["missing"]:
+            print(f"  {line}")
+        return 0
+    return emit(args, payload, render)
+
+
 # ---------- link fields ----------
 FIELD_COLS = ("src", "field", "origin", "target", "dst", "status",
               "section_id")
@@ -5752,6 +5994,17 @@ def main(argv: list[str] | None = None) -> int:
                    help=inferred_help)
 
     add("config", cmd_config, "what each config row matched; writes nothing")
+
+    p = add("refs", cmd_refs, "the sections that link to a file that is not"
+                              " a note")
+    p.add_argument("path", help="vault-relative, as a note reaches it:"
+                                " ../src/tool.py for a file beside the vault")
+
+    p = add("code", cmd_code, "the files a note links to, with what the"
+                              " code-kg skill holds for each")
+    p.add_argument("note")
+    p.add_argument("--limit", type=int, default=30,
+                   help="files looked up in the code graph")
 
     p = add("entity", cmd_entity, "a registered entity and its mentions")
     p.add_argument("name")

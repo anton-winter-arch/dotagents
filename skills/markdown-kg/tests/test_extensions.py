@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 """Tests for markdown link compatibility, anchors, link fields, inline tags,
-derived entities, the `config` check, `related` and `communities`.
+derived entities, the `config` check, `related` and `communities`, and the
+links from notes to files (`refs`, and `code` through the code-kg skill).
 
 Behavior tests run against a temp copy of tests/wiki-fixture-vault: an
 LLM-wiki shaped vault (index, log, entity and concept pages, sources) with a
-docs-style guides tree that uses standard markdown links."""
+docs-style guides tree that uses standard markdown links. The file-link tests
+run against a temp copy of tests/linked-fixture-repo, a small repo that holds
+code and its docs together."""
 import contextlib
 import io
 import json
+import os
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import markdown_kg as kg
@@ -21,6 +27,7 @@ import markdown_kg as kg
 HERE = Path(__file__).resolve().parent
 WIKI = HERE / "wiki-fixture-vault"
 PLAIN = HERE / "fixture-vault"
+LINKED = HERE / "linked-fixture-repo"
 
 
 def run(*argv: str) -> tuple[int, str, str]:
@@ -1319,6 +1326,379 @@ class UpgradeTests(VaultCase):
             "ambiguous", "annotations", "bad_profiles", "entities",
             "ignored_files", "ignored_links", "mentions", "notes", "resolved",
             "sections", "skipped_assets", "unresolved"])
+
+
+# ------------------------------------------------- links to files, and code-kg
+class LinkedCase(VaultCase):
+    """A temp copy of tests/linked-fixture-repo: code under src/ and scripts/,
+    docs under docs/. The vault is docs/ unless a subclass names the root."""
+    vault_rel = "docs"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="mdkg-link-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.repo = self.tmp / "repo"
+        shutil.copytree(LINKED, self.repo)
+        self.vault = self.repo / self.vault_rel
+        run("ingest", str(self.vault))
+
+    def code_kg(self, *argv: str) -> None:
+        r = subprocess.run([sys.executable, str(kg.SIBLING_CLI), *argv],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def files(self, note: str, *flags: str) -> dict:
+        return {f["path"]: f for f in self.json("code", note, *flags)["files"]}
+
+
+class FileLinkTests(LinkedCase):
+    def test_a_link_to_a_file_is_recorded_with_its_path(self):
+        self.assertEqual(
+            self.rows("SELECT src, path, target, syntax FROM file_links"
+                      " ORDER BY src, path"),
+            [("design/decisions", "../src/tidelog/reader.py",
+              "../../src/tidelog/reader.py", "md"),
+             ("guide", "../scripts/backfill.sh", "../scripts/backfill.sh",
+              "md"),
+             ("guide", "../src/tidelog/cli.py", "../src/tidelog/cli.py",
+              "md"),
+             ("guide", "../src/tidelog/harbor_export.py",
+              "../src/tidelog/harbor_export.py", "md"),
+             ("guide", "../src/tidelog/legacy_export.py",
+              "../src/tidelog/legacy_export.py", "md"),
+             ("guide", "../src/tidelog/reader.py", "../src/tidelog/reader.py",
+              "md"),
+             ("guide", "../src/tidelog/report.py", "../src/tidelog/report.py",
+              "md"),
+             ("guide", "data/sample-readings.csv", "data/sample-readings.csv",
+              "md"),
+             ("index", "sample-readings.csv", "sample-readings.csv", "wiki")])
+
+    def test_the_row_names_the_section_the_link_was_written_in(self):
+        self.assertEqual(
+            self.rows("SELECT s.heading FROM file_links f JOIN sections s"
+                      " ON s.id = f.section_id WHERE f.src='guide'"
+                      " AND f.path LIKE '%/cli.py'"),
+            [("Daily report",)])
+
+    def test_note_links_and_the_ingest_report_are_unchanged(self):
+        self.assertEqual(
+            self.rows("SELECT src, dst FROM edges ORDER BY src, dst"),
+            [("design/decisions", "guide"), ("guide", "design/decisions"),
+             ("index", "design/decisions"), ("index", "guide")])
+        report = self.json("ingest")
+        self.assertEqual(report["skipped_assets"], 8)
+        self.assertNotIn("file_links", report)
+
+    def test_written_forms(self):
+        self.note("extra.md",
+                  "# Extra\n\n[a](<../src/my file.py>) [b](../src/my%20file.py)"
+                  " [c](/assets/logo.svg) [d](../LICENSE) [e](../src/)"
+                  " [f](https://example.org/x.py) [g](mailto:x@example.org)"
+                  " ![h](pic.png) `[i](../src/in_code.py)`\n")
+        run("ingest", str(self.vault))
+        self.assertEqual(
+            [r[0] for r in self.rows(
+                "SELECT path FROM file_links WHERE src='extra' ORDER BY 1")],
+            ["../LICENSE", "../src", "../src/my file.py", "assets/logo.svg"])
+
+    def test_a_database_from_before_the_table_upgrades_on_read(self):
+        con = sqlite3.connect(kg.db_path(self.vault))
+        con.execute("DROP TABLE file_links")
+        con.execute("UPDATE meta SET value='stale' WHERE key='manifest'")
+        con.commit()
+        con.close()
+        self.assertEqual(len(self.json("refs", "../src/tidelog/reader.py")), 2)
+
+
+class SectionOfALinkTests(LinkedCase):
+    """A link's section is found by the line it sits on. The scanners read
+    the note with its code removed, so a character offset from them falls
+    short by the length of every code block and span above the link."""
+
+    def setUp(self):
+        super().setUp()
+        self.note("howto.md", (
+            "# Howto\n\n## Setup\n\nRun `tidelog --init` once, then check"
+            " the install.\n\n```sh\ntidelog --init\ntidelog --check\n"
+            "tidelog --version\n```\n\n## Next\n\nThen read the"
+            " [guide](guide.md#backfill), the [[index#Sample data]] and"
+            " [reader.py](../src/tidelog/reader.py).\n"))
+        self.limits(1)
+
+    def heading(self, table: str) -> list:
+        return self.rows(
+            f"SELECT DISTINCT s.heading FROM {table} t JOIN sections s"
+            " ON s.id = t.section_id WHERE t.src='howto'")
+
+    def test_a_note_link_below_code(self):
+        self.assertEqual(self.heading("edges"), [("Next",)])
+
+    def test_an_anchor_below_code(self):
+        self.assertEqual(self.heading("anchors"), [("Next",)])
+
+    def test_a_file_link_below_code(self):
+        self.assertEqual(self.heading("file_links"), [("Next",)])
+
+    def test_backlinks_name_the_section(self):
+        got = [r["heading_path"] for r in self.json("backlinks", "guide")
+               if r["src"] == "howto"]
+        self.assertEqual(got, ["Howto > Next"])
+
+
+class FileLinkCostTests(LinkedCase):
+    def test_a_note_of_nothing_but_file_links(self):
+        """The worst shapes: many sections with a code block and links in
+        each, and one line of embeds that every `refs` call has to weigh."""
+        import time
+        self.note("big.md", "# Big\n\n" + "\n".join(
+            f"## Part {i}\n\n" + " ".join(
+                f"[f](../src/m{i}_{j}.py)" for j in range(10))
+            + "\n\n```\ncode\n```\n" for i in range(1000)))
+        self.note("wide.md", "# Wide\n\n" + "\n".join(
+            f"![[shot{i}.png]]" for i in range(20000)) + "\n")
+        start = time.time()
+        run("ingest", str(self.vault))
+        took = time.time() - start
+        self.assertEqual(
+            self.rows("SELECT count(*), count(DISTINCT section_id)"
+                      " FROM file_links WHERE src='big'"), [(10000, 1000)])
+        start = time.time()
+        self.assertEqual(len(self.json("refs", "../src/m7_3.py")), 1)
+        self.assertEqual(len(self.json("refs", "img/shot5.png")), 1)
+        self.assertLess(time.time() - start, 3.0)
+        self.assertLess(took, 20.0)
+
+
+class RootVaultFileLinkTests(LinkedCase):
+    vault_rel = "."
+
+    def test_paths_are_relative_to_the_vault(self):
+        self.assertEqual(
+            self.rows("SELECT src, path FROM file_links WHERE src IN"
+                      " ('README', 'docs/design/decisions') ORDER BY 1, 2"),
+            [("README", "scripts/backfill.sh"),
+             ("README", "src/tidelog/cli.py"),
+             ("docs/design/decisions", "src/tidelog/reader.py")])
+
+
+class RefsTests(LinkedCase):
+    def test_the_sections_that_link_to_a_file(self):
+        got = self.json("refs", "../src/tidelog/reader.py")
+        self.assertEqual([(r["src"], r["note_path"], r["heading_path"])
+                          for r in got],
+                         [("design/decisions", "design/decisions.md",
+                           "Design decisions > Raw lines are kept"),
+                          ("guide", "guide.md",
+                           "Operating guide > Reading a gauge")])
+        for r in got:
+            self.assertEqual(
+                self.rows("SELECT line_start, line_end FROM sections"
+                          " WHERE id=?", r["section_id"]),
+                [(r["line_start"], r["line_end"])])
+        # The link sits on line 8 of guide.md.
+        self.assertLessEqual(got[1]["line_start"], 8)
+        self.assertGreaterEqual(got[1]["line_end"], 8)
+
+    def test_the_path_is_normalized(self):
+        self.assertEqual(
+            self.json("refs", "./../src/tidelog/../tidelog/reader.py"),
+            self.json("refs", "../src/tidelog/reader.py"))
+
+    def test_a_reference_style_link_counts(self):
+        got = self.json("refs", "../src/tidelog/cli.py")
+        self.assertEqual([r["heading_path"] for r in got],
+                         ["Operating guide > Daily report"])
+
+    def test_a_wikilink_matches_by_the_end_of_the_path(self):
+        got = self.json("refs", "data/sample-readings.csv")
+        self.assertEqual([(r["src"], r["syntax"]) for r in got],
+                         [("guide", "md"), ("index", "wiki")])
+        self.assertEqual([r["src"] for r in
+                          self.json("refs", "other-readings.csv")], [])
+
+    def test_a_path_nothing_links_to(self):
+        self.assertEqual(self.json("refs", "../src/tidelog/__init__.py"), [])
+        rc, out, _ = run("refs", str(self.vault), "../src/tidelog/__init__.py")
+        self.assertEqual(rc, 0)
+        self.assertIn("no section links to ../src/tidelog/__init__.py", out)
+
+    def test_prose_names_the_section_and_its_lines(self):
+        rc, out, _ = run("refs", str(self.vault), "../scripts/backfill.sh")
+        self.assertEqual(rc, 0)
+        sid, a, b = self.rows(
+            "SELECT id, line_start, line_end FROM sections"
+            " WHERE heading='Backfill'")[0]
+        self.assertIn(sid, out)
+        self.assertIn(f"L{a}-{b}", out)
+
+    def test_a_path_that_starts_with_a_dash_is_a_path(self):
+        self.note("odd.md", "# Odd\n\n[x](-odd.py)\n")
+        rc, out, err = run("refs", "--json", "--", str(self.vault), "-odd.py")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([r["src"] for r in json.loads(out)], ["odd"])
+
+
+@unittest.skipUnless(kg.SIBLING_CLI.is_file(), "the code-kg skill is absent")
+class CodeTests(LinkedCase):
+    def setUp(self):
+        super().setUp()
+        self.code_kg("ingest", str(self.repo))
+
+    def test_each_linked_file_carries_role_tier_and_inbound_edges(self):
+        got = self.json("code", "guide")
+        self.assertEqual(got["note"], "guide")
+        self.assertEqual(got["missing"], [])
+        files = {f["path"]: f for f in got["files"]}
+        self.assertEqual(sorted(files), [
+            "../scripts/backfill.sh", "../src/tidelog/cli.py",
+            "../src/tidelog/harbor_export.py",
+            "../src/tidelog/legacy_export.py", "../src/tidelog/reader.py",
+            "../src/tidelog/report.py", "data/sample-readings.csv"])
+        reader = files["../src/tidelog/reader.py"]
+        self.assertEqual(
+            {k: reader[k] for k in ("repo_path", "indexed", "role",
+                                    "language", "tier", "inbound")},
+            {"repo_path": "src/tidelog/reader.py", "indexed": True,
+             "role": "source", "language": "python", "tier": "live",
+             "inbound": {"from-import": 2, "link": 2}})
+        self.assertEqual(
+            self.rows("SELECT heading FROM sections WHERE id=?",
+                      reader["sections"][0]), [("Reading a gauge",)])
+        self.assertEqual(files["../src/tidelog/legacy_export.py"]["tier"],
+                         "unreachable")
+        self.assertEqual(files["../scripts/backfill.sh"]["language"], "bash")
+        # code-kg reads inline links only, so the guide's reference-style
+        # link to cli.py is an edge this graph holds and that one does not.
+        self.assertEqual(files["../src/tidelog/cli.py"]["inbound"],
+                         {"link": 1, "path-ref": 1})
+
+    def test_a_file_the_code_graph_does_not_hold(self):
+        files = self.files("guide")
+        for path in ("../src/tidelog/harbor_export.py",
+                     "data/sample-readings.csv"):
+            self.assertEqual(
+                {k: files[path][k] for k in ("indexed", "role", "tier")},
+                {"indexed": False, "role": None, "tier": None}, path)
+        self.assertEqual(files["data/sample-readings.csv"]["repo_path"],
+                         "docs/data/sample-readings.csv")
+
+    def test_a_link_that_leaves_the_repo_is_never_looked_up(self):
+        self.note("out.md", "# Out\n\n[x](../../elsewhere/tool.py)\n")
+        got = self.files("out")["../../elsewhere/tool.py"]
+        self.assertEqual((got["repo_path"], got["indexed"]), (None, False))
+
+    def test_a_path_that_starts_with_a_dash_is_a_path(self):
+        (self.repo / "-odd.py").write_text("x = 1\n", encoding="utf-8")
+        self.note("odd.md", "# Odd\n\n[x](../-odd.py)\n")
+        got = self.files("odd")["../-odd.py"]
+        self.assertEqual((got["repo_path"], got["indexed"], got["role"]),
+                         ("-odd.py", True, "source"))
+
+    def test_the_lookup_limit_is_stated(self):
+        got = self.json("code", "guide", "--limit", "2")
+        self.assertEqual([f["indexed"] for f in got["files"]],
+                         [True, True, None, None, None, None, None])
+        self.assertEqual(len(got["missing"]), 1)
+        self.assertIn("5 of 7", got["missing"][0])
+
+    def test_prose(self):
+        rc, out, _ = run("code", str(self.vault), "guide")
+        self.assertEqual(rc, 0)
+        self.assertIn(f"code graph at {self.repo}", out)
+        self.assertIn("src/tidelog/reader.py  source, live", out)
+        self.assertIn("src/tidelog/harbor_export.py  not in the code graph",
+                      out)
+
+    def test_the_code_folder_is_left_as_it_was(self):
+        def snapshot():
+            return sorted((p.name, p.stat().st_size, p.stat().st_mtime_ns)
+                          for p in (self.repo / ".code-kg").iterdir())
+        before = snapshot()
+        self.json("code", "guide")
+        self.assertEqual(snapshot(), before)
+
+    def test_a_symlinked_code_folder_is_never_asked(self):
+        """code-kg refreshes its database before it answers, so a link here
+        would let the vault's tree choose where that write lands."""
+        real = self.tmp / "elsewhere"
+        shutil.move(str(self.repo / ".code-kg"), str(real))
+        os.symlink(real, self.repo / ".code-kg")
+        (self.repo / "src" / "tidelog" / "added.py").write_text(
+            "x = 1\n", encoding="utf-8")
+
+        def snapshot():
+            return sorted((p.name, p.stat().st_size, p.stat().st_mtime_ns)
+                          for p in real.iterdir())
+        before = snapshot()
+        got = self.json("code", "guide")
+        self.assertIsNone(got["repo"])
+        self.assertEqual(len(got["missing"]), 1)
+        self.assertIn("no code-kg database", got["missing"][0])
+        self.assertEqual(snapshot(), before)
+
+    def test_the_sibling_skill_absent(self):
+        old = kg.SIBLING_CLI
+        self.addCleanup(setattr, kg, "SIBLING_CLI", old)
+        kg.SIBLING_CLI = self.tmp / "nowhere" / "scripts" / "code_kg.py"
+        got = self.json("code", "guide")
+        self.assertEqual(len(got["missing"]), 1)
+        self.assertIn("code-kg", got["missing"][0])
+        self.assertEqual(len(got["files"]), 7)
+        self.assertEqual({f["indexed"] for f in got["files"]}, {None})
+        rc, out, _ = run("code", str(self.vault), "guide")
+        self.assertEqual(rc, 0)
+        self.assertIn("../src/tidelog/reader.py", out)
+        self.assertEqual(sum("code-kg" in ln for ln in out.splitlines()), 1)
+
+
+class CodeWithoutDatabaseTests(LinkedCase):
+    def test_no_code_database(self):
+        got = self.json("code", "guide")
+        self.assertEqual(len(got["missing"]), 1)
+        self.assertIn("ingest", got["missing"][0])
+        self.assertEqual(len(got["files"]), 7)
+        self.assertFalse((self.repo / ".code-kg").exists())
+
+    def test_the_search_stops_at_the_repo_the_vault_is_in(self):
+        (self.repo / ".git").mkdir()
+        (self.tmp / ".code-kg").mkdir()
+        (self.tmp / ".code-kg" / "code-kg.db").write_bytes(b"")
+        got = self.json("code", "guide")
+        self.assertIsNone(got["repo"])
+        self.assertIn("no code-kg database", got["missing"][0])
+
+    def test_the_search_stops_below_the_home_folder(self):
+        (self.repo / ".code-kg").mkdir()
+        (self.repo / ".code-kg" / "code-kg.db").write_bytes(b"")
+        with mock.patch.object(kg.Path, "home", return_value=self.repo):
+            got = self.json("code", "guide")
+        self.assertIsNone(got["repo"])
+
+    def test_a_dangling_git_link_still_ends_the_search(self):
+        os.symlink(self.tmp / "nowhere", self.repo / ".git")
+        (self.tmp / ".code-kg").mkdir()
+        (self.tmp / ".code-kg" / "code-kg.db").write_bytes(b"")
+        self.assertIsNone(self.json("code", "guide")["repo"])
+
+    def test_a_code_folder_without_a_database(self):
+        (self.repo / ".code-kg").mkdir()
+        got = self.json("code", "guide")
+        self.assertEqual(len(got["missing"]), 1)
+        self.assertIn("ingest", got["missing"][0])
+        self.assertEqual(len(got["files"]), 7)
+        self.assertEqual(list((self.repo / ".code-kg").iterdir()), [])
+
+
+@unittest.skipUnless(kg.SIBLING_CLI.is_file(), "the code-kg skill is absent")
+class RootVaultCodeTests(LinkedCase):
+    vault_rel = "."
+
+    def test_a_vault_at_the_repo_root(self):
+        self.code_kg("ingest", str(self.repo))
+        cli = self.files("README")["src/tidelog/cli.py"]
+        self.assertEqual((cli["repo_path"], cli["role"], cli["tier"]),
+                         ("src/tidelog/cli.py", "source", "live"))
 
 
 if __name__ == "__main__":

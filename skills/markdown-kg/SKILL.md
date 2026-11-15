@@ -158,6 +158,22 @@ path and no submission protocol. Field reference: `references/config.md`.
    score; below about 0.3, treat the groups as a hint rather than as real
    structure.
 
+   A link to a file that is not a note (code, data, an embedded image) is
+   kept with the section it was written in.
+
+   ```bash
+   python3 <skill-dir>/scripts/markdown_kg.py refs <vault> ../src/tool.py
+   python3 <skill-dir>/scripts/markdown_kg.py code <vault> "Some Note"
+   ```
+
+   `refs` lists the sections that link to one file. The path is relative
+   to the vault, as a note reaches it, so a file beside the vault starts
+   with `../`. `code` lists the files one note links to and adds what the
+   `code-kg` skill holds for each: role, liveness tier, and inbound edges
+   counted by kind. It needs that skill installed beside this one and the
+   repo indexed by it; without either it says so in one line and still
+   lists the links.
+
    Every edge above is EXTRACTED provenance - explicit link syntax in the
    corpus. An INFERRED relation is a recorded judgment, written only by an
    explicit command with evidence that is verified at write time, never by

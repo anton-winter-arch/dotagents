@@ -1,5 +1,6 @@
 """Tests for the config extension keys (components, declared links, markers),
-the `config` check command, and the interpreter floor.
+the `config` check command, the interpreter floor, and `docs`, which joins
+this graph with the markdown-kg skill's.
 
 Behavior tests run against a temporary copy of tests/fixture-extend so the
 committed fixture never grows a database.
@@ -7,7 +8,9 @@ committed fixture never grows a database.
 import contextlib
 import io
 import json
+import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -763,6 +766,18 @@ class TestConfigCommand(RepoCase):
         self.assertEqual(self.cfg_file.read_bytes(), before)
 
 
+class TestGitignoreSeed(RepoCase):
+    def test_a_dangling_link_at_the_seed_path_is_not_written_through(self):
+        planted = self.tmp / "planted"
+        gi = code_kg.kg_dir(self.repo) / ".gitignore"
+        if gi.exists():
+            gi.unlink()
+        os.symlink(planted, gi)
+        rc, _, err = run("ingest", str(self.repo))
+        self.assertEqual(rc, 0, err)
+        self.assertFalse(planted.exists())
+
+
 class TestIndexRevision(RepoCase):
     def test_a_revision_bump_reingests_on_the_next_read(self):
         run("ingest", str(self.repo))
@@ -776,6 +791,167 @@ class TestIndexRevision(RepoCase):
         self.addCleanup(setattr, code_kg, "INDEX_REV", old)
         code_kg.INDEX_REV = old + 1
         self.assertEqual(self.json("annotations")["total"], 7)
+
+
+# The docs-and-code fixture lives in the markdown-kg skill, the sibling the
+# `docs` command joins with, so there is one copy of it.
+LINKED = code_kg.SIBLING_CLI.parent.parent / "tests" / "linked-fixture-repo"
+
+
+@unittest.skipUnless(LINKED.is_dir(), "the markdown-kg skill is absent")
+class TestDocs(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="ckg-docs-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.repo = self.tmp / "repo"
+        shutil.copytree(LINKED, self.repo)
+        run("ingest", str(self.repo))
+
+    def index_vault(self, rel: str = "docs") -> None:
+        r = subprocess.run(
+            [sys.executable, str(code_kg.SIBLING_CLI), "ingest",
+             str(self.repo / rel)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def json(self, *argv: str):
+        rc, out, err = run(argv[0], str(self.repo), *argv[1:], "--json")
+        self.assertEqual(rc, 0, err)
+        return json.loads(out)
+
+    def test_the_doc_sections_that_link_to_a_file(self):
+        self.index_vault()
+        got = self.json("docs", "src/tidelog/reader.py")
+        self.assertEqual(got["file"], "src/tidelog/reader.py")
+        self.assertEqual(got["missing"], [])
+        self.assertEqual(
+            [(s["vault"], s["doc"], s["heading_path"])
+             for s in got["sections"]],
+            [("docs", "docs/design/decisions.md",
+              "Design decisions > Raw lines are kept"),
+             ("docs", "docs/guide.md", "Operating guide > Reading a gauge")])
+        guide = got["sections"][1]
+        self.assertTrue(guide["section_id"])
+        # The link sits on line 8 of docs/guide.md.
+        self.assertLessEqual(guide["line_start"], 8)
+        self.assertGreaterEqual(guide["line_end"], 8)
+        self.assertEqual(got["doc_links"], [
+            {"src": "docs/design/decisions.md", "kind": "link", "line": 6},
+            {"src": "docs/guide.md", "kind": "link", "line": 8}])
+
+    def test_a_link_only_the_vault_graph_holds(self):
+        """The guide reaches cli.py through a reference-style link, which
+        this engine's own markdown reader does not follow."""
+        self.index_vault()
+        got = self.json("docs", "src/tidelog/cli.py")
+        self.assertEqual([s["heading_path"] for s in got["sections"]],
+                         ["Operating guide > Daily report"])
+        self.assertEqual([r["src"] for r in got["doc_links"]], ["README.md"])
+
+    def test_a_link_below_a_code_block_lands_in_its_own_section(self):
+        self.index_vault()
+        got = self.json("docs", "scripts/backfill.sh")
+        section = got["sections"][0]
+        self.assertEqual(section["heading_path"], "Operating guide > Backfill")
+        line = [r["line"] for r in got["doc_links"]
+                if r["src"] == "docs/guide.md"][0]
+        self.assertLessEqual(section["line_start"], line)
+        self.assertGreaterEqual(section["line_end"], line)
+
+    def test_a_vault_at_the_repo_root(self):
+        self.index_vault(".")
+        got = self.json("docs", "scripts/backfill.sh")
+        self.assertEqual([(s["vault"], s["doc"]) for s in got["sections"]],
+                         [(".", "README.md"), (".", "docs/guide.md")])
+
+    def test_every_vault_in_the_repo_answers(self):
+        self.index_vault()
+        self.index_vault(".")
+        got = self.json("docs", "src/tidelog/report.py")
+        self.assertEqual([(s["vault"], s["doc"]) for s in got["sections"]],
+                         [(".", "docs/guide.md"), ("docs", "docs/guide.md")])
+
+    def test_a_path_that_starts_with_a_dash_is_a_path(self):
+        (self.repo / "-odd.py").write_text("x = 1\n", encoding="utf-8")
+        (self.repo / "docs" / "odd.md").write_text(
+            "# Odd\n\n[x](../-odd.py)\n", encoding="utf-8")
+        self.index_vault()
+        rc, out, err = run("docs", "--json", "--", str(self.repo), "-odd.py")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([s["doc"] for s in json.loads(out)["sections"]],
+                         ["docs/odd.md"])
+
+    def test_prose(self):
+        self.index_vault()
+        rc, out, _ = run("docs", str(self.repo), "src/tidelog/reader.py")
+        self.assertEqual(rc, 0)
+        self.assertIn("docs/guide.md  L", out)
+        self.assertIn("Operating guide > Reading a gauge", out)
+
+    def test_the_vault_folder_is_left_as_it_was(self):
+        self.index_vault()
+
+        def snapshot():
+            return sorted((p.name, p.stat().st_size, p.stat().st_mtime_ns)
+                          for p in (self.repo / "docs" / "markdown-kg")
+                          .iterdir())
+        before = snapshot()
+        self.json("docs", "src/tidelog/reader.py")
+        self.assertEqual(snapshot(), before)
+
+    def test_no_vault_in_the_repo(self):
+        got = self.json("docs", "src/tidelog/reader.py")
+        self.assertEqual(got["sections"], [])
+        self.assertEqual(len(got["missing"]), 1)
+        self.assertIn("markdown-kg", got["missing"][0])
+        self.assertEqual(len(got["doc_links"]), 2)
+        self.assertEqual(sorted(p.name for p in (self.repo / "docs").iterdir()),
+                         ["data", "design", "guide.md", "index.md"])
+
+    def test_a_vault_folder_without_a_database(self):
+        (self.repo / "docs" / "markdown-kg").mkdir()
+        got = self.json("docs", "src/tidelog/reader.py")
+        self.assertEqual(got["sections"], [])
+        self.assertEqual(len(got["missing"]), 1)
+        self.assertIn("ingest", got["missing"][0])
+        self.assertEqual(
+            list((self.repo / "docs" / "markdown-kg").iterdir()), [])
+
+    def test_a_symlinked_vault_folder_is_never_asked(self):
+        """markdown-kg refreshes its database before it answers, so a link
+        here would let the repo choose where that write lands."""
+        self.index_vault()
+        real = self.tmp / "elsewhere"
+        shutil.move(str(self.repo / "docs" / "markdown-kg"), str(real))
+        os.symlink(real, self.repo / "docs" / "markdown-kg")
+        (self.repo / "docs" / "added.md").write_text(
+            "# Added\n\n[x](../src/tidelog/reader.py)\n", encoding="utf-8")
+
+        def snapshot():
+            return sorted((p.name, p.stat().st_size, p.stat().st_mtime_ns)
+                          for p in real.iterdir())
+        before = snapshot()
+        got = self.json("docs", "src/tidelog/reader.py")
+        self.assertEqual(got["sections"], [])
+        self.assertEqual(len(got["missing"]), 1)
+        self.assertIn("no markdown-kg database", got["missing"][0])
+        self.assertEqual(snapshot(), before)
+
+    def test_the_sibling_skill_absent(self):
+        self.index_vault()
+        self.index_vault(".")
+        old = code_kg.SIBLING_CLI
+        self.addCleanup(setattr, code_kg, "SIBLING_CLI", old)
+        code_kg.SIBLING_CLI = self.tmp / "nowhere" / "markdown_kg.py"
+        got = self.json("docs", "src/tidelog/reader.py")
+        self.assertEqual(got["sections"], [])
+        self.assertEqual(len(got["missing"]), 1)
+        self.assertIn("markdown-kg", got["missing"][0])
+        self.assertEqual(len(got["doc_links"]), 2)
+        rc, out, _ = run("docs", str(self.repo), "src/tidelog/reader.py")
+        self.assertEqual(rc, 0)
+        self.assertIn("docs/guide.md:8", out)
+        self.assertEqual(sum("markdown-kg" in ln for ln in out.splitlines()),
+                         1)
 
 
 if __name__ == "__main__":
