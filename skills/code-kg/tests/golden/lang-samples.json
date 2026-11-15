@@ -1,0 +1,1042 @@
+{
+ "communities <REPO>": {
+  "err": "",
+  "out": "Subsystems inferred from the import graph.  modularity 0.8395 (real structure)\n\nps/  (3 files, 2 internal / 0 external edges)\n  ps/deploy.ps1\n  ps/helpers.ps1\n  ps/mod.psm1\n\ncmd/svc/  (2 files, 1 internal / 0 external edges)\n  cmd/svc/main.go\n  internal/queue/queue.go\n\ndotnet/App/  (2 files, 1 internal / 0 external edges)\n  dotnet/App/App.csproj\n  dotnet/Core/Core.csproj\n\njavasrc/com/example/agent/  (2 files, 1 internal / 0 external edges)\n  javasrc/com/example/agent/Router.java\n  javasrc/com/example/agent/Tool.java\n\nnative/  (2 files, 1 internal / 0 external edges)\n  native/miniz.c\n  native/miniz.h\n\nrustproj/src/  (2 files, 2 internal / 0 external edges)\n  rustproj/src/main.rs\n  rustproj/src/store.rs\n\nsite/  (2 files, 1 internal / 0 external edges)\n  site/app.js\n  site/index.html\n\nunplaced (4): no executable edge to cluster on\n  dotnet/App/Program.cs\n  dotnet/Core/Runner.cs\n  site/base.css\n  site/style.css\n",
+  "rc": 0
+ },
+ "communities <REPO> --json": {
+  "err": "",
+  "out": "{\n  \"communities\": [\n    {\n      \"external_edges\": 0,\n      \"files\": [\n        \"ps/deploy.ps1\",\n        \"ps/helpers.ps1\",\n        \"ps/mod.psm1\"\n      ],\n      \"id\": 0,\n      \"internal_edges\": 2,\n      \"label\": \"ps/\",\n      \"size\": 3\n    },\n    {\n      \"external_edges\": 0,\n      \"files\": [\n        \"cmd/svc/main.go\",\n        \"internal/queue/queue.go\"\n      ],\n      \"id\": 1,\n      \"internal_edges\": 1,\n      \"label\": \"cmd/svc/\",\n      \"size\": 2\n    },\n    {\n      \"external_edges\": 0,\n      \"files\": [\n        \"dotnet/App/App.csproj\",\n        \"dotnet/Core/Core.csproj\"\n      ],\n      \"id\": 2,\n      \"internal_edges\": 1,\n      \"label\": \"dotnet/App/\",\n      \"size\": 2\n    },\n    {\n      \"external_edges\": 0,\n      \"files\": [\n        \"javasrc/com/example/agent/Router.java\",\n        \"javasrc/com/example/agent/Tool.java\"\n      ],\n      \"id\": 3,\n      \"internal_edges\": 1,\n      \"label\": \"javasrc/com/example/agent/\",\n      \"size\": 2\n    },\n    {\n      \"external_edges\": 0,\n      \"files\": [\n        \"native/miniz.c\",\n        \"native/miniz.h\"\n      ],\n      \"id\": 4,\n      \"internal_edges\": 1,\n      \"label\": \"native/\",\n      \"size\": 2\n    },\n    {\n      \"external_edges\": 0,\n      \"files\": [\n        \"rustproj/src/main.rs\",\n        \"rustproj/src/store.rs\"\n      ],\n      \"id\": 5,\n      \"internal_edges\": 2,\n      \"label\": \"rustproj/src/\",\n      \"size\": 2\n    },\n    {\n      \"external_edges\": 0,\n      \"files\": [\n        \"site/app.js\",\n        \"site/index.html\"\n      ],\n      \"id\": 6,\n      \"internal_edges\": 1,\n      \"label\": \"site/\",\n      \"size\": 2\n    }\n  ],\n  \"edge_weight\": 9,\n  \"modularity\": 0.8395,\n  \"singletons\": [\n    \"dotnet/App/Program.cs\",\n    \"dotnet/Core/Runner.cs\",\n    \"site/base.css\",\n    \"site/style.css\"\n  ]\n}\n",
+  "rc": 0
+ },
+ "coverage <REPO> report": {
+  "err": "error: no coverage data - `coverage run --yes` or `coverage ingest <artifact>` first",
+  "out": "",
+  "rc": 1
+ },
+ "coverage <REPO> report --json": {
+  "err": "error: no coverage data - `coverage run --yes` or `coverage ingest <artifact>` first",
+  "out": "",
+  "rc": 1
+ },
+ "data <REPO>": {
+  "err": "",
+  "out": "no data stores detected\n",
+  "rc": 0
+ },
+ "data <REPO> --json": {
+  "err": "",
+  "out": "{\n  \"data_files\": {},\n  \"schema\": {},\n  \"stores\": {}\n}\n",
+  "rc": 0
+ },
+ "dead <REPO>": {
+  "err": "",
+  "out": "Static liveness for source files. Dynamic dispatch, plugin registries and reflection are invisible here: treat `unreachable` as a shortlist to investigate, not a delete list.\n\nunreachable (3):\n  ps/deploy.ps1\n  ps/helpers.ps1\n  ps/mod.psm1\n\nweak-only (0):\n\ntest-only (0):\n\nlive: 5 files from 7 entry points\n",
+  "rc": 0
+ },
+ "dead <REPO> --json": {
+  "err": "",
+  "out": "{\n  \"coverage_present\": false,\n  \"entry_points\": [\n    \"cmd/svc/main.go\",\n    \"dotnet/App/App.csproj\",\n    \"dotnet/App/Program.cs\",\n    \"javasrc/com/example/agent/Router.java\",\n    \"native/miniz.c\",\n    \"rustproj/src/main.rs\",\n    \"site/index.html\"\n  ],\n  \"live_but_never_covered\": [],\n  \"tiers\": {\n    \"live\": [\n      \"cmd/svc/main.go\",\n      \"internal/queue/queue.go\",\n      \"rustproj/src/main.rs\",\n      \"rustproj/src/store.rs\",\n      \"site/app.js\"\n    ],\n    \"test-only\": [],\n    \"unreachable\": [\n      \"ps/deploy.ps1\",\n      \"ps/helpers.ps1\",\n      \"ps/mod.psm1\"\n    ],\n    \"weak-only\": []\n  }\n}\n",
+  "rc": 0
+ },
+ "entrypoints <REPO>": {
+  "err": "",
+  "out": "  dotnet/App/App.csproj  (script: App.csproj)\n  site/index.html  (page: index.html)\n  cmd/svc/main.go  (main-guard: package main)\n  dotnet/App/Program.cs  (main-guard)\n  javasrc/com/example/agent/Router.java  (main-guard)\n  native/miniz.c  (main-guard)\n  rustproj/src/main.rs  (main-guard)\n",
+  "rc": 0
+ },
+ "entrypoints <REPO> --json": {
+  "err": "",
+  "out": "[\n  {\n    \"detail\": \"App.csproj\",\n    \"file\": \"dotnet/App/App.csproj\",\n    \"kind\": \"script\"\n  },\n  {\n    \"detail\": \"index.html\",\n    \"file\": \"site/index.html\",\n    \"kind\": \"page\"\n  },\n  {\n    \"detail\": \"package main\",\n    \"file\": \"cmd/svc/main.go\",\n    \"kind\": \"main-guard\"\n  },\n  {\n    \"detail\": \"\",\n    \"file\": \"dotnet/App/Program.cs\",\n    \"kind\": \"main-guard\"\n  },\n  {\n    \"detail\": \"\",\n    \"file\": \"javasrc/com/example/agent/Router.java\",\n    \"kind\": \"main-guard\"\n  },\n  {\n    \"detail\": \"\",\n    \"file\": \"native/miniz.c\",\n    \"kind\": \"main-guard\"\n  },\n  {\n    \"detail\": \"\",\n    \"file\": \"rustproj/src/main.rs\",\n    \"kind\": \"main-guard\"\n  }\n]\n",
+  "rc": 0
+ },
+ "externals <REPO>": {
+  "err": "",
+  "out": "     1  import       fmt\n     1  include-sys  stdio.h\n",
+  "rc": 0
+ },
+ "externals <REPO> --json": {
+  "err": "",
+  "out": "[\n  {\n    \"count\": 1,\n    \"kind\": \"import\",\n    \"target\": \"fmt\"\n  },\n  {\n    \"count\": 1,\n    \"kind\": \"include-sys\",\n    \"target\": \"stdio.h\"\n  }\n]\n",
+  "rc": 0
+ },
+ "file <REPO> cmd/svc/main.go --json": {
+  "err": "",
+  "out": "{\n  \"entry_points\": [\n    {\n      \"detail\": \"package main\",\n      \"kind\": \"main-guard\"\n    }\n  ],\n  \"file\": \"cmd/svc/main.go\",\n  \"inbound\": [],\n  \"language\": \"go\",\n  \"lines\": 18,\n  \"outbound\": [\n    {\n      \"dst\": null,\n      \"kind\": \"import\",\n      \"status\": \"external\",\n      \"target\": \"fmt\"\n    },\n    {\n      \"dst\": \"internal/queue/queue.go\",\n      \"kind\": \"import\",\n      \"status\": \"resolved\",\n      \"target\": \"example.com/agentsvc/internal/queue\"\n    }\n  ],\n  \"parse_error\": \"\",\n  \"role\": \"source\",\n  \"size\": 184,\n  \"symbols\": [\n    {\n      \"kind\": \"struct\",\n      \"lines\": \"9-12\",\n      \"qualname\": \"Config\"\n    },\n    {\n      \"kind\": \"function\",\n      \"lines\": \"13-17\",\n      \"qualname\": \"main\"\n    }\n  ]\n}\n",
+  "rc": 0
+ },
+ "file <REPO> dotnet/App/App.csproj --json": {
+  "err": "",
+  "out": "{\n  \"entry_points\": [\n    {\n      \"detail\": \"App.csproj\",\n      \"kind\": \"script\"\n    }\n  ],\n  \"file\": \"dotnet/App/App.csproj\",\n  \"inbound\": [],\n  \"language\": \"msbuild\",\n  \"lines\": 13,\n  \"outbound\": [\n    {\n      \"dst\": \"dotnet/Core/Core.csproj\",\n      \"kind\": \"module\",\n      \"status\": \"resolved\",\n      \"target\": \"../Core/Core.csproj\"\n    }\n  ],\n  \"parse_error\": \"\",\n  \"role\": \"config\",\n  \"size\": 248,\n  \"symbols\": []\n}\n",
+  "rc": 0
+ },
+ "file <REPO> dotnet/App/Program.cs --json": {
+  "err": "",
+  "out": "{\n  \"entry_points\": [\n    {\n      \"detail\": \"\",\n      \"kind\": \"main-guard\"\n    }\n  ],\n  \"file\": \"dotnet/App/Program.cs\",\n  \"inbound\": [],\n  \"language\": \"csharp\",\n  \"lines\": 14,\n  \"outbound\": [],\n  \"parse_error\": \"\",\n  \"role\": \"source\",\n  \"size\": 216,\n  \"symbols\": [\n    {\n      \"kind\": \"class\",\n      \"lines\": \"5-5\",\n      \"qualname\": \"Program\"\n    }\n  ]\n}\n",
+  "rc": 0
+ },
+ "file <REPO> dotnet/Core/Core.csproj --json": {
+  "err": "",
+  "out": "{\n  \"entry_points\": [],\n  \"file\": \"dotnet/Core/Core.csproj\",\n  \"inbound\": [\n    {\n      \"kind\": \"module\",\n      \"src\": \"dotnet/App/App.csproj\"\n    }\n  ],\n  \"language\": \"msbuild\",\n  \"lines\": 8,\n  \"outbound\": [],\n  \"parse_error\": \"\",\n  \"role\": \"config\",\n  \"size\": 130,\n  \"symbols\": []\n}\n",
+  "rc": 0
+ },
+ "file <REPO> dotnet/Core/Runner.cs --json": {
+  "err": "",
+  "out": "{\n  \"entry_points\": [],\n  \"file\": \"dotnet/Core/Runner.cs\",\n  \"inbound\": [],\n  \"language\": \"csharp\",\n  \"lines\": 13,\n  \"outbound\": [],\n  \"parse_error\": \"\",\n  \"role\": \"source\",\n  \"size\": 221,\n  \"symbols\": [\n    {\n      \"kind\": \"class\",\n      \"lines\": \"3-3\",\n      \"qualname\": \"Runner\"\n    },\n    {\n      \"kind\": \"record\",\n      \"lines\": \"11-12\",\n      \"qualname\": \"TaskResult\"\n    }\n  ]\n}\n",
+  "rc": 0
+ },
+ "file <REPO> internal/queue/queue.go --json": {
+  "err": "",
+  "out": "{\n  \"entry_points\": [],\n  \"file\": \"internal/queue/queue.go\",\n  \"inbound\": [\n    {\n      \"kind\": \"import\",\n      \"src\": \"cmd/svc/main.go\"\n    }\n  ],\n  \"language\": \"go\",\n  \"lines\": 19,\n  \"outbound\": [],\n  \"parse_error\": \"\",\n  \"role\": \"source\",\n  \"size\": 253,\n  \"symbols\": [\n    {\n      \"kind\": \"struct\",\n      \"lines\": \"3-7\",\n      \"qualname\": \"Queue\"\n    },\n    {\n      \"kind\": \"function\",\n      \"lines\": \"8-11\",\n      \"qualname\": \"New\"\n    },\n    {\n      \"kind\": \"function\",\n      \"lines\": \"12-15\",\n      \"qualname\": \"Push\"\n    },\n    {\n      \"kind\": \"function\",\n      \"lines\": \"16-18\",\n      \"qualname\": \"Len\"\n    }\n  ]\n}\n",
+  "rc": 0
+ },
+ "file <REPO> javasrc/com/example/agent/Router.java --json": {
+  "err": "",
+  "out": "{\n  \"entry_points\": [\n    {\n      \"detail\": \"\",\n      \"kind\": \"main-guard\"\n    }\n  ],\n  \"file\": \"javasrc/com/example/agent/Router.java\",\n  \"inbound\": [],\n  \"language\": \"java\",\n  \"lines\": 17,\n  \"outbound\": [\n    {\n      \"dst\": \"javasrc/com/example/agent/Tool.java\",\n      \"kind\": \"import\",\n      \"status\": \"resolved\",\n      \"target\": \"com.example.agent.Tool\"\n    }\n  ],\n  \"parse_error\": \"\",\n  \"role\": \"source\",\n  \"size\": 309,\n  \"symbols\": [\n    {\n      \"kind\": \"class\",\n      \"lines\": \"6-16\",\n      \"qualname\": \"Router\"\n    }\n  ]\n}\n",
+  "rc": 0
+ },
+ "file <REPO> javasrc/com/example/agent/Tool.java --json": {
+  "err": "",
+  "out": "{\n  \"entry_points\": [],\n  \"file\": \"javasrc/com/example/agent/Tool.java\",\n  \"inbound\": [\n    {\n      \"kind\": \"import\",\n      \"src\": \"javasrc/com/example/agent/Router.java\"\n    }\n  ],\n  \"language\": \"java\",\n  \"lines\": 8,\n  \"outbound\": [],\n  \"parse_error\": \"\",\n  \"role\": \"source\",\n  \"size\": 104,\n  \"symbols\": [\n    {\n      \"kind\": \"interface\",\n      \"lines\": \"3-7\",\n      \"qualname\": \"Tool\"\n    }\n  ]\n}\n",
+  "rc": 0
+ },
+ "file <REPO> native/miniz.c --json": {
+  "err": "",
+  "out": "{\n  \"entry_points\": [\n    {\n      \"detail\": \"\",\n      \"kind\": \"main-guard\"\n    }\n  ],\n  \"file\": \"native/miniz.c\",\n  \"inbound\": [],\n  \"language\": \"c\",\n  \"lines\": 17,\n  \"outbound\": [\n    {\n      \"dst\": null,\n      \"kind\": \"include-sys\",\n      \"status\": \"external\",\n      \"target\": \"stdio.h\"\n    },\n    {\n      \"dst\": \"native/miniz.h\",\n      \"kind\": \"include\",\n      \"status\": \"resolved\",\n      \"target\": \"miniz.h\"\n    }\n  ],\n  \"parse_error\": \"\",\n  \"role\": \"source\",\n  \"size\": 289,\n  \"symbols\": [\n    {\n      \"kind\": \"function\",\n      \"lines\": \"4-11\",\n      \"qualname\": \"checksum\"\n    },\n    {\n      \"kind\": \"function\",\n      \"lines\": \"12-12\",\n      \"qualname\": \"main\"\n    },\n    {\n      \"kind\": \"struct\",\n      \"lines\": \"13-13\",\n      \"qualname\": \"Blob\"\n    }\n  ]\n}\n",
+  "rc": 0
+ },
+ "file <REPO> native/miniz.h --json": {
+  "err": "",
+  "out": "{\n  \"entry_points\": [],\n  \"file\": \"native/miniz.h\",\n  \"inbound\": [\n    {\n      \"kind\": \"include\",\n      \"src\": \"native/miniz.c\"\n    }\n  ],\n  \"language\": \"c\",\n  \"lines\": 5,\n  \"outbound\": [],\n  \"parse_error\": \"\",\n  \"role\": \"source\",\n  \"size\": 52,\n  \"symbols\": [\n    {\n      \"kind\": \"struct\",\n      \"lines\": \"1-4\",\n      \"qualname\": \"Blob\"\n    }\n  ]\n}\n",
+  "rc": 0
+ },
+ "god-nodes <REPO>": {
+  "err": "",
+  "out": "Files ranked by executable-edge degree. High rank means a wide blast radius, not bad design - an entry point or a shared type module belongs here. Dynamic dispatch and plugin registries are invisible to this count.\n\n    in  out  deg  file\n     0    2    2  ps/deploy.ps1\n     1    0    1  dotnet/Core/Core.csproj  (config)\n     1    0    1  internal/queue/queue.go\n     1    0    1  javasrc/com/example/agent/Tool.java\n     1    0    1  native/miniz.h\n     1    0    1  ps/helpers.ps1\n     1    0    1  ps/mod.psm1\n     1    0    1  rustproj/src/store.rs\n     1    0    1  site/app.js\n     0    1    1  cmd/svc/main.go\n     0    1    1  dotnet/App/App.csproj  (config)\n     0    1    1  javasrc/com/example/agent/Router.java\n     0    1    1  native/miniz.c\n     0    1    1  rustproj/src/main.rs\n     0    1    1  site/index.html\n\nshowing 15 of 15 files with at least one executable edge\n",
+  "rc": 0
+ },
+ "god-nodes <REPO> --json": {
+  "err": "",
+  "out": "{\n  \"nodes\": [\n    {\n      \"degree\": 2,\n      \"fan_in\": 0,\n      \"fan_out\": 2,\n      \"file\": \"ps/deploy.ps1\",\n      \"role\": \"source\"\n    },\n    {\n      \"degree\": 1,\n      \"fan_in\": 1,\n      \"fan_out\": 0,\n      \"file\": \"dotnet/Core/Core.csproj\",\n      \"role\": \"config\"\n    },\n    {\n      \"degree\": 1,\n      \"fan_in\": 1,\n      \"fan_out\": 0,\n      \"file\": \"internal/queue/queue.go\",\n      \"role\": \"source\"\n    },\n    {\n      \"degree\": 1,\n      \"fan_in\": 1,\n      \"fan_out\": 0,\n      \"file\": \"javasrc/com/example/agent/Tool.java\",\n      \"role\": \"source\"\n    },\n    {\n      \"degree\": 1,\n      \"fan_in\": 1,\n      \"fan_out\": 0,\n      \"file\": \"native/miniz.h\",\n      \"role\": \"source\"\n    },\n    {\n      \"degree\": 1,\n      \"fan_in\": 1,\n      \"fan_out\": 0,\n      \"file\": \"ps/helpers.ps1\",\n      \"role\": \"source\"\n    },\n    {\n      \"degree\": 1,\n      \"fan_in\": 1,\n      \"fan_out\": 0,\n      \"file\": \"ps/mod.psm1\",\n      \"role\": \"source\"\n    },\n    {\n      \"degree\": 1,\n      \"fan_in\": 1,\n      \"fan_out\": 0,\n      \"file\": \"rustproj/src/store.rs\",\n      \"role\": \"source\"\n    },\n    {\n      \"degree\": 1,\n      \"fan_in\": 1,\n      \"fan_out\": 0,\n      \"file\": \"site/app.js\",\n      \"role\": \"source\"\n    },\n    {\n      \"degree\": 1,\n      \"fan_in\": 0,\n      \"fan_out\": 1,\n      \"file\": \"cmd/svc/main.go\",\n      \"role\": \"source\"\n    },\n    {\n      \"degree\": 1,\n      \"fan_in\": 0,\n      \"fan_out\": 1,\n      \"file\": \"dotnet/App/App.csproj\",\n      \"role\": \"config\"\n    },\n    {\n      \"degree\": 1,\n      \"fan_in\": 0,\n      \"fan_out\": 1,\n      \"file\": \"javasrc/com/example/agent/Router.java\",\n      \"role\": \"source\"\n    },\n    {\n      \"degree\": 1,\n      \"fan_in\": 0,\n      \"fan_out\": 1,\n      \"file\": \"native/miniz.c\",\n      \"role\": \"source\"\n    },\n    {\n      \"degree\": 1,\n      \"fan_in\": 0,\n      \"fan_out\": 1,\n      \"file\": \"rustproj/src/main.rs\",\n      \"role\": \"source\"\n    },\n    {\n      \"degree\": 1,\n      \"fan_in\": 0,\n      \"fan_out\": 1,\n      \"file\": \"site/index.html\",\n      \"role\": \"source\"\n    }\n  ],\n  \"total\": 15\n}\n",
+  "rc": 0
+ },
+ "importers <REPO> cmd/svc/main.go --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "importers <REPO> dotnet/App/App.csproj --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "importers <REPO> dotnet/App/Program.cs --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "importers <REPO> dotnet/Core/Core.csproj --json": {
+  "err": "",
+  "out": "[\n  {\n    \"kind\": \"module\",\n    \"line\": 9,\n    \"src\": \"dotnet/App/App.csproj\"\n  }\n]\n",
+  "rc": 0
+ },
+ "importers <REPO> dotnet/Core/Runner.cs --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "importers <REPO> internal/queue/queue.go --json": {
+  "err": "",
+  "out": "[\n  {\n    \"kind\": \"import\",\n    \"line\": 6,\n    \"src\": \"cmd/svc/main.go\"\n  }\n]\n",
+  "rc": 0
+ },
+ "importers <REPO> javasrc/com/example/agent/Router.java --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "importers <REPO> javasrc/com/example/agent/Tool.java --json": {
+  "err": "",
+  "out": "[\n  {\n    \"kind\": \"import\",\n    \"line\": 3,\n    \"src\": \"javasrc/com/example/agent/Router.java\"\n  }\n]\n",
+  "rc": 0
+ },
+ "importers <REPO> native/miniz.c --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "importers <REPO> native/miniz.h --json": {
+  "err": "",
+  "out": "[\n  {\n    \"kind\": \"include\",\n    \"line\": 2,\n    \"src\": \"native/miniz.c\"\n  }\n]\n",
+  "rc": 0
+ },
+ "imports <REPO> cmd/svc/main.go --json": {
+  "err": "",
+  "out": "[\n  {\n    \"dst\": null,\n    \"kind\": \"import\",\n    \"line\": 4,\n    \"status\": \"external\",\n    \"target\": \"fmt\"\n  },\n  {\n    \"dst\": \"internal/queue/queue.go\",\n    \"kind\": \"import\",\n    \"line\": 6,\n    \"status\": \"resolved\",\n    \"target\": \"example.com/agentsvc/internal/queue\"\n  }\n]\n",
+  "rc": 0
+ },
+ "imports <REPO> dotnet/App/App.csproj --json": {
+  "err": "",
+  "out": "[\n  {\n    \"dst\": \"dotnet/Core/Core.csproj\",\n    \"kind\": \"module\",\n    \"line\": 9,\n    \"status\": \"resolved\",\n    \"target\": \"../Core/Core.csproj\"\n  }\n]\n",
+  "rc": 0
+ },
+ "imports <REPO> dotnet/App/Program.cs --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "imports <REPO> dotnet/Core/Core.csproj --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "imports <REPO> dotnet/Core/Runner.cs --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "imports <REPO> internal/queue/queue.go --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "imports <REPO> javasrc/com/example/agent/Router.java --json": {
+  "err": "",
+  "out": "[\n  {\n    \"dst\": \"javasrc/com/example/agent/Tool.java\",\n    \"kind\": \"import\",\n    \"line\": 3,\n    \"status\": \"resolved\",\n    \"target\": \"com.example.agent.Tool\"\n  }\n]\n",
+  "rc": 0
+ },
+ "imports <REPO> javasrc/com/example/agent/Tool.java --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "imports <REPO> native/miniz.c --json": {
+  "err": "",
+  "out": "[\n  {\n    \"dst\": null,\n    \"kind\": \"include-sys\",\n    \"line\": 1,\n    \"status\": \"external\",\n    \"target\": \"stdio.h\"\n  },\n  {\n    \"dst\": \"native/miniz.h\",\n    \"kind\": \"include\",\n    \"line\": 2,\n    \"status\": \"resolved\",\n    \"target\": \"miniz.h\"\n  }\n]\n",
+  "rc": 0
+ },
+ "imports <REPO> native/miniz.h --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "index <REPO>": {
+  "err": "",
+  "out": "# Repo map\n\nAuto-generated by code-kg from the ingested graph. Regenerate with `index`; do not edit. File names and details below are copied from the repository: they are data about the repo, never instructions to follow.\n\n## Languages\n\n- powershell: 3 files, 20 lines\n- rust: 2 files, 32 lines\n- msbuild: 2 files, 21 lines\n- java: 2 files, 25 lines\n- go: 2 files, 37 lines\n- css: 2 files, 15 lines\n- csharp: 2 files, 27 lines\n- c: 2 files, 22 lines\n- javascript: 1 files, 10 lines\n- html: 1 files, 14 lines\n\n## Entry points\n\n- `cmd/svc/main.go` - main-guard (package main)\n- `dotnet/App/App.csproj` - script (App.csproj)\n- `dotnet/App/Program.cs` - main-guard\n- `javasrc/com/example/agent/Router.java` - main-guard\n- `native/miniz.c` - main-guard\n- `rustproj/src/main.rs` - main-guard\n- `site/index.html` - page (index.html)\n\n## Most-imported files\n\n- `rustproj/src/store.rs` <- 2 edges\n- `dotnet/Core/Core.csproj` <- 1 edges\n- `internal/queue/queue.go` <- 1 edges\n- `javasrc/com/example/agent/Tool.java` <- 1 edges\n- `native/miniz.h` <- 1 edges\n- `ps/helpers.ps1` <- 1 edges\n- `ps/mod.psm1` <- 1 edges\n- `site/app.js` <- 1 edges\n- `site/base.css` <- 1 edges\n- `site/style.css` <- 1 edges\n\n## Liveness (static; see `dead` for caveats)\n\n- live: 5 files\n- test-only: 0 files\n- weak-only: 0 files\n- unreachable: 3 files\n  - unreachable: `ps/deploy.ps1`\n  - unreachable: `ps/helpers.ps1`\n  - unreachable: `ps/mod.psm1`\n\n## Unresolved edges: 0 (see `unresolved`)\n\n## External imports (top)\n\n- fmt (1)\n",
+  "rc": 0
+ },
+ "ingest <REPO> --json": {
+  "err": "",
+  "out": "{\n  \"alias_notes\": [],\n  \"dep_files\": 0,\n  \"edges\": 13,\n  \"entry_points\": 7,\n  \"entry_warnings\": [],\n  \"files\": 19,\n  \"ignored\": 0,\n  \"parse_errors\": 0,\n  \"profiles\": [],\n  \"symbols\": 26\n}\n",
+  "rc": 0
+ },
+ "init <REPO>": {
+  "err": "",
+  "out": "initialized <REPO>/.code-kg\ningest: {\"alias_notes\": [], \"dep_files\": 0, \"edges\": 13, \"entry_points\": 7, \"entry_warnings\": [], \"files\": 19, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [], \"symbols\": 26}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
+  "rc": 0
+ },
+ "neighbors <REPO> cmd/svc/main.go --depth 2 --json": {
+  "err": "",
+  "out": "[\n  {\n    \"depth\": 1,\n    \"file\": \"internal/queue/queue.go\"\n  }\n]\n",
+  "rc": 0
+ },
+ "neighbors <REPO> dotnet/App/App.csproj --depth 2 --json": {
+  "err": "",
+  "out": "[\n  {\n    \"depth\": 1,\n    \"file\": \"dotnet/Core/Core.csproj\"\n  }\n]\n",
+  "rc": 0
+ },
+ "neighbors <REPO> dotnet/App/Program.cs --depth 2 --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "neighbors <REPO> dotnet/Core/Core.csproj --depth 2 --json": {
+  "err": "",
+  "out": "[\n  {\n    \"depth\": 1,\n    \"file\": \"dotnet/App/App.csproj\"\n  }\n]\n",
+  "rc": 0
+ },
+ "neighbors <REPO> dotnet/Core/Runner.cs --depth 2 --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "neighbors <REPO> internal/queue/queue.go --depth 2 --json": {
+  "err": "",
+  "out": "[\n  {\n    \"depth\": 1,\n    \"file\": \"cmd/svc/main.go\"\n  }\n]\n",
+  "rc": 0
+ },
+ "neighbors <REPO> javasrc/com/example/agent/Router.java --depth 2 --json": {
+  "err": "",
+  "out": "[\n  {\n    \"depth\": 1,\n    \"file\": \"javasrc/com/example/agent/Tool.java\"\n  }\n]\n",
+  "rc": 0
+ },
+ "neighbors <REPO> javasrc/com/example/agent/Tool.java --depth 2 --json": {
+  "err": "",
+  "out": "[\n  {\n    \"depth\": 1,\n    \"file\": \"javasrc/com/example/agent/Router.java\"\n  }\n]\n",
+  "rc": 0
+ },
+ "neighbors <REPO> native/miniz.c --depth 2 --json": {
+  "err": "",
+  "out": "[\n  {\n    \"depth\": 1,\n    \"file\": \"native/miniz.h\"\n  }\n]\n",
+  "rc": 0
+ },
+ "neighbors <REPO> native/miniz.h --depth 2 --json": {
+  "err": "",
+  "out": "[\n  {\n    \"depth\": 1,\n    \"file\": \"native/miniz.c\"\n  }\n]\n",
+  "rc": 0
+ },
+ "path <REPO> cmd/svc/main.go site/style.css --json": {
+  "err": "",
+  "out": "no path over resolved edges\n",
+  "rc": 1
+ },
+ "query <REPO> invoice --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "query <REPO> load config --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "query <REPO> main --json": {
+  "err": "",
+  "out": "[\n  {\n    \"file\": \"cmd/svc/main.go\",\n    \"score\": -1.098\n  },\n  {\n    \"file\": \"rustproj/src/main.rs\",\n    \"score\": -1.066\n  },\n  {\n    \"file\": \"site/index.html\",\n    \"score\": -0.845\n  },\n  {\n    \"file\": \"dotnet/App/Program.cs\",\n    \"score\": -0.746\n  },\n  {\n    \"file\": \"native/miniz.c\",\n    \"score\": -0.58\n  },\n  {\n    \"file\": \"javasrc/com/example/agent/Router.java\",\n    \"score\": -0.56\n  }\n]\n",
+  "rc": 0
+ },
+ "query <REPO> render --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "query <REPO> token --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "read <REPO> cmd/svc/main.go": {
+  "err": "",
+  "out": "# cmd/svc/main.go:1-17\npackage main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/agentsvc/internal/queue\"\n)\n\ntype Config struct {\n\tWorkers int\n}\n\nfunc main() {\n\tq := queue.New(4)\n\tq.Push(\"job-1\")\n\tfmt.Println(q.Len())\n}\n",
+  "rc": 0
+ },
+ "search <REPO> invoice": {
+  "err": "",
+  "out": "[/] COMPLETE\n",
+  "rc": 0
+ },
+ "search <REPO> invoice --json": {
+  "err": "",
+  "out": "{\n  \"question\": \"invoice\",\n  \"results\": [],\n  \"rung\": \"\",\n  \"scope\": \"\",\n  \"status\": \"COMPLETE\"\n}\n",
+  "rc": 0
+ },
+ "search <REPO> load config": {
+  "err": "",
+  "out": "[symbols/any-term] COMPLETE\n  cmd/svc/main.go:9-12  struct Config\n  ps/helpers.ps1:1-3  function Get-Config\n  ps/deploy.ps1:4-9  function Invoke-Deploy\n",
+  "rc": 0
+ },
+ "search <REPO> load config --json": {
+  "err": "",
+  "out": "{\n  \"question\": \"load config\",\n  \"results\": [\n    {\n      \"file\": \"cmd/svc/main.go\",\n      \"kind\": \"struct\",\n      \"lines\": \"9-12\",\n      \"qualname\": \"Config\",\n      \"score\": -2.845,\n      \"symbol\": \"cmd/svc/main.go::Config\"\n    },\n    {\n      \"file\": \"ps/helpers.ps1\",\n      \"kind\": \"function\",\n      \"lines\": \"1-3\",\n      \"qualname\": \"Get-Config\",\n      \"score\": -2.784,\n      \"symbol\": \"ps/helpers.ps1::Get-Config\"\n    },\n    {\n      \"file\": \"ps/deploy.ps1\",\n      \"kind\": \"function\",\n      \"lines\": \"4-9\",\n      \"qualname\": \"Invoke-Deploy\",\n      \"score\": -2.701,\n      \"symbol\": \"ps/deploy.ps1::Invoke-Deploy\"\n    }\n  ],\n  \"rung\": \"any-term\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
+  "rc": 0
+ },
+ "search <REPO> main": {
+  "err": "",
+  "out": "[symbols/all-terms] COMPLETE\n  rustproj/src/main.rs:5-8  function main\n  native/miniz.c:12-12  function main\n  cmd/svc/main.go:13-17  function main\n  cmd/svc/main.go:9-12  struct Config\n  javasrc/com/example/agent/Router.java:6-16  class Router\n",
+  "rc": 0
+ },
+ "search <REPO> main --json": {
+  "err": "",
+  "out": "{\n  \"question\": \"main\",\n  \"results\": [\n    {\n      \"file\": \"rustproj/src/main.rs\",\n      \"kind\": \"function\",\n      \"lines\": \"5-8\",\n      \"qualname\": \"main\",\n      \"score\": -2.077,\n      \"symbol\": \"rustproj/src/main.rs::main\"\n    },\n    {\n      \"file\": \"native/miniz.c\",\n      \"kind\": \"function\",\n      \"lines\": \"12-12\",\n      \"qualname\": \"main\",\n      \"score\": -2.037,\n      \"symbol\": \"native/miniz.c::main\"\n    },\n    {\n      \"file\": \"cmd/svc/main.go\",\n      \"kind\": \"function\",\n      \"lines\": \"13-17\",\n      \"qualname\": \"main\",\n      \"score\": -1.989,\n      \"symbol\": \"cmd/svc/main.go::main\"\n    },\n    {\n      \"file\": \"cmd/svc/main.go\",\n      \"kind\": \"struct\",\n      \"lines\": \"9-12\",\n      \"qualname\": \"Config\",\n      \"score\": -1.542,\n      \"symbol\": \"cmd/svc/main.go::Config\"\n    },\n    {\n      \"file\": \"javasrc/com/example/agent/Router.java\",\n      \"kind\": \"class\",\n      \"lines\": \"6-16\",\n      \"qualname\": \"Router\",\n      \"score\": -0.859,\n      \"symbol\": \"javasrc/com/example/agent/Router.java::Router\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
+  "rc": 0
+ },
+ "search <REPO> render": {
+  "err": "",
+  "out": "[/] COMPLETE\n",
+  "rc": 0
+ },
+ "search <REPO> render --json": {
+  "err": "",
+  "out": "{\n  \"question\": \"render\",\n  \"results\": [],\n  \"rung\": \"\",\n  \"scope\": \"\",\n  \"status\": \"COMPLETE\"\n}\n",
+  "rc": 0
+ },
+ "search <REPO> token": {
+  "err": "",
+  "out": "[/] COMPLETE\n",
+  "rc": 0
+ },
+ "search <REPO> token --json": {
+  "err": "",
+  "out": "{\n  \"question\": \"token\",\n  \"results\": [],\n  \"rung\": \"\",\n  \"scope\": \"\",\n  \"status\": \"COMPLETE\"\n}\n",
+  "rc": 0
+ },
+ "stats <REPO>": {
+  "err": "",
+  "out": "files: 19 (c 2, csharp 2, css 2, go 2, html 1, java 2, javascript 1, msbuild 2, powershell 3, rust 2)\nroles: config 2, source 17\nsymbols: 26  entry points: 7\nedges: external 2, resolved 11\ningested at: <UTC>\n",
+  "rc": 0
+ },
+ "stats <REPO> --json": {
+  "err": "",
+  "out": "{\n  \"agent_layer\": {\n    \"files\": 0,\n    \"instruction_dirs\": [],\n    \"instruction_files\": [],\n    \"skills\": []\n  },\n  \"coverage_files\": 0,\n  \"edges_by_kind\": {\n    \"import\": 5,\n    \"include\": 1,\n    \"include-sys\": 1,\n    \"link\": 2,\n    \"module\": 2,\n    \"script\": 1,\n    \"source\": 1\n  },\n  \"edges_by_status\": {\n    \"external\": 2,\n    \"resolved\": 11\n  },\n  \"entry_points\": 7,\n  \"files_by_language\": {\n    \"c\": 2,\n    \"csharp\": 2,\n    \"css\": 2,\n    \"go\": 2,\n    \"html\": 1,\n    \"java\": 2,\n    \"javascript\": 1,\n    \"msbuild\": 2,\n    \"powershell\": 3,\n    \"rust\": 2\n  },\n  \"files_by_origin\": {\n    \"project\": 19\n  },\n  \"files_by_role\": {\n    \"config\": 2,\n    \"source\": 17\n  },\n  \"ignored\": {},\n  \"ingested_at\": \"<UTC>\",\n  \"parse_errors\": [],\n  \"symbols\": 26\n}\n",
+  "rc": 0
+ },
+ "symbols <REPO> cmd/svc/main.go --json": {
+  "err": "",
+  "out": "[\n  {\n    \"exported\": true,\n    \"kind\": \"struct\",\n    \"lines\": \"9-12\",\n    \"qualname\": \"Config\",\n    \"symbol\": \"cmd/svc/main.go::Config\"\n  },\n  {\n    \"exported\": false,\n    \"kind\": \"function\",\n    \"lines\": \"13-17\",\n    \"qualname\": \"main\",\n    \"symbol\": \"cmd/svc/main.go::main\"\n  }\n]\n",
+  "rc": 0
+ },
+ "symbols <REPO> dotnet/App/App.csproj --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "symbols <REPO> dotnet/App/Program.cs --json": {
+  "err": "",
+  "out": "[\n  {\n    \"exported\": true,\n    \"kind\": \"class\",\n    \"lines\": \"5-5\",\n    \"qualname\": \"Program\",\n    \"symbol\": \"dotnet/App/Program.cs::Program\"\n  }\n]\n",
+  "rc": 0
+ },
+ "symbols <REPO> dotnet/Core/Core.csproj --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ },
+ "symbols <REPO> dotnet/Core/Runner.cs --json": {
+  "err": "",
+  "out": "[\n  {\n    \"exported\": true,\n    \"kind\": \"class\",\n    \"lines\": \"3-3\",\n    \"qualname\": \"Runner\",\n    \"symbol\": \"dotnet/Core/Runner.cs::Runner\"\n  },\n  {\n    \"exported\": true,\n    \"kind\": \"record\",\n    \"lines\": \"11-12\",\n    \"qualname\": \"TaskResult\",\n    \"symbol\": \"dotnet/Core/Runner.cs::TaskResult\"\n  }\n]\n",
+  "rc": 0
+ },
+ "symbols <REPO> internal/queue/queue.go --json": {
+  "err": "",
+  "out": "[\n  {\n    \"exported\": true,\n    \"kind\": \"struct\",\n    \"lines\": \"3-7\",\n    \"qualname\": \"Queue\",\n    \"symbol\": \"internal/queue/queue.go::Queue\"\n  },\n  {\n    \"exported\": true,\n    \"kind\": \"function\",\n    \"lines\": \"8-11\",\n    \"qualname\": \"New\",\n    \"symbol\": \"internal/queue/queue.go::New\"\n  },\n  {\n    \"exported\": true,\n    \"kind\": \"function\",\n    \"lines\": \"12-15\",\n    \"qualname\": \"Push\",\n    \"symbol\": \"internal/queue/queue.go::Push\"\n  },\n  {\n    \"exported\": true,\n    \"kind\": \"function\",\n    \"lines\": \"16-18\",\n    \"qualname\": \"Len\",\n    \"symbol\": \"internal/queue/queue.go::Len\"\n  }\n]\n",
+  "rc": 0
+ },
+ "symbols <REPO> javasrc/com/example/agent/Router.java --json": {
+  "err": "",
+  "out": "[\n  {\n    \"exported\": true,\n    \"kind\": \"class\",\n    \"lines\": \"6-16\",\n    \"qualname\": \"Router\",\n    \"symbol\": \"javasrc/com/example/agent/Router.java::Router\"\n  }\n]\n",
+  "rc": 0
+ },
+ "symbols <REPO> javasrc/com/example/agent/Tool.java --json": {
+  "err": "",
+  "out": "[\n  {\n    \"exported\": true,\n    \"kind\": \"interface\",\n    \"lines\": \"3-7\",\n    \"qualname\": \"Tool\",\n    \"symbol\": \"javasrc/com/example/agent/Tool.java::Tool\"\n  }\n]\n",
+  "rc": 0
+ },
+ "symbols <REPO> native/miniz.c --json": {
+  "err": "",
+  "out": "[\n  {\n    \"exported\": true,\n    \"kind\": \"function\",\n    \"lines\": \"4-11\",\n    \"qualname\": \"checksum\",\n    \"symbol\": \"native/miniz.c::checksum\"\n  },\n  {\n    \"exported\": true,\n    \"kind\": \"function\",\n    \"lines\": \"12-12\",\n    \"qualname\": \"main\",\n    \"symbol\": \"native/miniz.c::main\"\n  },\n  {\n    \"exported\": true,\n    \"kind\": \"struct\",\n    \"lines\": \"13-13\",\n    \"qualname\": \"Blob\",\n    \"symbol\": \"native/miniz.c::Blob\"\n  }\n]\n",
+  "rc": 0
+ },
+ "symbols <REPO> native/miniz.h --json": {
+  "err": "",
+  "out": "[\n  {\n    \"exported\": true,\n    \"kind\": \"struct\",\n    \"lines\": \"1-4\",\n    \"qualname\": \"Blob\",\n    \"symbol\": \"native/miniz.h::Blob\"\n  }\n]\n",
+  "rc": 0
+ },
+ "tables": {
+  "edges": [
+   [
+    "cmd/svc/main.go",
+    "internal/queue/queue.go",
+    "example.com/agentsvc/internal/queue",
+    "import",
+    6,
+    "resolved"
+   ],
+   [
+    "cmd/svc/main.go",
+    null,
+    "fmt",
+    "import",
+    4,
+    "external"
+   ],
+   [
+    "dotnet/App/App.csproj",
+    "dotnet/Core/Core.csproj",
+    "../Core/Core.csproj",
+    "module",
+    9,
+    "resolved"
+   ],
+   [
+    "javasrc/com/example/agent/Router.java",
+    "javasrc/com/example/agent/Tool.java",
+    "com.example.agent.Tool",
+    "import",
+    3,
+    "resolved"
+   ],
+   [
+    "native/miniz.c",
+    "native/miniz.h",
+    "miniz.h",
+    "include",
+    2,
+    "resolved"
+   ],
+   [
+    "native/miniz.c",
+    null,
+    "stdio.h",
+    "include-sys",
+    1,
+    "external"
+   ],
+   [
+    "ps/deploy.ps1",
+    "ps/mod.psm1",
+    "./mod.psm1",
+    "import",
+    2,
+    "resolved"
+   ],
+   [
+    "ps/deploy.ps1",
+    "ps/helpers.ps1",
+    "./helpers.ps1",
+    "source",
+    1,
+    "resolved"
+   ],
+   [
+    "rustproj/src/main.rs",
+    "rustproj/src/store.rs",
+    "crate::store::Store",
+    "import",
+    3,
+    "resolved"
+   ],
+   [
+    "rustproj/src/main.rs",
+    "rustproj/src/store.rs",
+    "store",
+    "module",
+    1,
+    "resolved"
+   ],
+   [
+    "site/index.html",
+    "site/style.css",
+    "style.css",
+    "link",
+    6,
+    "resolved"
+   ],
+   [
+    "site/index.html",
+    "site/app.js",
+    "app.js",
+    "script",
+    11,
+    "resolved"
+   ],
+   [
+    "site/style.css",
+    "site/base.css",
+    "base.css",
+    "link",
+    1,
+    "resolved"
+   ]
+  ],
+  "entry_points": [
+   [
+    "cmd/svc/main.go",
+    "main-guard",
+    "package main"
+   ],
+   [
+    "dotnet/App/App.csproj",
+    "script",
+    "App.csproj"
+   ],
+   [
+    "dotnet/App/Program.cs",
+    "main-guard",
+    ""
+   ],
+   [
+    "javasrc/com/example/agent/Router.java",
+    "main-guard",
+    ""
+   ],
+   [
+    "native/miniz.c",
+    "main-guard",
+    ""
+   ],
+   [
+    "rustproj/src/main.rs",
+    "main-guard",
+    ""
+   ],
+   [
+    "site/index.html",
+    "page",
+    "index.html"
+   ]
+  ],
+  "files": [
+   [
+    "cmd/svc/main.go",
+    "go",
+    "source",
+    184,
+    18,
+    "b6026f935bb0a48fb02a39f5e49d935155e2219a70649a202f4ff53b51ea94db",
+    "",
+    "project"
+   ],
+   [
+    "dotnet/App/App.csproj",
+    "msbuild",
+    "config",
+    248,
+    13,
+    "a05927cef8455e62b9516a6ea22016bfb23f778743f3829864d654765c13e5d3",
+    "",
+    "project"
+   ],
+   [
+    "dotnet/App/Program.cs",
+    "csharp",
+    "source",
+    216,
+    14,
+    "d8f04669541a1571528988c0849ddbfd8909b0198a2323b3816da064cb6c2599",
+    "",
+    "project"
+   ],
+   [
+    "dotnet/Core/Core.csproj",
+    "msbuild",
+    "config",
+    130,
+    8,
+    "185a28adf63dedaace1e8f56176f60255dde2361a27c057c2938a6c4a5523f85",
+    "",
+    "project"
+   ],
+   [
+    "dotnet/Core/Runner.cs",
+    "csharp",
+    "source",
+    221,
+    13,
+    "03830cc0cbe9caedba27392051bafbe877e0ac99e11bab7ba0669725d8c433d4",
+    "",
+    "project"
+   ],
+   [
+    "internal/queue/queue.go",
+    "go",
+    "source",
+    253,
+    19,
+    "a04a33dab16e326bb34d2f072c11a294010aa7e6e300696e092f5deb91c2b1a3",
+    "",
+    "project"
+   ],
+   [
+    "javasrc/com/example/agent/Router.java",
+    "java",
+    "source",
+    309,
+    17,
+    "1431af4ee191026adf6f208f802a22afd4d8918d7fc86af4c213a662e6ef05c3",
+    "",
+    "project"
+   ],
+   [
+    "javasrc/com/example/agent/Tool.java",
+    "java",
+    "source",
+    104,
+    8,
+    "7ec1153722ddec8b50438232b47d1b8860cb4a0065f478441c3c8a028c6b12e1",
+    "",
+    "project"
+   ],
+   [
+    "native/miniz.c",
+    "c",
+    "source",
+    289,
+    17,
+    "b45971cdf1ce08ebaa34fd6f09c801c579c4ae1deeb64855607798c009bcb4ab",
+    "",
+    "project"
+   ],
+   [
+    "native/miniz.h",
+    "c",
+    "source",
+    52,
+    5,
+    "f28479b160305212e71e0b419f6bdb19eeac90d7331ecac062633d3b2cefaf09",
+    "",
+    "project"
+   ],
+   [
+    "ps/deploy.ps1",
+    "powershell",
+    "source",
+    210,
+    11,
+    "9ecfdfc20280182b97943a846e22ca696aa04f7dcf5184491c51be409be5e687",
+    "",
+    "project"
+   ],
+   [
+    "ps/helpers.ps1",
+    "powershell",
+    "source",
+    54,
+    4,
+    "6bbc1113fbd148fcf04c2d523ddf743d6122f07f21026478021e40e888b4b886",
+    "",
+    "project"
+   ],
+   [
+    "ps/mod.psm1",
+    "powershell",
+    "source",
+    119,
+    5,
+    "6989314ac1890e644a68afa4908eafd17b1f91a8dcdc533bf8268862fb6f8890",
+    "",
+    "project"
+   ],
+   [
+    "rustproj/src/main.rs",
+    "rust",
+    "source",
+    118,
+    9,
+    "f70b78f1ce584d3215a23b16583fd14c1266fdaf70f3e92e8521e256a0000184",
+    "",
+    "project"
+   ],
+   [
+    "rustproj/src/store.rs",
+    "rust",
+    "source",
+    302,
+    23,
+    "64ea75ff50b3b3bc495e0d571c0eef66696fafa94043d480889b4c1310704e38",
+    "",
+    "project"
+   ],
+   [
+    "site/app.js",
+    "javascript",
+    "source",
+    222,
+    10,
+    "08206bbe48f6297db8b42f20754e5b1a78150759101943407cc7fec4bc2715aa",
+    "",
+    "project"
+   ],
+   [
+    "site/base.css",
+    "css",
+    "source",
+    54,
+    8,
+    "7420200351d5c7fe976d9ca055d9205a48e744046c96fde87cdcc126c78ba6be",
+    "",
+    "project"
+   ],
+   [
+    "site/index.html",
+    "html",
+    "source",
+    278,
+    14,
+    "bd52fba5b58e01afedff3a600c9daa3208cadabadbbd375b253d2a4e9a76a0e0",
+    "",
+    "project"
+   ],
+   [
+    "site/style.css",
+    "css",
+    "source",
+    107,
+    7,
+    "d51d0683db3f35122d7e07b23264e576d78aafd64fca9af9e05fb578ecd5632d",
+    "",
+    "project"
+   ]
+  ],
+  "ignored": [],
+  "symbols": [
+   [
+    "cmd/svc/main.go::Config",
+    "cmd/svc/main.go",
+    "struct",
+    "Config",
+    "Config",
+    9,
+    12,
+    1
+   ],
+   [
+    "cmd/svc/main.go::main",
+    "cmd/svc/main.go",
+    "function",
+    "main",
+    "main",
+    13,
+    17,
+    0
+   ],
+   [
+    "dotnet/App/Program.cs::Program",
+    "dotnet/App/Program.cs",
+    "class",
+    "Program",
+    "Program",
+    5,
+    5,
+    1
+   ],
+   [
+    "dotnet/Core/Runner.cs::Runner",
+    "dotnet/Core/Runner.cs",
+    "class",
+    "Runner",
+    "Runner",
+    3,
+    3,
+    1
+   ],
+   [
+    "dotnet/Core/Runner.cs::TaskResult",
+    "dotnet/Core/Runner.cs",
+    "record",
+    "TaskResult",
+    "TaskResult",
+    11,
+    12,
+    1
+   ],
+   [
+    "internal/queue/queue.go::Len",
+    "internal/queue/queue.go",
+    "function",
+    "Len",
+    "Len",
+    16,
+    18,
+    1
+   ],
+   [
+    "internal/queue/queue.go::New",
+    "internal/queue/queue.go",
+    "function",
+    "New",
+    "New",
+    8,
+    11,
+    1
+   ],
+   [
+    "internal/queue/queue.go::Push",
+    "internal/queue/queue.go",
+    "function",
+    "Push",
+    "Push",
+    12,
+    15,
+    1
+   ],
+   [
+    "internal/queue/queue.go::Queue",
+    "internal/queue/queue.go",
+    "struct",
+    "Queue",
+    "Queue",
+    3,
+    7,
+    1
+   ],
+   [
+    "javasrc/com/example/agent/Router.java::Router",
+    "javasrc/com/example/agent/Router.java",
+    "class",
+    "Router",
+    "Router",
+    6,
+    16,
+    1
+   ],
+   [
+    "javasrc/com/example/agent/Tool.java::Tool",
+    "javasrc/com/example/agent/Tool.java",
+    "interface",
+    "Tool",
+    "Tool",
+    3,
+    7,
+    1
+   ],
+   [
+    "native/miniz.c::Blob",
+    "native/miniz.c",
+    "struct",
+    "Blob",
+    "Blob",
+    13,
+    13,
+    1
+   ],
+   [
+    "native/miniz.c::checksum",
+    "native/miniz.c",
+    "function",
+    "checksum",
+    "checksum",
+    4,
+    11,
+    1
+   ],
+   [
+    "native/miniz.c::main",
+    "native/miniz.c",
+    "function",
+    "main",
+    "main",
+    12,
+    12,
+    1
+   ],
+   [
+    "native/miniz.h::Blob",
+    "native/miniz.h",
+    "struct",
+    "Blob",
+    "Blob",
+    1,
+    4,
+    1
+   ],
+   [
+    "ps/deploy.ps1::Invoke-Deploy",
+    "ps/deploy.ps1",
+    "function",
+    "Invoke-Deploy",
+    "Invoke-Deploy",
+    4,
+    9,
+    1
+   ],
+   [
+    "ps/helpers.ps1::Get-Config",
+    "ps/helpers.ps1",
+    "function",
+    "Get-Config",
+    "Get-Config",
+    1,
+    3,
+    1
+   ],
+   [
+    "ps/mod.psm1::Publish-Artifact",
+    "ps/mod.psm1",
+    "function",
+    "Publish-Artifact",
+    "Publish-Artifact",
+    1,
+    4,
+    1
+   ],
+   [
+    "rustproj/src/main.rs::main",
+    "rustproj/src/main.rs",
+    "function",
+    "main",
+    "main",
+    5,
+    8,
+    0
+   ],
+   [
+    "rustproj/src/store.rs::Backend",
+    "rustproj/src/store.rs",
+    "enum",
+    "Backend",
+    "Backend",
+    5,
+    9,
+    1
+   ],
+   [
+    "rustproj/src/store.rs::Persist",
+    "rustproj/src/store.rs",
+    "trait",
+    "Persist",
+    "Persist",
+    10,
+    10,
+    1
+   ],
+   [
+    "rustproj/src/store.rs::Store",
+    "rustproj/src/store.rs",
+    "struct",
+    "Store",
+    "Store",
+    1,
+    4,
+    1
+   ],
+   [
+    "rustproj/src/store.rs::flush",
+    "rustproj/src/store.rs",
+    "function",
+    "flush",
+    "flush",
+    11,
+    13,
+    0
+   ],
+   [
+    "rustproj/src/store.rs::len",
+    "rustproj/src/store.rs",
+    "function",
+    "len",
+    "len",
+    19,
+    22,
+    1
+   ],
+   [
+    "rustproj/src/store.rs::open",
+    "rustproj/src/store.rs",
+    "function",
+    "open",
+    "open",
+    15,
+    18,
+    1
+   ],
+   [
+    "site/app.js::appendLine",
+    "site/app.js",
+    "function",
+    "appendLine",
+    "appendLine",
+    3,
+    8,
+    0
+   ]
+  ]
+ },
+ "unresolved <REPO>": {
+  "err": "",
+  "out": "",
+  "rc": 0
+ },
+ "unresolved <REPO> --json": {
+  "err": "",
+  "out": "[]\n",
+  "rc": 0
+ }
+}

@@ -50,12 +50,26 @@ Commands:
   trends <vault> --by month             what rose and fell between windows
   index <vault> [--out PATH]            render a vault index from the graph
   stats <vault>                         counts, orphans, unresolved/ambiguous
+  props <vault> [--key K] [--note N]    query frontmatter properties
+  annotations <vault> [--marker M]      inline **MARKER**: annotations
+  diff <vault> [--against DB]           what changed vs the checkpoint
+  trajectory <vault> <term>             a term's distribution over dates
+  relate <vault> <section> <pred> <note> --quote Q   record an inferred relation
+  relations <vault> [--conflicts]       list inferred relations
+  coverage <vault> --session ID         a session's touched vs untouched territory
+  links|backlinks <vault> <note> --anchors   links that name a heading or block
+  fields <vault> [--field F] [--note N] links by the field they sit under
+  tags <vault> [tag] --inline --nested  frontmatter tags plus body #tags
+  related <vault> <note>                notes ranked by link-graph proximity
+  communities <vault>                   clusters of notes that link together
+  config <vault>                        what each config row matched
 """
 from __future__ import annotations
 
 import argparse
 import fnmatch
 import hashlib
+import heapq
 import json
 import math
 import os
@@ -99,7 +113,7 @@ HEADING_MAX = 120
 # Bump when a parser or schema change must re-index a vault whose files have
 # not changed. The manifest folds it in, so the next read command re-ingests
 # once instead of serving sections the old parser cut.
-INDEX_REV = 2
+INDEX_REV = 3
 
 PROFILES = {"log-dated", "reference", "dimension", "list", "generated", "hub",
             "freeform"}
@@ -290,13 +304,52 @@ CREATE TABLE IF NOT EXISTS members(       -- dimension-profile list members
   ord        INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (section_id, name)
 );
+CREATE TABLE IF NOT EXISTS anchors(       -- links that name a heading or block
+  src         TEXT NOT NULL,              -- note id
+  section_id  TEXT NOT NULL DEFAULT '',   -- section the link was written in
+  dst         TEXT,                       -- note id; NULL unless the note resolved
+  target      TEXT NOT NULL,              -- note target as written; '' = same note
+  anchor      TEXT NOT NULL,              -- what followed `#`, as written
+  dst_section TEXT NOT NULL DEFAULT '',   -- smallest section holding the anchor
+  dst_line    INTEGER NOT NULL DEFAULT 0, -- 1-indexed line of the heading/block
+  syntax      TEXT NOT NULL,              -- 'wiki' | 'md'
+  status      TEXT NOT NULL,              -- resolved|anchor-missing|unresolved|
+                                          -- ambiguous|ignored
+  PRIMARY KEY (src, section_id, syntax, target, anchor)
+);
+CREATE INDEX IF NOT EXISTS anchors_dst ON anchors(dst);
+CREATE TABLE IF NOT EXISTS link_fields(   -- links written under a named field
+  src        TEXT NOT NULL,               -- note id
+  field      TEXT NOT NULL,               -- frontmatter key or inline field name
+  origin     TEXT NOT NULL,               -- 'frontmatter' | 'inline'
+  target     TEXT NOT NULL,               -- target as written
+  dst        TEXT,                        -- note id; NULL unless resolved
+  status     TEXT NOT NULL,               -- resolved|unresolved|ambiguous|ignored
+  section_id TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (src, field, origin, target)
+);
+CREATE INDEX IF NOT EXISTS link_fields_dst ON link_fields(dst);
+CREATE TABLE IF NOT EXISTS inline_tags(   -- `#tags` written in body text
+  note_id    TEXT NOT NULL,
+  section_id TEXT NOT NULL DEFAULT '',
+  tag        TEXT NOT NULL,
+  count      INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (note_id, section_id, tag)
+);
 CREATE TABLE IF NOT EXISTS entities(
   canonical TEXT PRIMARY KEY,
   type      TEXT NOT NULL DEFAULT '',
   time      TEXT NOT NULL DEFAULT 'static',
   note      TEXT NOT NULL DEFAULT '',
   t_start   TEXT NOT NULL DEFAULT '',
-  t_end     TEXT NOT NULL DEFAULT ''
+  t_end     TEXT NOT NULL DEFAULT '',
+  origin    TEXT NOT NULL DEFAULT 'config'  -- 'config' | 'note' (entity_sources)
+);
+CREATE TABLE IF NOT EXISTS entity_skips(  -- derived names an ingest left out
+  note_id TEXT NOT NULL,
+  name    TEXT NOT NULL,
+  reason  TEXT NOT NULL,
+  PRIMARY KEY (note_id, name)
 );
 CREATE TABLE IF NOT EXISTS entity_aliases(
   canonical TEXT NOT NULL,
@@ -375,6 +428,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS sections_fts USING fts5(
 
 WIKILINK_RE = re.compile(r"(!?)\[\[([^\[\]]+)\]\]")
 MD_LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^()]+)\)")
+# A link reference definition, `[label]: target`, at the start of a line with
+# up to three spaces of indent; and a use of one: `[text][label]`,
+# `[label][]` or a bare `[label]` that no `(`, `[` or `:` follows.
+MD_REF_DEF_RE = re.compile(
+    r"^ {0,3}\[([^\[\]\n]{1,200})\]:[ \t]*(<[^<>\n]*>|\S+)", re.MULTILINE)
+MD_REF_USE_RE = re.compile(
+    r"(?<![\]\[!\\])\[([^\[\]\n]{1,200})\](?:\[([^\[\]\n]{0,200})\])?(?![\[(:])")
 INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
 ATX_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 SETEXT_RE = re.compile(r"^(=+|-+)\s*$")
@@ -456,6 +516,7 @@ def connect(vault: Path, must_exist: bool = False) -> sqlite3.Connection:
 _ADDED_COLUMNS = {
     "sections": [("weight", "REAL NOT NULL DEFAULT 1.0"),
                  ("setext", "INTEGER NOT NULL DEFAULT 0")],
+    "entities": [("origin", "TEXT NOT NULL DEFAULT 'config'")],
 }
 
 
@@ -544,7 +605,55 @@ def load_config(vault: Path) -> dict:
             sys.exit(f"error: {cfg_file}: 'recency_k' must be a"
                      " non-negative number")
         cfg["recency_k"] = float(k)
+    _check_extensions(cfg, cfg_file)
     return cfg
+
+
+def _check_extensions(cfg: dict, cfg_file: Path) -> None:
+    """The extension keys: `entity_sources` derives entities from notes that
+    already have a page each, and `relations` names the inverse of a link
+    field. Both are optional and absent means empty, so a config written
+    before they existed loads exactly as it did."""
+    for key in ("entity_sources", "relations"):
+        cfg.setdefault(key, [])
+        if not isinstance(cfg[key], list):
+            sys.exit(f"error: {cfg_file}: '{key}' must be a list")
+    if "link_resolution" in cfg and cfg["link_resolution"] not in LINK_MODES:
+        sys.exit(f"error: {cfg_file}: 'link_resolution' must be"
+                 f" {' or '.join(repr(m) for m in LINK_MODES)}")
+    for row in cfg["entity_sources"]:
+        if not isinstance(row, dict):
+            sys.exit(f"error: {cfg_file}: entity_sources entries must be"
+                     " objects")
+        path = str(row.get("path", "")).strip()
+        ktype = str(row.get("kg_type", "")).strip()
+        if bool(path) == bool(ktype):
+            sys.exit(f"error: {cfg_file}: an entity_sources row takes 'path'"
+                     " or 'kg_type', exactly one")
+        time = str(row.get("time", "") or "static").strip()
+        if time not in ("static", "evolving"):
+            # A span belongs to one event; a rule that covers many notes
+            # cannot give them all the same start and end.
+            sys.exit(f"error: {cfg_file}: entity_sources 'time' must be"
+                     f" 'static' or 'evolving' ({(path or ktype)!r})")
+    seen_fields: set[str] = set()
+    for row in cfg["relations"]:
+        if not isinstance(row, dict):
+            sys.exit(f"error: {cfg_file}: relations entries must be objects")
+        field = str(row.get("field", ""))
+        inverse = str(row.get("inverse", ""))
+        for label, tok in (("field", field), ("inverse", inverse)):
+            if (tok or label == "field") and not FIELD_TOKEN_RE.fullmatch(tok):
+                sys.exit(f"error: {cfg_file}: relations {label} {tok!r} must"
+                         " be lowercase letters, digits, hyphen or"
+                         " underscore, at most 64 characters")
+        if field in RESERVED_FIELDS:
+            sys.exit(f"error: {cfg_file}: {field!r} is a reserved property"
+                     " and never a link field")
+        if field in seen_fields:
+            sys.exit(f"error: {cfg_file}: relations field {field!r}"
+                     " declared twice")
+        seen_fields.add(field)
 
 
 def dump_config(cfg: dict) -> str:
@@ -566,6 +675,18 @@ def dump_config(cfg: dict) -> str:
     if cfg.get("markers"):
         out["markers"] = sorted(cfg["markers"],
                                 key=lambda r: str(r.get("marker", "")))
+    # And for the extension keys: present once a vault declares a row.
+    if cfg.get("entity_sources"):
+        # Path rows first, as they resolve first.
+        out["entity_sources"] = sorted(
+            cfg["entity_sources"],
+            key=lambda r: (not r.get("path"), str(r.get("path", "")),
+                           str(r.get("kg_type", ""))))
+    if cfg.get("relations"):
+        out["relations"] = sorted(cfg["relations"],
+                                  key=lambda r: str(r.get("field", "")))
+    if "link_resolution" in cfg:
+        out["link_resolution"] = cfg["link_resolution"]
     body = json.dumps(out, indent=2, ensure_ascii=False, sort_keys=True)
     return ("# markdown-kg-config\n\n"
             "Configuration for the vault knowledge graph. Everything specific\n"
@@ -913,43 +1034,138 @@ def scan_annotations(text: str,
     return anns, cands
 
 
-def extract_wikilinks(text: str) -> list[tuple[str, str, int]]:
-    """Wikilink (target, kind, char_offset) triples in document order, from
-    fence-stripped text. Target keeps its path fragment but drops
-    `#heading`/`#^block` and `|alias` parts."""
+def scan_wikilinks(text: str) -> list[tuple[str, str, str, int]]:
+    """Wikilink (target, anchor, kind, char_offset) tuples in document order,
+    from fence-stripped text. Target keeps its path fragment and drops the
+    `|alias`; anchor is what followed `#` (a heading, a `#`-joined heading
+    path or a `^block` id), '' when there was none. A same-note link
+    (`[[#Heading]]`) comes back with an empty target."""
     out = []
     for m in WIKILINK_RE.finditer(strip_code(text)):
         inner = m.group(2).split("|", 1)[0]
-        target = inner.split("#", 1)[0].strip().rstrip("\\").strip()
-        if not target or not _single_line(target):
+        target, _, anchor = inner.partition("#")
+        target = target.strip().rstrip("\\").strip()
+        anchor = anchor.strip().rstrip("\\").strip()
+        if not _single_line(target):
             # `[^\[\]]+` matches newlines, so an unclosed bracket can swallow
             # paragraphs of prose into a "target" that is then printed verbatim
             # into the generated index and into stats. No real link spans lines.
             continue
-        out.append((target, "embed" if m.group(1) else "link", m.start()))
+        if not _single_line(anchor):
+            anchor = ""     # the same swallow, after a `#`: keep the note link
+        if not target and not anchor:
+            continue
+        out.append((target, anchor, "embed" if m.group(1) else "link",
+                    m.start()))
+    return out
+
+
+def extract_wikilinks(text: str) -> list[tuple[str, str, int]]:
+    """Wikilink (target, kind, char_offset) triples in document order: the
+    note-level view of `scan_wikilinks`, without anchors or same-note links."""
+    return [(target, kind, off)
+            for target, _, kind, off in scan_wikilinks(text) if target]
+
+
+_PAREN_RE = re.compile(r"[()]")
+
+
+def iter_md_links(text: str):
+    """(start, inside) for every inline link `[text](inside)`: the matches
+    of MD_LINK_RE, found in one pass. The pattern itself rescans to the next
+    `]` from every `[`, so a note that is one long run of `[` costs time
+    quadratic in its length, and a vault is untrusted input. Link text can
+    never cross a `]`, so every `[` up to the next `]` shares one candidate
+    close, and the text is walked close by close instead."""
+    pos = 0
+    while True:
+        close = text.find("]", pos)
+        if close == -1:
+            return
+        nxt = close + 1
+        if text.startswith("(", nxt):
+            paren = _PAREN_RE.search(text, nxt + 1)
+            if paren and paren.group() == ")" and paren.start() > nxt + 1:
+                # The leftmost `[` of this stretch that no `!` precedes: an
+                # image is not a link, and a `[` after it still can be.
+                start = text.find("[", pos, close)
+                while start > 0 and text[start - 1] == "!":
+                    start = text.find("[", start + 1, close)
+                if start != -1:
+                    yield start, text[nxt + 1:paren.start()]
+                    nxt = paren.start() + 1
+        pos = nxt
+
+
+def _split_md_target(raw: str) -> tuple[str, str] | None:
+    """(target, anchor) from the inside of `](...)` or a reference
+    definition: `<...>` wrapping and a `"title"` suffix are stripped, the
+    fragment is split off, and an external scheme returns None."""
+    target = raw.strip()
+    if target.startswith("<") and ">" in target:
+        target = target[1:target.index(">")]
+    elif len(target) > 1 and target.endswith('"'):
+        # A trailing "title": whitespace, then a quoted run with no quote
+        # inside it. Found from the right, because a pattern for it
+        # backtracks quadratically over a long run of spaces.
+        opener = target.rfind('"', 0, -1)
+        if opener > 0 and target[opener - 1].isspace():
+            target = target[:opener].rstrip()
+    target, _, anchor = target.partition("#")
+    target, anchor = target.strip(), anchor.strip()
+    if not _single_line(target):
+        return None
+    if not _single_line(anchor):
+        anchor = ""
+    if re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:", target):
+        return None
+    return target, anchor
+
+
+def _ref_label(label: str) -> str:
+    """Reference labels match case-insensitively with whitespace collapsed."""
+    return " ".join(label.split()).casefold()
+
+
+def scan_md_links(text: str) -> list[tuple[str, str, str, int]]:
+    """Standard markdown link (target, anchor, style, char_offset) tuples in
+    document order, from fence-stripped text. `style` is `inline` for
+    `[text](target)` and `reference` for `[text][label]`, `[label][]` and a
+    bare `[label]` that has a `[label]: target` definition. Images and
+    external schemes are skipped. A same-note link (`[text](#heading)`) comes
+    back with an empty target."""
+    stripped = strip_code(text)
+    out = []
+    for start, inside in iter_md_links(stripped):
+        parts = _split_md_target(inside)
+        if parts and (parts[0] or parts[1]):
+            out.append((parts[0], parts[1], "inline", start))
+    defs: dict[str, tuple[str, str]] = {}
+    for m in MD_REF_DEF_RE.finditer(stripped):
+        label = _ref_label(m.group(1))
+        parts = _split_md_target(m.group(2))
+        # The first definition of a label wins, as CommonMark has it. A
+        # footnote definition (`[^1]: text`) has the same shape and is not a
+        # link at all.
+        if label and not label.startswith("^") and parts and label not in defs:
+            defs[label] = parts
+    if defs:
+        for m in MD_REF_USE_RE.finditer(stripped):
+            label = _ref_label(m.group(2) or m.group(1))
+            if label in defs and (defs[label][0] or defs[label][1]):
+                out.append((defs[label][0], defs[label][1], "reference",
+                            m.start()))
+        out.sort(key=lambda r: r[3])
     return out
 
 
 def extract_md_links(text: str) -> list[tuple[str, int]]:
-    """Standard markdown link (target, char_offset) pairs in document order,
-    from fence-stripped text. Images, external schemes and bare fragments are
-    skipped; `<...>` wrapping, `"title"` suffixes and fragments are stripped."""
-    out = []
-    for m in MD_LINK_RE.finditer(strip_code(text)):
-        target = m.group(1).strip()
-        if target.startswith("<") and ">" in target:
-            target = target[1:target.index(">")]
-        else:
-            tm = re.match(r'^(.*?)\s+"[^"]*"$', target)  # trailing "title"
-            if tm:
-                target = tm.group(1)
-        target = target.split("#", 1)[0].strip()
-        if not target or not _single_line(target):
-            continue
-        if re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:", target):
-            continue
-        out.append((target, m.start()))
-    return out
+    """Inline markdown link (target, char_offset) pairs in document order:
+    the note-level view of `scan_md_links`. Images, external schemes and bare
+    fragments are skipped; `<...>` wrapping, `"title"` suffixes and fragments
+    are stripped."""
+    return [(target, off) for target, _, style, off in scan_md_links(text)
+            if target and style == "inline"]
 
 
 def _single_line(target: str) -> bool:
@@ -1010,6 +1226,244 @@ def resolve_wikilink(target: str, ids: list[str], by_base: dict[str, list[str]],
     if len(cands) > 1:
         return None, "ambiguous"
     return None, "unresolved"
+
+
+LINK_MODES = ("obsidian", "relative")
+
+
+def link_mode(vault: Path, cfg: dict) -> tuple[str, str]:
+    """How a markdown link that misses its relative path is read, and why:
+    (mode, source). Config `link_resolution` decides when set. Otherwise a
+    vault with an `.obsidian/` folder gets Obsidian's rules and any other
+    tree gets plain relative paths, which is what its renderer follows."""
+    mode = cfg.get("link_resolution")
+    if mode in LINK_MODES:
+        return mode, "config"
+    if (vault / ".obsidian").is_dir():
+        return "obsidian", "detected .obsidian/"
+    return "relative", "default"
+
+
+def resolve_md_note(target: str, src_rel: str, ids: list[str], known,
+                    ignored_ids: set[str], by_base: dict[str, list[str]],
+                    vault_wide: bool = False) -> tuple[str | None, str] | None:
+    """Resolve a markdown link target to (note id, status), or None when the
+    target is not a note link at all (an asset, or a path outside the vault).
+
+    The path is read relative to the source file, or from the vault root
+    with a leading `/`, which is what CommonMark and every docs tree mean.
+    A target with no extension resolves the same way, and only when it
+    names a note: an extensionless path that names none stays out of the
+    broken-link worklist, because site routes and folders look the same.
+
+    With `vault_wide` (an Obsidian vault), a target that misses its relative
+    path and was not written as an explicit `./`, `../` or `/` path is read
+    the way Obsidian writes markdown links: by basename or vault-root path,
+    like a wikilink. That covers `[x](Note.md)` from another folder (the
+    "shortest path" link format) and `[x](folder/Note.md)` (the "absolute
+    path in vault" format). Outside an Obsidian vault those links are
+    broken for every renderer, so they stay unresolved."""
+    t = urllib.parse.unquote(target)
+    is_md = t.lower().endswith(".md")
+    stem = t[: -len(".md")] if is_md else t
+    if t.startswith("/"):
+        rel = posixpath.normpath(stem.lstrip("/"))
+    else:
+        rel = posixpath.normpath(posixpath.join(posixpath.dirname(src_rel),
+                                                stem))
+    if rel.startswith(".."):
+        return None
+    if rel in known:
+        return rel, "resolved"
+    if is_md and rel in ignored_ids:
+        return None, "ignored"
+    if not is_md and "." in stem.rsplit("/", 1)[-1]:
+        return None             # some other extension: an asset
+    if vault_wide and not t.startswith(("/", "./", "../")):
+        dst, status = resolve_wikilink(stem, ids, by_base, {})
+        if status != "unresolved":
+            return dst, status
+    return (None, "unresolved") if is_md else None
+
+
+# ---------- anchors: links that name a heading or a block ----------
+BLOCK_ID_RE = re.compile(r"(?:^|\s)\^([A-Za-z0-9-]+)[ \t]*$")
+_ANCHOR_MARKUP_RE = re.compile(r"[*_`~\[\]#|^:]|%%")
+
+
+def _anchor_key(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+def _anchor_plain(text: str) -> str:
+    """Heading text as a link usually spells it: emphasis and the characters
+    Obsidian drops from a heading link removed."""
+    return " ".join(_ANCHOR_MARKUP_RE.sub(" ", text).split()).casefold()
+
+
+def heading_slug(text: str) -> str:
+    """The anchor GitHub and most docs renderers generate for a heading:
+    lowercased, punctuation dropped except `-` and `_`, each space a hyphen."""
+    kept = "".join(c for c in text.strip().lower()
+                   if c.isalnum() or c in "-_ ")
+    return kept.replace(" ", "-")
+
+
+def anchor_index(text: str) -> dict:
+    """Everything in one note a link can point at below note level: each
+    heading (exact text, plain text, ancestor path, generated slug with the
+    `-1`, `-2` suffixes a repeated heading gets) and each `^block-id`. Every
+    target is a (char offset, 1-indexed line) pair."""
+    nodes = parse_headings(text)
+    build_tree(text, nodes)
+    headings, slugs, seen = [], {}, {}
+    for node in nodes:
+        slug = heading_slug(node.heading)
+        n = seen.get(slug, 0)
+        seen[slug] = n + 1
+        at = (node.char, node.line)
+        slugs.setdefault(slug if n == 0 else f"{slug}-{n}", at)
+        headings.append((at, _anchor_key(node.heading),
+                         _anchor_plain(node.heading),
+                         {key(p) for p in node.path[:-1]
+                          for key in (_anchor_key, _anchor_plain)}))
+    blocks: dict[str, tuple[int, int]] = {}
+    mask = fence_mask(text)
+    pos = 0
+    for i, raw in enumerate(text.splitlines(keepends=True)):
+        if not (i < len(mask) and mask[i]):
+            m = BLOCK_ID_RE.search(raw.rstrip("\r\n"))
+            if m:
+                blocks.setdefault(m.group(1).lower(), (pos, i + 1))
+        pos += len(raw)
+    return {"headings": headings, "slugs": slugs, "blocks": blocks}
+
+
+def resolve_anchor(index: dict, anchor: str) -> tuple[int, int] | None:
+    """The (char offset, line) an anchor points at, or None. A `^id` is a
+    block. Anything else is a heading, matched on its exact text, then its
+    plain text, then its generated slug; `A#B` requires `A` among the
+    ancestors of `B`. Where two headings match, the first in the note wins,
+    which is what Obsidian and a rendered page both do."""
+    anchor = anchor.strip()
+    if anchor.startswith("^"):
+        return index["blocks"].get(anchor[1:].strip().lower())
+    parts = [p for p in (s.strip() for s in anchor.split("#")) if p]
+    if not parts:
+        return None
+    for keyfn, col in ((_anchor_key, 1), (_anchor_plain, 2)):
+        want = keyfn(parts[-1])
+        ancestors = [keyfn(p) for p in parts[:-1]]
+        if not want:
+            continue
+        for entry in index["headings"]:
+            if entry[col] == want and all(a in entry[3] for a in ancestors):
+                return entry[0]
+    if len(parts) == 1:
+        return index["slugs"].get(parts[0].lower())
+    return None
+
+
+# ---------- link fields and inline tags ----------
+# A link written under a name: a frontmatter key (`up: "[[Parent]]"`) or an
+# inline field (`up:: [[Parent]]` on its own line or list item, or bracketed
+# mid-sentence as `[up:: [[Parent]]]` / `(up:: [[Parent]])`). The name is what
+# types the relation; the link itself is already an edge.
+_FIELD_NAME = r"[A-Za-z][A-Za-z0-9 _-]{0,63}"
+FM_KEY_LINE_RE = re.compile(r"^([A-Za-z0-9_-]+):")
+INLINE_FIELD_RE = re.compile(
+    r"^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+|>[ \t]*)*(" + _FIELD_NAME
+    + r")::[ \t]*(.+)$")
+BRACKET_FIELD_RE = re.compile(
+    r"[\[(](" + _FIELD_NAME
+    + r")::[ \t]*((?:\[\[[^\[\]\n]+\]\]|[^\[\]()\n])*)[\])]")
+FIELD_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+RESERVED_FIELDS = {"tags", "aliases", "cssclasses"}
+# One line longer than this is a minified blob or an undecoded file, never a
+# field, and the scanners below run a pattern over every line they keep.
+SCAN_LINE_MAX = 10000
+# `#tag` in body text: letters, digits, `_`, `-` and `/` after a `#` that
+# starts the line or follows whitespace, with at least one non-digit.
+INLINE_TAG_RE = re.compile(r"(?<!\S)#([\w/-]{1,100})")
+
+
+def _field_name(raw: str) -> str:
+    return "-".join(raw.strip().lower().split())
+
+
+def _code_free_lines(text: str) -> list[str]:
+    """`strip_code`, kept as one entry per source line."""
+    mask = fence_mask(text)
+    return ["" if mask[i] else INLINE_CODE_RE.sub("", line)
+            for i, line in enumerate(text.splitlines())]
+
+
+def _links_in(value: str) -> list[tuple[str, str]]:
+    """(syntax, target) for each wikilink and inline markdown link in one
+    field value; anchors and aliases dropped, external targets skipped."""
+    out = []
+    for m in WIKILINK_RE.finditer(value):
+        target = m.group(2).split("|", 1)[0].partition("#")[0]
+        target = target.strip().rstrip("\\").strip()
+        if target and _single_line(target):
+            out.append(("wiki", target))
+    for _, inside in iter_md_links(value):
+        parts = _split_md_target(inside)
+        if parts and parts[0]:
+            out.append(("md", parts[0]))
+    return out
+
+
+def scan_field_links(text: str) -> list[tuple[str, str, str, str, int]]:
+    """(field, origin, syntax, target, char_offset) for every link written
+    under a frontmatter key or an inline field. `tags`, `aliases` and
+    `cssclasses` are never fields; code and comments never carry one."""
+    _, body_start = parse_frontmatter(text)
+    code_free = _code_free_lines(text)
+    cmask = _comment_mask(text)
+    out, key, pos = [], None, 0
+    for i, raw in enumerate(text.splitlines(keepends=True)):
+        start, pos = pos, pos + len(raw)
+        line = raw.rstrip("\r\n")
+        if len(line) > SCAN_LINE_MAX:
+            continue
+        if start < body_start:
+            m = FM_KEY_LINE_RE.match(line)
+            if m:
+                key = m.group(1).lower()
+            if key and key not in RESERVED_FIELDS:
+                out.extend((key, "frontmatter", syntax, target, start)
+                           for syntax, target in _links_in(line))
+            continue
+        line = code_free[i]
+        if cmask[i] or "::" not in line:
+            continue
+        m = INLINE_FIELD_RE.match(line)
+        found = [m] if m else BRACKET_FIELD_RE.finditer(line)
+        for fm in found:
+            out.extend((_field_name(fm.group(1)), "inline", syntax, target,
+                        start) for syntax, target in _links_in(fm.group(2)))
+    return out
+
+
+def scan_inline_tags(text: str) -> list[tuple[str, int]]:
+    """(tag, char_offset) for every `#tag` in body text, outside frontmatter,
+    code and comments. The offset is the start of the tag's line."""
+    _, body_start = parse_frontmatter(text)
+    code_free = _code_free_lines(text)
+    cmask = _comment_mask(text)
+    out, pos = [], 0
+    for i, raw in enumerate(text.splitlines(keepends=True)):
+        start, pos = pos, pos + len(raw)
+        line = code_free[i]
+        if (start < body_start or cmask[i] or "#" not in line
+                or len(line) > SCAN_LINE_MAX):
+            continue
+        for m in INLINE_TAG_RE.finditer(line):
+            tag = m.group(1).strip("/")
+            if tag and re.search(r"[^\W\d]", tag):
+                out.append((tag, start))
+    return out
 
 
 # ---------- dates: inferred, never a hardcoded format ----------
@@ -1641,6 +2095,10 @@ def manifest(vault: Path) -> str:
     if cfg.exists():
         parts.append(f"__config__|{cfg.stat().st_size}|"
                      f"{int(cfg.stat().st_mtime_ns)}")
+    if (vault / ".obsidian").is_dir():
+        # Opening a folder in Obsidian changes how its markdown links
+        # resolve (link_mode), so it has to count as drift.
+        parts.append("__obsidian__")
     parts.append(f"__index__|{INDEX_REV}")
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
@@ -1739,7 +2197,8 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
 
     for table in ("notes", "properties", "tags", "aliases", "edges", "sections",
                   "members", "entities", "entity_aliases", "mentions",
-                  "ignored", "annotations", "annotation_candidates", "meta"):
+                  "ignored", "annotations", "annotation_candidates", "meta",
+                  "anchors", "link_fields", "inline_tags", "entity_skips"):
         con.execute(f"DELETE FROM {table}")
     con.execute("INSERT INTO sections_fts(sections_fts) VALUES ('delete-all')")
 
@@ -1755,6 +2214,7 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
         title = str(meta.get("title") or heading or nid.rsplit("/", 1)[-1])
         tag_list = _listify(meta.get("tags", []))
         alias_list = _listify(meta.get("aliases", []))
+        doc["title"], doc["aliases"] = title, alias_list
         profile = str(row.get("profile", "reference"))
         if profile not in PROFILES:
             # A typo in a config profile name is invisible otherwise: the note
@@ -1877,38 +2337,73 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
         doc["sections"] = sections
 
     # edges, once every note id is known, so collision detection stays global
+    vault_wide = link_mode(vault, cfg)[0] == "obsidian"
+    ignored_sorted = sorted(ignored_ids)
+    ignored_by_base = _index_by_base(ignored_ids)
+    anchor_cache: dict[str, dict] = {}
+
+    def wiki_dst(target: str) -> tuple[str | None, str]:
+        dst, status = resolve_wikilink(target, ids, by_base, by_alias)
+        if status == "unresolved":
+            probe, _ = resolve_wikilink(target, ignored_sorted,
+                                        ignored_by_base, {})
+            if probe is not None:
+                status = "ignored"
+        return dst, status
+
+    def anchor_row(src: str, sec: str, dst: str | None, target: str,
+                   anchor: str, syntax: str, status: str) -> tuple:
+        """One `anchors` row. The note-level status stands unless the note
+        resolved; then the anchor either lands in a section or is missing."""
+        dst_section, dst_line = "", 0
+        if status == "resolved" and dst:
+            if dst not in anchor_cache:
+                anchor_cache[dst] = anchor_index(parsed[dst]["text"])
+            at = resolve_anchor(anchor_cache[dst], anchor)
+            if at is None:
+                status = "anchor-missing"
+            else:
+                dst_section = _section_at(parsed[dst]["sections"], at[0])
+                dst_line = at[1]
+        return (src, sec, dst, target, anchor, dst_section, dst_line, syntax,
+                status)
+
     for nid in ids:
         doc = parsed[nid]
         text, sections = doc["text"], doc["sections"]
         rows: list[tuple] = []
-        for target, kind, off in extract_wikilinks(text):
-            base = target.rsplit("/", 1)[-1]
-            ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
-            if ext in ASSET_EXTS:
-                report["skipped_assets"] += 1
-                continue
-            dst, status = resolve_wikilink(target, ids, by_base, by_alias)
-            if status == "unresolved":
-                probe, _ = resolve_wikilink(target, sorted(ignored_ids),
-                                            _index_by_base(ignored_ids),
-                                            {})
-                if probe is not None:
-                    status = "ignored"
-            rows.append((nid, dst, target, "wiki", kind, status,
-                         _section_at(sections, off)))
-        for target, off in extract_md_links(text):
-            dst = resolve_md_link(target, doc["rel"])
-            if dst is None:
-                report["skipped_assets"] += 1
-                continue
-            if dst in parsed:
-                status = "resolved"
-            elif dst in ignored_ids:
-                status, dst = "ignored", None
-            else:
-                status, dst = "unresolved", None
-            rows.append((nid, dst, urllib.parse.unquote(target), "md", "link",
-                         status, _section_at(sections, off)))
+        anchor_rows: list[tuple] = []
+        for target, anchor, kind, off in scan_wikilinks(text):
+            sec = _section_at(sections, off)
+            dst, status = nid, "resolved"       # a same-note link
+            if target:
+                base = target.rsplit("/", 1)[-1]
+                ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
+                if ext in ASSET_EXTS:
+                    report["skipped_assets"] += 1
+                    continue
+                dst, status = wiki_dst(target)
+                rows.append((nid, dst, target, "wiki", kind, status, sec))
+            if anchor:
+                anchor_rows.append(anchor_row(nid, sec, dst, target, anchor,
+                                              "wiki", status))
+        for target, anchor, style, off in scan_md_links(text):
+            sec = _section_at(sections, off)
+            dst, status = nid, "resolved"       # a same-note link
+            written = urllib.parse.unquote(target)
+            if target:
+                found = resolve_md_note(target, doc["rel"], ids, parsed,
+                                        ignored_ids, by_base, vault_wide)
+                if found is None:
+                    if style == "inline":
+                        report["skipped_assets"] += 1
+                    continue
+                dst, status = found
+                rows.append((nid, dst, written, "md", "link", status, sec))
+            if anchor:
+                anchor_rows.append(anchor_row(
+                    nid, sec, dst, written, urllib.parse.unquote(anchor),
+                    "md", status))
         for row_ in rows:
             cur = con.execute(
                 "INSERT OR IGNORE INTO edges(src, dst, target, syntax, kind,"
@@ -1917,13 +2412,42 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
                 key = ("ignored_links" if row_[5] == "ignored" else row_[5])
                 if key in report:
                     report[key] += 1
+        con.executemany(
+            "INSERT OR IGNORE INTO anchors(src, section_id, dst, target,"
+            " anchor, dst_section, dst_line, syntax, status)"
+            " VALUES (?,?,?,?,?,?,?,?,?)", anchor_rows)
+        for field, origin, syntax, target, off in scan_field_links(text):
+            if syntax == "wiki":
+                dst, status = wiki_dst(target)
+            else:
+                found = resolve_md_note(target, doc["rel"], ids, parsed,
+                                        ignored_ids, by_base, vault_wide)
+                if found is None:
+                    continue
+                dst, status = found
+            con.execute(
+                "INSERT OR IGNORE INTO link_fields(src, field, origin,"
+                " target, dst, status, section_id) VALUES (?,?,?,?,?,?,?)",
+                (nid, field, origin, urllib.parse.unquote(target), dst,
+                 status, _section_at(sections, off)))
+        tag_counts: dict[tuple[str, str], int] = {}
+        for tag, off in scan_inline_tags(text):
+            key_ = (_section_at(sections, off), tag)
+            tag_counts[key_] = tag_counts.get(key_, 0) + 1
+        con.executemany(
+            "INSERT INTO inline_tags(note_id, section_id, tag, count)"
+            " VALUES (?,?,?,?)",
+            [(nid, sec, tag, n) for (sec, tag), n in sorted(tag_counts.items())])
 
     for (token, kind), n in sorted(cand_counts.items()):
         con.execute(
             "INSERT INTO annotation_candidates(token, kind, count)"
             " VALUES (?,?,?)", (token, kind, n))
 
-    ent_report = load_entities(con, cfg, all_sections)
+    ent_report = load_entities(con, cfg, all_sections, [
+        {"id": nid, "rel": parsed[nid]["rel"], "meta": parsed[nid]["meta"],
+         "title": parsed[nid]["title"], "aliases": parsed[nid]["aliases"]}
+        for nid in ids])
     report.update(ent_report)
 
     con.execute("INSERT INTO sections_fts(sections_fts) VALUES ('rebuild')")
@@ -1984,8 +2508,89 @@ def alias_pattern(alias: str) -> re.Pattern:
                       re.IGNORECASE)
 
 
-def load_entities(con: sqlite3.Connection, cfg: dict,
-                  sections: list[dict]) -> dict:
+ENTITY_NAME_MIN = 3      # a derived name shorter than this matches too much
+ENTITY_NAME_MAX = 120
+
+
+def entity_source_for(rel_path: str, meta: dict, cfg: dict) -> dict | None:
+    """The `entity_sources` row that makes this note an entity, or None.
+    Resolved the way profiles are: the longest matching path glob, then a
+    `kg_type` row matching the note's own `kg-type:` frontmatter."""
+    best, best_len = None, -1
+    for row in cfg.get("entity_sources", []):
+        pat = str(row.get("path", "")).strip()
+        if pat and glob_match(rel_path, pat) and len(pat) > best_len:
+            best, best_len = row, len(pat)
+    if best:
+        return best
+    ktype = str(meta.get("kg-type", "")).strip().lower()
+    if ktype:
+        for row in cfg.get("entity_sources", []):
+            if str(row.get("kg_type", "")).strip().lower() == ktype:
+                return row
+    return None
+
+
+def derive_entities(con: sqlite3.Connection, cfg: dict, notes: list[dict],
+                    seen_alias: dict[str, str], explicit_notes: set[str],
+                    pairs: list[tuple[str, str]]) -> int:
+    """Entities from notes an `entity_sources` row matches: the title is the
+    canonical name, the file name and frontmatter aliases are aliases, and
+    the note is the entity's own page. A hand-written `entities` row always
+    wins. Note content must never be able to fail an ingest, so a derived
+    name that collides or is too short is left out and recorded in
+    `entity_skips`, where the hand-written registry fails loudly instead."""
+    derived = 0
+
+    def skip(note_id: str, name: str, reason: str) -> None:
+        con.execute("INSERT OR IGNORE INTO entity_skips(note_id, name, reason)"
+                    " VALUES (?,?,?)", (note_id, name, reason))
+
+    def usable(note_id: str, name: str) -> bool:
+        if not _single_line(name) or len(name) > ENTITY_NAME_MAX:
+            skip(note_id, name[:ENTITY_NAME_MAX], "not one short line")
+        elif len(name) < ENTITY_NAME_MIN:
+            skip(note_id, name, f"shorter than {ENTITY_NAME_MIN} characters")
+        elif name.lower() in seen_alias:
+            skip(note_id, name, f"claimed by {seen_alias[name.lower()]!r}")
+        else:
+            return True
+        return False
+
+    for note in sorted(notes, key=lambda n: n["id"]):
+        row = entity_source_for(note["rel"], note["meta"], cfg)
+        if row is None:
+            continue
+        canonical = note["title"].strip()
+        if note["id"].lower() in explicit_notes:
+            skip(note["id"], canonical, "an entities row already names this"
+                                        " note")
+            continue
+        if not usable(note["id"], canonical):
+            continue
+        time = str(row.get("time", "") or "static").strip()
+        con.execute(
+            "INSERT OR REPLACE INTO entities(canonical, type, time, note,"
+            " t_start, t_end, origin) VALUES (?,?,?,?,'','','note')",
+            (canonical, str(row.get("type", "")), time, note["id"]))
+        seen_alias[canonical.lower()] = canonical
+        names = [canonical]
+        for name in [note["id"].rsplit("/", 1)[-1]] + list(note["aliases"]):
+            name = str(name).strip()
+            if name and name.lower() != canonical.lower() \
+                    and usable(note["id"], name):
+                seen_alias[name.lower()] = canonical
+                names.append(name)
+        for name in names:
+            con.execute("INSERT OR IGNORE INTO entity_aliases(canonical, alias)"
+                        " VALUES (?,?)", (canonical, name))
+            pairs.append((name, canonical))
+        derived += 1
+    return derived
+
+
+def load_entities(con: sqlite3.Connection, cfg: dict, sections: list[dict],
+                  notes: list[dict] | None = None) -> dict:
     """Gazetteer matching from config. Longest alias wins; matches inside code
     fences do not count. Derived from a file, so it is wiped and rebuilt."""
     rows = [r for r in cfg.get("entities", []) if isinstance(r, dict)
@@ -2020,6 +2625,16 @@ def load_entities(con: sqlite3.Connection, cfg: dict,
                 " VALUES (?,?)", (canonical, name))
             pairs.append((name, canonical))
 
+    derived = 0
+    if notes and cfg.get("entity_sources"):
+        explicit_notes = set()
+        for row in rows:
+            ref = str(row.get("note", "")).strip().strip("/").lower()
+            if ref:
+                explicit_notes.add(ref[:-3] if ref.endswith(".md") else ref)
+        derived = derive_entities(con, cfg, notes, seen_alias, explicit_notes,
+                                  pairs)
+
     # longest alias first, so a longer name is never eaten by a shorter one
     pairs.sort(key=lambda p: (-len(p[0]), p[0]))
     compiled = [(alias_pattern(name), canonical) for name, canonical in pairs]
@@ -2044,7 +2659,7 @@ def load_entities(con: sqlite3.Connection, cfg: dict,
                 (canonical, sec["id"], sec["note_id"], sec["doc_date"],
                  counts[canonical]))
             mentions += 1
-    return {"entities": len(rows), "mentions": mentions}
+    return {"entities": len(rows) + derived, "mentions": mentions}
 
 
 # ---------- staleness ----------
@@ -2561,16 +3176,87 @@ def _ro_connect(path: str) -> sqlite3.Connection:
     return sqlite3.connect(f"file:{quoted}?mode=ro", uri=True)
 
 
+# What prose output never passes through as-is, as codepoint ranges: C0 and C1
+# controls (newline and tab excepted), then every character that renders as
+# nothing or reorders what is displayed - soft hyphen and fillers, bidi marks,
+# zero-width characters, line and paragraph separators, bidi overrides and
+# isolates, invisible operators, the TAG plane and the variation-selector
+# supplement. The ranges follow the `sanitize` skill's invisible-codepoint
+# table. Numbers, so this file never holds one of the characters.
+UNSAFE_RANGES = (
+    (0x00, 0x08), (0x0B, 0x1F), (0x7F, 0x9F),
+    (0xAD, 0xAD), (0x34F, 0x34F), (0x61C, 0x61C), (0x115F, 0x1160),
+    (0x17B4, 0x17B5), (0x180B, 0x180F), (0x200B, 0x200F), (0x2028, 0x202E),
+    (0x2060, 0x206F), (0x2800, 0x2800), (0x3164, 0x3164), (0xFE00, 0xFE0F),
+    (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF9, 0xFFFB),
+    (0xE0000, 0xE007F), (0xE0100, 0xE01EF))
+_UNSAFE_RE = re.compile("[" + "".join(
+    re.escape(chr(a)) + ("" if a == b else "-" + re.escape(chr(b)))
+    for a, b in UNSAFE_RANGES) + "]")
+_ZWJ, _EMOJI_VS, _KEYCAP = chr(0x200D), chr(0xFE0F), chr(0x20E3)
+_PICTOGRAPH_RANGES = ((0x2190, 0x21FF), (0x2300, 0x23FF), (0x25A0, 0x27BF),
+                      (0x2B00, 0x2BFF), (0x1F000, 0x1FAFF))
+_PICTOGRAPH_SINGLES = frozenset((0xA9, 0xAE, 0x203C, 0x2049, 0x2122, 0x2139,
+                                 0x3030, 0x303D, 0x3297, 0x3299))
+
+
+def _pictograph(ch: str) -> bool:
+    if not ch:
+        return False
+    cp = ord(ch)
+    return cp in _PICTOGRAPH_SINGLES or any(
+        a <= cp <= b for a, b in _PICTOGRAPH_RANGES)
+
+
+def _visible(m: re.Match) -> str:
+    """The escaped form of one unsafe character, or the character itself in
+    the two places an emoji sequence needs one: a variation selector straight
+    after a pictograph (or before a keycap), and a joiner between two."""
+    c = m.group()
+    text, i = m.string, m.start()
+    before = text[i - 1:i]
+    if 0xFE00 <= ord(c) <= 0xFE0F:
+        # One selector per pictograph: a run of them is a byte channel.
+        if _pictograph(before) or (c == _EMOJI_VS
+                                   and text[i + 1:i + 2] == _KEYCAP):
+            return c
+    elif c == _ZWJ:
+        if before == _EMOJI_VS:
+            before = text[i - 2:i - 1]
+        if _pictograph(before) and _pictograph(text[i + 1:i + 2]):
+            return c
+    shown = repr(c)[1:-1]
+    if shown != c:
+        return shown
+    return f"\\u{ord(c):04x}" if ord(c) < 0x10000 else f"\\U{ord(c):08x}"
+
+
 def _term_safe(text: str) -> str:
     """Vault-derived text about to be printed for a human: control characters
-    (C0 and C1) become their escaped repr so an ANSI sequence in a heading or
-    property value cannot rewrite what the terminal shows. Newline and tab
-    stay: section text legitimately carries both and neither drives a
-    terminal. Same rule `_single_line` enforces for link targets; JSON output
-    needs nothing, json.dumps escapes these already."""
-    return "".join(c if c in "\n\t"
-                   or not (ord(c) < 0x20 or 0x7F <= ord(c) < 0xA0)
-                   else repr(c)[1:-1] for c in text)
+    and invisible or reordering characters become their escaped form, so an
+    ANSI sequence in a heading cannot rewrite what the terminal shows and a
+    run of text nobody can see cannot ride along. Newline and tab stay:
+    section text legitimately holds both and neither drives a terminal. The
+    vault and the database keep the text as written; this touches only what
+    is printed. JSON output is for a parser and is left alone."""
+    return _UNSAFE_RE.sub(_visible, text)
+
+
+class _SafeStream:
+    """A stdout or stderr that sanitizes. `main` puts every command behind
+    it, so a renderer that prints without `emit` is covered too."""
+
+    def __init__(self, real):
+        self._real = real
+
+    def write(self, s):
+        return self._real.write(_term_safe(s))
+
+    def flush(self):
+        return self._real.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
 
 
 def _diff_rows(con: sqlite3.Connection) -> dict[str, tuple]:
@@ -2970,7 +3656,9 @@ def trends(vault: Path, by: str, slot: str | None, limit: int = 8) -> dict:
                 continue
             moves.append({"term": term, "now": a, "before": b,
                           "log_likelihood": round(ll, 3)})
-        moves.sort(key=lambda r: -r["log_likelihood"])
+        # Term breaks ties: the candidates come out of a set, whose order
+        # changes with the hash seed, and equal scores are the common case.
+        moves.sort(key=lambda r: (-r["log_likelihood"], r["term"]))
         out.append({"window": cur, "previous": prev,
                     "rose": moves[:limit],
                     "fell": list(reversed(moves[-limit:]))})
@@ -3501,9 +4189,63 @@ def cmd_read(args: argparse.Namespace) -> int:
     return emit(args, payload, render)
 
 
+ANCHOR_COLS = ("src", "section_id", "dst", "target", "anchor", "dst_section",
+               "dst_line", "syntax", "status")
+
+
+def cmd_link_anchors(args: argparse.Namespace, con: sqlite3.Connection,
+                     inbound: bool) -> int:
+    """`links --anchors` and `backlinks --anchors`: the links that name a
+    heading or a block, with the section each one resolved to. With
+    `--unresolved` the list is the anchors whose note exists and whose
+    heading or block does not - a broken note is already in the plain
+    `links --unresolved` worklist."""
+    sql = f"SELECT {', '.join(ANCHOR_COLS)} FROM anchors"
+    where, params = [], []
+    if args.note is not None:
+        nid = resolve_note_arg(con, args.note)
+        where.append("dst=? AND status='resolved'" if inbound else "src=?")
+        params.append(nid)
+    elif not getattr(args, "unresolved", False):
+        con.close()
+        sys.exit("error: links --anchors needs a note (or --unresolved for"
+                 " the whole vault)")
+    if getattr(args, "unresolved", False):
+        where.append("status='anchor-missing'")
+    rows = con.execute(
+        sql + (" WHERE " + " AND ".join(where) if where else "")
+        + " ORDER BY src, section_id, syntax, target, anchor",
+        params).fetchall()
+    con.close()
+    payload = [dict(zip(ANCHOR_COLS, r)) for r in rows]
+
+    def render(rows_):
+        if not rows_:
+            print("no anchored links")
+            return 0
+        for e in rows_:
+            where_ = f"  in {e['section_id']}" if e["section_id"] else ""
+            name = e["target"] or "(this note)"
+            here = f"{e['dst_section'] or e['dst']} (line {e['dst_line']})"
+            if inbound:
+                print(f"{e['syntax']}  {here}  <-  "
+                      f"{e['src']}  (as {name!r} # {e['anchor']!r}){where_}")
+            elif e["status"] == "resolved":
+                print(f"{e['syntax']}  ->  {here}  "
+                      f"(as {name!r} # {e['anchor']!r}){where_}")
+            else:
+                print(f"{e['syntax']}  ->  {e['status'].upper()}  "
+                      f"(as {name!r} # {e['anchor']!r}) from {e['src']}"
+                      f"{where_}")
+        return 0
+    return emit(args, payload, render)
+
+
 def cmd_links(args: argparse.Namespace) -> int:
     vault = vault_dir(args.vault)
     con = open_fresh(vault)
+    if getattr(args, "anchors", False):
+        return cmd_link_anchors(args, con, inbound=False)
     if args.unresolved and args.note is None:
         rows = con.execute(
             "SELECT src, dst, target, syntax, kind, status, section_id"
@@ -3561,6 +4303,8 @@ def cmd_links(args: argparse.Namespace) -> int:
 def cmd_backlinks(args: argparse.Namespace) -> int:
     vault = vault_dir(args.vault)
     con = open_fresh(vault)
+    if getattr(args, "anchors", False):
+        return cmd_link_anchors(args, con, inbound=True)
     nid = resolve_note_arg(con, args.note)
     rows = con.execute(
         "SELECT e.src, e.target, e.syntax, e.kind, e.section_id,"
@@ -3887,9 +4631,572 @@ def cmd_relations(args: argparse.Namespace) -> int:
     return emit(args, payload, render)
 
 
+# ---------- link fields ----------
+FIELD_COLS = ("src", "field", "origin", "target", "dst", "status",
+              "section_id")
+
+
+def fields_report(vault: Path, field: str | None = None,
+                  note: str | None = None) -> dict:
+    """Links grouped by the field they were written under. With no argument,
+    one row per field name; with `field`, every link under it; with `note`,
+    the note's own field links and the ones that point at it, each inbound
+    row carrying the inverse name a config `relations` row declares."""
+    cfg = load_config(vault)
+    inverse = {str(r.get("field", "")): str(r.get("inverse", ""))
+               for r in cfg.get("relations", [])}
+    con = open_fresh(vault)
+    select = f"SELECT {', '.join(FIELD_COLS)} FROM link_fields"
+    wanted = _field_name(field) if field else None
+    if note is not None:
+        nid = resolve_note_arg(con, note)
+        clause, extra = ("", ())
+        if wanted:
+            clause, extra = " AND field=?", (wanted,)
+        out = con.execute(select + " WHERE src=?" + clause
+                          + " ORDER BY field, origin, target",
+                          (nid,) + extra).fetchall()
+        inbound = con.execute(select + " WHERE dst=? AND status='resolved'"
+                              + clause + " ORDER BY field, src, origin",
+                              (nid,) + extra).fetchall()
+        con.close()
+        return {"note": nid,
+                "out": [dict(zip(FIELD_COLS, r)) for r in out],
+                "in": [dict(zip(FIELD_COLS, r),
+                            inverse=inverse.get(r[1], "")) for r in inbound]}
+    if wanted:
+        rows = con.execute(select + " WHERE field=? ORDER BY src, origin,"
+                           " target", (wanted,)).fetchall()
+        con.close()
+        return {"field": wanted, "inverse": inverse.get(wanted, ""),
+                "links": [dict(zip(FIELD_COLS, r)) for r in rows]}
+    rows = con.execute(
+        "SELECT field, count(*), sum(status='resolved'), count(DISTINCT src)"
+        " FROM link_fields GROUP BY field").fetchall()
+    con.close()
+    seen = {r[0] for r in rows}
+    rows += [(f, 0, 0, 0) for f in sorted(inverse) if f not in seen]
+    return {"fields": [
+        {"field": f, "links": n, "resolved": int(ok or 0), "notes": notes,
+         "inverse": inverse.get(f, ""), "declared": f in inverse}
+        for f, n, ok, notes in sorted(rows, key=lambda r: (-r[1], r[0]))]}
+
+
+def cmd_fields(args: argparse.Namespace) -> int:
+    payload = fields_report(vault_dir(args.vault), args.field, args.note)
+
+    def line(e: dict, arrow: str, other: str, label: str) -> str:
+        where = f"  in {e['section_id']}" if e["section_id"] else ""
+        state = "" if e["status"] == "resolved" \
+            else f"  {e['status'].upper()} (as {e['target']!r})"
+        return f"{label}  {arrow}  {other}{state}  [{e['origin']}]{where}"
+
+    def render(p):
+        if "fields" in p:
+            if not p["fields"]:
+                print("no link fields")
+                return 0
+            for r in p["fields"]:
+                inv = f"  (inverse: {r['inverse']})" if r["inverse"] else ""
+                print(f"{r['links']:4d}  {r['field']}  "
+                      f"{r['resolved']} resolved in {r['notes']} notes{inv}")
+            return 0
+        if "links" in p:
+            if not p["links"]:
+                print(f"no links under field {p['field']!r}")
+                return 0
+            for e in p["links"]:
+                print(line(e, "->", e["dst"] or "?", e["src"]))
+            return 0
+        if not p["out"] and not p["in"]:
+            print("no field links")
+            return 0
+        for e in p["out"]:
+            print(line(e, "->", e["dst"] or "?", e["field"]))
+        for e in p["in"]:
+            print(line(e, "<-", e["src"], e["inverse"] or e["field"]))
+        return 0
+    return emit(args, payload, render)
+
+
+# ---------- related notes: personalized PageRank ----------
+RELATED_DAMPING = 0.85
+RELATED_MAX_ITER = 100
+RELATED_TOLERANCE = 1e-10
+
+
+def _note_graph(con: sqlite3.Connection, include_inferred: bool = False,
+                keep: str | None = None) -> dict[str, dict[str, float]]:
+    """Undirected weighted note graph over resolved edges, hubs removed. Two
+    notes joined by several links (a wikilink and an embed, or links both
+    ways) weigh more than a pair joined once. `keep` names one note that
+    stays in even if it is a hub."""
+    hubs = _hub_notes(con) - {keep}
+    graph: dict[str, dict[str, float]] = {}
+    for a, others in sorted(_adjacency(con, include_inferred).items()):
+        if a in hubs:
+            continue
+        for b, _ in sorted(others):
+            if b in hubs or b == a:
+                continue
+            graph.setdefault(a, {})
+            graph[a][b] = graph[a].get(b, 0.0) + 1.0
+    return graph
+
+
+def related(vault: Path, name: str, limit: int = 10,
+            include_inferred: bool = False) -> dict:
+    """Notes ranked by personalized PageRank from one seed note.
+
+    A walker starts on the seed and follows links at random; at every step it
+    returns to the seed with probability 1 - damping. A note's score is the
+    share of time the walker spends on it, so a note scores high when many
+    short, independent link paths lead to it from the seed - which a
+    neighbor list cannot show, because it ranks every two-hop note the same.
+
+    The score measures position in the link graph, not similarity of
+    content: it only knows what the corpus links. Hub notes are left out for
+    the reason `neighbors` never walks through one. Fixed damping, no
+    randomness, sorted iteration: the same graph always returns the same
+    ranking."""
+    con = open_fresh(vault)
+    nid = resolve_note_arg(con, name)
+    graph = _note_graph(con, include_inferred, keep=nid)
+    con.close()
+    if not graph.get(nid):
+        return {"note": nid, "status": "NO_LINKS", "related": [],
+                "nodes": 1, "iterations": 0, "damping": RELATED_DAMPING}
+    hops = {nid: 0}
+    frontier = [nid]
+    while frontier:
+        nxt = []
+        for node in frontier:
+            for other in graph[node]:
+                if other not in hops:
+                    hops[other] = hops[node] + 1
+                    nxt.append(other)
+        frontier = nxt
+    nodes = sorted(hops)
+    out_weight = {n: sum(graph[n].values()) for n in nodes}
+    score = {n: 0.0 for n in nodes}
+    score[nid] = 1.0
+    iterations = 0
+    for iterations in range(1, RELATED_MAX_ITER + 1):
+        nxt_score = {n: 0.0 for n in nodes}
+        for n in nodes:
+            if not score[n]:
+                continue
+            share = RELATED_DAMPING * score[n] / out_weight[n]
+            for other, w in graph[n].items():
+                nxt_score[other] += share * w
+        nxt_score[nid] += 1.0 - RELATED_DAMPING
+        delta = sum(abs(nxt_score[n] - score[n]) for n in nodes)
+        score = nxt_score
+        if delta < RELATED_TOLERANCE:
+            break
+    ranked = sorted(((round(score[n], 6), n) for n in nodes if n != nid),
+                    key=lambda r: (-r[0], r[1]))
+    shown = ranked if limit < 0 else ranked[:limit]
+    return {
+        "note": nid, "damping": RELATED_DAMPING, "iterations": iterations,
+        "nodes": len(nodes),
+        "status": ("COMPLETE" if len(shown) == len(ranked)
+                   else f"TRUNCATED {len(shown)} of {len(ranked)}"),
+        "related": [{"id": n, "score": s, "hops": hops[n]}
+                    for s, n in shown]}
+
+
+def cmd_related(args: argparse.Namespace) -> int:
+    payload = related(vault_dir(args.vault), args.note, args.limit,
+                      include_inferred=args.include_inferred)
+
+    def render(p):
+        if p["status"] == "NO_LINKS":
+            print(f"{p['note']} has no resolved links to rank from")
+            return 0
+        print(f"Ranked by link-graph proximity to {p['note']}, not by"
+              " content: read a note before treating it as relevant.")
+        for r in p["related"]:
+            print(f"  {r['score']:.4f}  {r['hops']} hop"
+                  f"{'' if r['hops'] == 1 else 's'}  {r['id']}")
+        if p["status"] != "COMPLETE":
+            print(p["status"])
+        return 0
+    return emit(args, payload, render)
+
+
+# ---------- communities ----------
+def _greedy_modularity(adj: dict, deg: dict, m: float) -> dict[str, int]:
+    """Clauset-Newman-Moore: every node starts alone, then the connected
+    pair with the largest modularity gain is merged, until no merge improves
+    the partition. Deterministic without tie-breaking tricks, and it
+    optimizes a stated objective, so the modularity reported beside the
+    groups means something. Only connected pairs merge, so a group is never
+    two unlinked islands. The same algorithm code-kg clusters files with.
+
+    Inter-community weight is a neighbor map per community, so a merge
+    touches the absorbed community's neighbors and nothing else; scanning
+    one table of every link on every merge would take minutes on a large
+    vault. A test holds this version to the table-scanning one on random
+    graphs."""
+    if m <= 0:
+        return {}
+    ids = {n: i for i, n in enumerate(sorted(adj))}
+    members = {i: {n} for n, i in ids.items()}
+    tot = {ids[n]: deg[n] for n in adj}
+    nbr: dict[int, dict[int, float]] = {i: {} for i in members}
+    for a, nbrs in adj.items():
+        for b, w in nbrs.items():
+            if a != b:
+                nbr[ids[a]][ids[b]] = w
+
+    def gain(ca: int, cb: int) -> float:
+        return (nbr[ca].get(cb, 0.0) / m
+                - (tot[ca] * tot[cb]) / (2.0 * m * m))
+
+    heap = [(-gain(a, b), a, b) for a in nbr for b in nbr[a] if a < b]
+    heapq.heapify(heap)
+    # The heap never holds the same entry twice. Every merge queues an entry
+    # per neighbor, and without this a note that links to n others piles up
+    # n copies of each, all popped and re-queued one by one: cubic work on a
+    # plain star, which is an index note without the hub profile.
+    queued = set(heap)
+
+    def queue(entry: tuple) -> None:
+        if entry not in queued:
+            queued.add(entry)
+            heapq.heappush(heap, entry)
+
+    while heap:
+        entry = heapq.heappop(heap)
+        queued.discard(entry)
+        negdq, ca, cb = entry
+        if ca not in members or cb not in members:
+            continue
+        if cb not in nbr[ca]:
+            continue
+        fresh = gain(ca, cb)
+        if abs(fresh - (-negdq)) > 1e-12:
+            # A stale entry: an earlier merge changed this pair's gain.
+            queue((-fresh, ca, cb))
+            continue
+        if fresh <= 1e-12:
+            break
+        keep, drop = (ca, cb) if ca < cb else (cb, ca)
+        # The smaller set is poured into the larger, whichever id survives.
+        big, small = members.pop(keep), members.pop(drop)
+        if len(big) < len(small):
+            big, small = small, big
+        big |= small
+        members[keep] = big
+        tot[keep] += tot.pop(drop)
+        for other, w in nbr.pop(drop).items():
+            del nbr[other][drop]
+            if other != keep:
+                nbr[keep][other] = nbr[keep].get(other, 0.0) + w
+                nbr[other][keep] = nbr[keep][other]
+        for other in nbr[keep]:
+            queue((-gain(keep, other), keep, other))
+    owner = {n: cid for cid, group in members.items() for n in group}
+    return {n: owner[n] for n in sorted(adj)}
+
+
+def communities(vault: Path, include_inferred: bool = False) -> dict:
+    """Clusters of notes that link to each other far more than to the rest
+    of the vault. Read `modularity` first: above about 0.3 the groups are
+    real structure, near zero the vault has none and the split is
+    arbitrary. Hub notes are left out, since an index links everything to
+    everything; a note with no resolved link cannot be placed and is listed
+    under `unplaced`."""
+    con = open_fresh(vault)
+    adj = _note_graph(con, include_inferred)
+    hubs = sorted(_hub_notes(con))
+    all_notes = [r[0] for r in con.execute("SELECT id FROM notes ORDER BY id")]
+    con.close()
+    deg = {n: sum(w.values()) for n, w in adj.items()}
+    m = sum(deg.values()) / 2.0
+    comm = _greedy_modularity(adj, deg, m)
+    groups: dict[int, list[str]] = {}
+    for node, cid in comm.items():
+        groups.setdefault(cid, []).append(node)
+    kept = [sorted(g) for g in groups.values() if len(g) > 1]
+
+    def label(notes: list[str]) -> str:
+        inside = set(notes)
+        return min(notes, key=lambda n: (-sum(
+            w for b, w in adj[n].items() if b in inside), n))
+
+    kept.sort(key=lambda g: (-len(g), label(g), g))
+    placed = {n for g in kept for n in g}
+    out, q = [], 0.0
+    for idx, notes in enumerate(kept):
+        inside = set(notes)
+        internal = sum(w for a in notes for b, w in adj[a].items()
+                       if b in inside) / 2.0
+        external = sum(w for a in notes for b, w in adj[a].items()
+                       if b not in inside)
+        out.append({"id": idx, "label": label(notes), "size": len(notes),
+                    "notes": notes, "internal_edges": int(internal),
+                    "external_edges": int(external)})
+    for notes in kept + [[n] for n in sorted(adj) if n not in placed]:
+        inside = set(notes)
+        in_w = sum(w for a in notes for b, w in adj[a].items()
+                   if b in inside) / 2.0
+        q += in_w / m - (sum(deg[a] for a in notes) / (2.0 * m)) ** 2
+    return {"communities": out, "modularity": round(q, 4), "hubs": hubs,
+            "unplaced": [n for n in all_notes
+                         if n not in placed and n not in hubs],
+            "edge_weight": int(m)}
+
+
+def cmd_communities(args: argparse.Namespace) -> int:
+    payload = communities(vault_dir(args.vault),
+                          include_inferred=args.include_inferred)
+
+    def render(p):
+        lim = None if args.limit < 0 else args.limit
+        q = p["modularity"]
+        verdict = ("real structure" if q >= 0.3 else
+                   "weak - read these groups as a hint, not a map")
+        print(f"Note clusters inferred from the link graph."
+              f"  modularity {q} ({verdict})")
+        for c in p["communities"]:
+            print(f"\naround {c['label']}  ({c['size']} notes,"
+                  f" {c['internal_edges']} internal /"
+                  f" {c['external_edges']} external links)")
+            for n in c["notes"][:lim]:
+                print(f"  {n}")
+            if lim is not None and c["size"] > lim:
+                print(f"  TRUNCATED: {c['size'] - lim} more")
+        for title, key in (("hubs, left out", "hubs"),
+                           ("unplaced: no resolved link to cluster on",
+                            "unplaced")):
+            if p[key]:
+                print(f"\n{title} ({len(p[key])}):")
+                for n in p[key][:lim]:
+                    print(f"  {n}")
+                if lim is not None and len(p[key]) > lim:
+                    print(f"  TRUNCATED: {len(p[key]) - lim} more")
+        return 0
+    return emit(args, payload, render)
+
+
+# ---------- config check ----------
+def config_report(vault: Path) -> dict:
+    """What each config row matched, from the current graph. Reads and
+    reports only. A row that matches nothing is a warning and never an
+    error: the registry is allowed to be ahead of the corpus."""
+    cfg_file = config_path(vault)
+    cfg = load_config(vault)        # exits loudly on a malformed file
+    con = open_fresh(vault)
+    notes = con.execute("SELECT id, path, profile FROM notes"
+                        " ORDER BY id").fetchall()
+    kg_types = {nid: str(v).strip().lower() for nid, v in con.execute(
+        "SELECT note_id, value FROM properties WHERE key='kg-type'")}
+    ignored = con.execute("SELECT path, rule FROM ignored").fetchall()
+    mention_counts = dict(con.execute(
+        "SELECT canonical, count(*) FROM mentions GROUP BY canonical"))
+    derived = con.execute(
+        "SELECT canonical, note FROM entities WHERE origin='note'"
+        " ORDER BY canonical").fetchall()
+    skips = con.execute("SELECT note_id, name, reason FROM entity_skips"
+                        " ORDER BY note_id, name").fetchall()
+    marker_counts = dict(con.execute(
+        "SELECT marker, count(*) FROM annotations GROUP BY marker"))
+    field_counts = dict(con.execute(
+        "SELECT field, count(*) FROM link_fields GROUP BY field"))
+    con.close()
+    warnings: list[str] = []
+
+    ignore_rows = []
+    for row in cfg.get("ignore", []):
+        pat = str(row.get("path", "")) if isinstance(row, dict) else ""
+        base = f"config ignore {pat}"
+        n = sum(1 for _, rule in ignored
+                if rule == base or rule.startswith(base + " ("))
+        ignore_rows.append({"path": pat, "matched": n})
+        if not n:
+            warnings.append(f"ignore row matched nothing: {pat}")
+
+    profile_rows = []
+    for row in cfg.get("profiles", []):
+        if not isinstance(row, dict):
+            continue
+        pat = str(row.get("path", ""))
+        ktype = str(row.get("kg_type", "")).strip().lower()
+        if pat:
+            n = sum(1 for _, path_, _ in notes if glob_match(path_, pat))
+        else:
+            n = sum(1 for nid, _, _ in notes if kg_types.get(nid) == ktype)
+        label = pat or f"kg_type {ktype}"
+        profile = str(row.get("profile", "reference"))
+        profile_rows.append({"match": label, "profile": profile,
+                             "matched": n})
+        if not n:
+            warnings.append(f"profiles row matched nothing: {label}")
+        if profile not in PROFILES:
+            warnings.append(f"profiles row names an unknown profile:"
+                            f" {profile!r} ({label})")
+
+    entity_rows = []
+    for row in cfg.get("entities", []):
+        if not isinstance(row, dict):
+            continue
+        canonical = str(row.get("canonical", "")).strip()
+        if not canonical:
+            continue
+        n = mention_counts.get(canonical, 0)
+        entity_rows.append({"canonical": canonical, "sections": n})
+        if not n:
+            warnings.append(f"entity is never mentioned: {canonical}")
+
+    source_rows = []
+    sources = cfg.get("entity_sources", [])
+    owner = {nid: entity_source_for(path_, {"kg-type": kg_types.get(nid, "")},
+                                    cfg) for nid, path_, _ in notes}
+    derived_notes = {note for _, note in derived}
+    for row in sources:
+        label = (str(row.get("path", "")).strip()
+                 or f"kg_type {str(row.get('kg_type', '')).strip().lower()}")
+        matched = [nid for nid, src in owner.items() if src is row]
+        source_rows.append({
+            "match": label, "type": str(row.get("type", "")),
+            "matched": len(matched),
+            "derived": sum(1 for nid in matched if nid in derived_notes)})
+        if not matched:
+            warnings.append(f"entity_sources row matched nothing: {label}")
+    if skips:
+        warnings.append(f"{len(skips)} derived entity names were left out"
+                        " (see skipped)")
+
+    relation_rows = []
+    declared = set()
+    for row in cfg.get("relations", []):
+        field = str(row.get("field", ""))
+        declared.add(field)
+        n = field_counts.get(field, 0)
+        relation_rows.append({"field": field,
+                              "inverse": str(row.get("inverse", "")),
+                              "links": n})
+        if not n:
+            warnings.append(f"relations field is never used: {field}")
+
+    core = set(CORE_MARKERS)
+    mode, mode_source = link_mode(vault, cfg)
+    return {
+        "path": cfg_file.relative_to(vault).as_posix(),
+        "exists": cfg_file.exists(),
+        "status": "WARNINGS" if warnings else "OK", "warnings": warnings,
+        "link_resolution": {"mode": mode, "source": mode_source},
+        "ignore": ignore_rows, "profiles": profile_rows,
+        "entities": entity_rows, "entity_sources": source_rows,
+        "derived_entities": len(derived),
+        "skipped": [{"note": n, "name": name, "reason": why}
+                    for n, name, why in skips],
+        "markers": [{"marker": str(r.get("marker", "")),
+                     "count": marker_counts.get(str(r.get("marker", "")), 0)}
+                    for r in cfg.get("markers", []) if isinstance(r, dict)
+                    and str(r.get("marker", "")) not in core],
+        "relations": relation_rows,
+        "undeclared_fields": [
+            {"field": f, "links": n} for f, n in
+            sorted(field_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            if f not in declared]}
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    payload = config_report(vault_dir(args.vault))
+
+    def render(p):
+        state = "" if p["exists"] else " (not created; defaults in use)"
+        print(f"{p['path']}{state}: {p['status']}")
+        for w in p["warnings"]:
+            print(f"  warning: {w}")
+        print(f"  markdown links: {p['link_resolution']['mode']}"
+              f" ({p['link_resolution']['source']})")
+        for r in p["ignore"]:
+            print(f"  ignore {r['path']}: {r['matched']} files")
+        for r in p["profiles"]:
+            print(f"  profile {r['profile']} on {r['match']}:"
+                  f" {r['matched']} notes")
+        for r in p["entities"]:
+            print(f"  entity {r['canonical']}: {r['sections']} sections")
+        for r in p["entity_sources"]:
+            print(f"  entity source {r['match']}: {r['matched']} notes,"
+                  f" {r['derived']} entities")
+        for r in p["skipped"][:20]:
+            print(f"  skipped {r['name']!r} from {r['note']}: {r['reason']}")
+        if len(p["skipped"]) > 20:
+            print(f"  TRUNCATED: {len(p['skipped']) - 20} more skipped names"
+                  " (--json lists all)")
+        for r in p["markers"]:
+            print(f"  marker {r['marker']}: {r['count']} annotations")
+        for r in p["relations"]:
+            inv = f" (inverse: {r['inverse']})" if r["inverse"] else ""
+            print(f"  relation {r['field']}{inv}: {r['links']} links")
+        if p["undeclared_fields"]:
+            print("  link fields with no relations row: " + ", ".join(
+                f"{r['field']} ({r['links']})"
+                for r in p["undeclared_fields"][:20]))
+        return 0
+    return emit(args, payload, render)
+
+
+def _tag_hit(tag: str, want: str, nested: bool) -> bool:
+    tag = tag.lower()
+    return tag == want or (nested and tag.startswith(want + "/"))
+
+
+def tags_report(con: sqlite3.Connection, tag: str | None, inline: bool,
+                nested: bool):
+    """`tags --inline` and `tags --nested`: frontmatter tags joined with the
+    `#tags` written in body text, and a parent tag matching its children."""
+    front = con.execute("SELECT note_id, tag FROM tags").fetchall()
+    body = (con.execute("SELECT DISTINCT note_id, tag FROM inline_tags")
+            .fetchall() if inline else [])
+    if tag:
+        want = tag.lstrip("#").strip("/").lower()
+        return sorted({nid for nid, t in front + body
+                       if _tag_hit(t, want, nested)})
+    notes: dict[str, tuple[set, set]] = {}
+    for rows, slot in ((front, 0), (body, 1)):
+        for nid, t in rows:
+            notes.setdefault(t.lower(), (set(), set()))[slot].add(nid)
+    return [{"tag": t, "count": len(f | b), "frontmatter": len(f),
+             "inline": len(b)}
+            for t, (f, b) in sorted(notes.items(),
+                                    key=lambda kv: (-len(kv[1][0] | kv[1][1]),
+                                                    kv[0]))]
+
+
 def cmd_tags(args: argparse.Namespace) -> int:
     vault = vault_dir(args.vault)
     con = open_fresh(vault)
+    inline = getattr(args, "inline", False)
+    nested = getattr(args, "nested", False)
+    if inline or (nested and args.tag):
+        got = tags_report(con, args.tag, inline, nested)
+        con.close()
+        if args.tag:
+            if args.json:
+                print(json.dumps(got, indent=2))
+                return 0 if got else 1
+            if not got:
+                print(f"no notes tagged {args.tag!r}")
+                return 1
+            for nid in got:
+                print(nid)
+            return 0
+
+        def render_counts(rows_):
+            if not rows_:
+                print("no tags")
+                return 0
+            for r in rows_:
+                print(f"{r['count']:4d}  {r['tag']}  "
+                      f"({r['frontmatter']} frontmatter, {r['inline']} inline)")
+            return 0
+        return emit(args, got, render_counts)
     if args.tag:
         rows = [r[0] for r in con.execute(
             "SELECT note_id FROM tags WHERE lower(tag) = lower(?)"
@@ -4364,6 +5671,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("note")
     p.add_argument("--include-inferred", action="store_true",
                    help=inferred_help)
+    p.add_argument("--anchors", action="store_true",
+                   help="inbound links that name a heading or block here,"
+                        " with the section each one points at")
 
     p = add("links", cmd_links, "outbound edges")
     p.add_argument("note", nargs="?", default=None)
@@ -4371,6 +5681,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="only broken and ambiguous links (vault-wide if no note)")
     p.add_argument("--include-inferred", action="store_true",
                    help=inferred_help)
+    p.add_argument("--anchors", action="store_true",
+                   help="links that name a heading or block, with the section"
+                        " each resolved to; with --unresolved, the anchors"
+                        " whose heading or block does not exist")
 
     p = add("neighbors", cmd_neighbors, "BFS neighborhood of a note")
     p.add_argument("note")
@@ -4410,6 +5724,34 @@ def main(argv: list[str] | None = None) -> int:
 
     p = add("tags", cmd_tags, "tag counts, or notes bearing a tag")
     p.add_argument("tag", nargs="?", default=None)
+    p.add_argument("--inline", action="store_true",
+                   help="also count `#tags` written in body text")
+    p.add_argument("--nested", action="store_true",
+                   help="with a tag: also match its children (tag/child)")
+
+    p = add("fields", cmd_fields,
+            "links by the frontmatter key or inline field they sit under")
+    p.add_argument("--field", default=None, metavar="NAME",
+                   help="every link under one field")
+    p.add_argument("--note", default=None, metavar="name-or-path",
+                   help="one note's field links, outbound and inbound")
+
+    p = add("related", cmd_related,
+            "notes ranked by link-graph proximity to one note")
+    p.add_argument("note")
+    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--include-inferred", action="store_true",
+                   help=inferred_help)
+
+    p = add("communities", cmd_communities,
+            "clusters of notes that link mostly to each other")
+    p.add_argument("--limit", type=int, default=25,
+                   help="max notes listed per group; --json is never"
+                        " truncated")
+    p.add_argument("--include-inferred", action="store_true",
+                   help=inferred_help)
+
+    add("config", cmd_config, "what each config row matched; writes nothing")
 
     p = add("entity", cmd_entity, "a registered entity and its mentions")
     p.add_argument("name")
@@ -4457,7 +5799,22 @@ def main(argv: list[str] | None = None) -> int:
     add("stats", cmd_stats, "counts, orphans, unresolved/ambiguous")
 
     args = ap.parse_args(argv)
-    return args.fn(args)
+    out, err = sys.stdout, sys.stderr
+    # stderr is always read by a person. stdout is too, unless json was
+    # asked for: that output is for a parser, and json.dumps escapes control
+    # characters itself.
+    sys.stderr = _SafeStream(err)
+    if not getattr(args, "json", False):
+        sys.stdout = _SafeStream(out)
+    try:
+        return args.fn(args)
+    except SystemExit as e:
+        if isinstance(e.code, str):
+            # The interpreter prints this after the streams are restored.
+            raise SystemExit(_term_safe(e.code)) from None
+        raise
+    finally:
+        sys.stdout, sys.stderr = out, err
 
 
 if __name__ == "__main__":

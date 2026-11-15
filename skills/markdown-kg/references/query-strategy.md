@@ -47,10 +47,26 @@ discusses the conjunction. An `any-term` hit means it does not: the results
 share vocabulary with the question, and a conclusion built on them needs the
 sections actually read first.
 
+## Graph questions have their own instruments
+
+| question | instrument |
+|---|---|
+| what is this note connected to | `neighbors`, one or two hops |
+| which connected notes matter most | `related`: it separates a note reached by several short link paths from one reached by a single path, which a hop count cannot |
+| what areas does this vault have | `communities`, with its modularity score read before its groups |
+| how are these two notes typed against each other | `fields --note`, when the vault writes links under frontmatter keys or inline fields |
+| which links point at a heading that no longer exists | `links --unresolved --anchors` |
+
+`related` and `communities` know only what the corpus links. Two notes on the
+same subject with no link path between them score nothing, so a miss there
+reflects the links and says nothing about content; follow it with `search`.
+
 ## After editing config, verify the ingest matched intent
 
-A profile glob that misses writes no error; the note quietly takes the default
-profile. After any profile or ignore change:
+A profile glob that misses writes no error, and the note takes the default
+profile. Run `config` first: it reports what every row matched and warns on a
+row that matched nothing. For a profile or ignore change, follow it with these
+checks:
 
 1. Re-ingest and compare `stats` counts (notes, sections, ignored) against
    what the edit should have changed.

@@ -37,11 +37,21 @@ never happens.
 Serialization is deterministic: fixed key order, entities sorted by canonical,
 so adding one entity is a one-line diff. Omitted keys take their defaults.
 
-One optional scalar sits beside the three arrays:
+Two optional scalars sit beside the arrays:
 
 | key | meaning |
 |---|---|
 | `recency_k` | weight of recency in `search` scores, default `0.5`. Recency enters additively as `k * tier` (tier: newest dated entry of a note 1.0, oldest 1/N), so it reorders hits within `k` of each other on relevance and never buries a strong old match under a weak new one. `0` disables it. `search --recency-k` overrides it for one call. Written back only when set |
+| `link_resolution` | `obsidian` or `relative`: how a markdown link that misses its relative path is read. When it is unset, the engine detects the mode: a vault with an `.obsidian/` folder is `obsidian`, any other tree is `relative`. See [Markdown links](#markdown-links) |
+
+Three more arrays are optional, and an absent one is empty: `markers`, `entity_sources` and `relations`.
+A config written before they existed loads exactly as it did.
+
+## Checking an edit
+
+`config <vault>` reports what each row matched: files per `ignore` row, notes per `profiles` row, sections per entity, notes and derived entities per `entity_sources` row, links per `relations` field, and annotations per custom marker.
+A row that matched nothing is a warning, never an error, because the config is allowed to be ahead of the corpus.
+The command writes nothing, and it exits nonzero only when the file itself is malformed.
 
 ## ignore
 
@@ -177,3 +187,66 @@ and tag vocabularies are usually thin.
 
 After that, add an entity when a retrieval actually failed without it. Do not
 work through a proposed list.
+
+## entity_sources
+
+An `entity_sources` row derives entities from notes that already have a page each, which is the shape of an LLM-wiki vault (`entities/`, `concepts/`) and of any vault that types its notes with `kg-type`.
+One row covers a whole folder, so the registry tracks the vault's pages without a hand-written row per page.
+
+```json
+"entity_sources": [
+  {"path": "entities/*.md", "type": "equipment"},
+  {"kg_type": "concept", "type": "concept", "time": "evolving"}
+]
+```
+
+| key | meaning |
+|---|---|
+| `path` | glob, same syntax as `ignore`. A row takes `path` or `kg_type`, exactly one |
+| `kg_type` | matches notes whose frontmatter `kg-type:` equals this value (case-insensitive) |
+| `type` | copied to each derived entity's `type` |
+| `time` | `static` (default) or `evolving`. A span belongs in a hand-written `entities` row |
+
+For each matching note the title is the canonical name, the file name and the frontmatter `aliases` become aliases, and `note` is the note itself.
+A note resolves to one row the way profiles do: the longest matching `path` glob, then a `kg_type` row.
+
+A hand-written `entities` row always wins.
+A derived name is left out, and recorded, when a hand-written row already names the note, when another entity already claims the name, or when the name is shorter than three characters.
+Derivation can never fail an ingest, because note content must never be able to fail one; `config` lists every name that was left out and why.
+
+Point a row at pages that are curated, such as an entities folder.
+A glob over a whole vault turns every note title into a gazetteer entry, which is the batch-curated registry the Seeding section warns against.
+It also costs ingest time: each entity name is one pass over every section, measured at about 16 ms per megabyte of vault text per name, so 3,000 names over a 5 MB vault add about four minutes to an ingest.
+
+## relations
+
+A link written under a name is a typed relation, and the engine records that name with no config at all.
+The name is either a frontmatter key (`up: "[[Parent]]"`, a list of links, or a markdown link) or an inline field (`up:: [[Parent]]` on its own line or list item, `[up:: [[Parent]]]` or `(up:: [[Parent]])` mid-sentence).
+`fields` lists them. `tags`, `aliases` and `cssclasses` are never fields, and neither is anything in code or in a comment.
+
+A `relations` row adds the name of the relation read backwards, which is the one thing the corpus cannot state:
+
+```json
+"relations": [
+  {"field": "up", "inverse": "down"},
+  {"field": "maintained-by", "inverse": "maintains"}
+]
+```
+
+| key | meaning |
+|---|---|
+| `field` | the field name, normalized: lowercase, spaces as hyphens. Required |
+| `inverse` | the label `fields --note` shows on an inbound link under this field |
+
+`config` warns on a declared field no note uses, and lists the fields in use that have no row.
+
+## Markdown links
+
+Standard markdown links resolve relative to the file that wrote them, or from the vault root with a leading `/`.
+A target with no extension resolves when that path names a note.
+Reference-style links (`[text][label]` with a `[label]: target` definition) resolve the same way.
+
+In `obsidian` mode, a link that misses its relative path and was not written as an explicit `./`, `../` or `/` path is read the way Obsidian writes markdown links.
+The engine matches it by file name anywhere in the vault (the "shortest path" link format) or by path from the vault root (the "absolute path in vault" format).
+When two notes have that name, the link is `ambiguous` and the engine does not guess between them.
+In `relative` mode such a link stays `unresolved`, because a renderer that reads link paths relative to the file does not follow it.

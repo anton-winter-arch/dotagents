@@ -49,6 +49,9 @@ machine-readable.
 | `coverage <repo> report` | per-file %, symbols no test ever executed |
 | `stats <repo>` | counts, edge statuses, parse errors, agent-layer topology |
 | `index <repo> --out PATH` | rendered repo map (marked auto-generated) |
+| `components <repo> [NAME]` | declared components: members, edges that cross between them, unassigned files |
+| `annotations <repo> [--marker M] [--path GLOB]` | comment markers (TODO, FIXME, HACK, XXX, NOTE, BUG, custom) with line and enclosing symbol |
+| `config <repo>` | what each config row matched; warns on a row that matched nothing |
 
 `init` ends with a health readout: detected profile, aliases loaded (and
 from where), entry-point count with a warning at zero, parse errors with
@@ -75,6 +78,22 @@ package.json `imports` (`#`-prefixed). Bare specifiers probe `baseUrl`
 before classifying external. For everything else (Vite/webpack/Deno), the
 config key `"aliases": {"@/*": "src/*"}` merges last and wins. Alias-load
 failures are printed at init and recorded - never silent.
+
+## Extending a repo
+
+Three optional config keys let a repo state what the parsers cannot see.
+Edit `.code-kg/config.json`, then run `config <repo>` to see what each row
+matched.
+
+- `components` names groups of files by glob. The `components` command
+  reports each group's members and the executable edges that cross between
+  groups. `communities` infers subsystems from the graph, while components
+  use the repo's own names.
+- `links` declares edges for wiring with no import behind it, such as plugin
+  registries, schedulers and reflection. A row is a weak reference (kind
+  `declared`) unless it says `"live": true` (kind `declared-live`), so a
+  declaration changes `dead` tiers only when the row asks for it.
+- `markers` registers extra comment markers for `annotations`.
 
 ## Agent-tooling layer
 

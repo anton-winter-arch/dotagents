@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.9"
 # dependencies = []
 # ///
 """code_kg.py - turn any codebase into a queryable SQLite knowledge graph.
 
-Stdlib only, Python 3.10+. Storage is `<repo>/.code-kg/code-kg.db` (SQLite +
+Stdlib only, Python 3.9+. Storage is `<repo>/.code-kg/code-kg.db` (SQLite +
 FTS5) beside `<repo>/.code-kg/config.json`. The repo directory is always a CLI
 argument: nothing here is tied to any particular repo, machine, or agent, and
 nothing here ever sends repo text anywhere - the whole engine is offline. The
@@ -48,6 +48,9 @@ Commands:
   coverage <repo> report                 covered/uncovered files and symbols
   stats <repo>                           counts, unresolved, entry points
   index <repo> [--out PATH]              render a repo map from the graph
+  components <repo> [name]               declared components and their edges
+  annotations <repo> [--marker M]        comment markers: TODO, FIXME, custom
+  config <repo>                          what each config row matched
 """
 from __future__ import annotations
 
@@ -55,6 +58,7 @@ import argparse
 import ast
 import hashlib
 import heapq
+import itertools
 import json
 import os
 import posixpath
@@ -68,6 +72,10 @@ from pathlib import Path
 KG_DIR = ".code-kg"
 DB_NAME = "code-kg.db"
 CONFIG_NAME = "config.json"
+# Bump when a parser or schema change must re-index a repo whose files have
+# not changed. The manifest folds it in, so the next read command re-ingests
+# once instead of answering from tables the old engine never filled.
+INDEX_REV = 1
 
 # Folders that are never source: build output, package caches, third-party deps.
 SKIP_FOLDERS = {
@@ -129,12 +137,39 @@ PATHY_EXTS = (
 # textual references and count only as weak evidence of use.
 LIVE_KINDS = {"import", "import-type", "from-import", "from-import-sub",
               "pkg-init", "require", "dynamic-import", "reexport", "source",
-              "exec", "module", "uses", "script", "include"}
+              "exec", "module", "uses", "script", "include", "declared-live"}
 # `copy` is weak on purpose: a Docker COPY or compose mount makes a file
 # PRESENT, not EXECUTED - dead code ships in images all the time.
 # `string-ref` is a dotted-path string literal (settings wiring, model
 # refs) - real framework wiring, but not an import.
-WEAK_KINDS = {"path-ref", "link", "copy", "string-ref"}
+# `declared` and `declared-live` come from the config `links` array: wiring
+# the repo states and no parser can see. A row joins liveness only when it
+# says `"live": true`, so a declaration never changes `dead` by default.
+WEAK_KINDS = {"path-ref", "link", "copy", "string-ref", "declared"}
+DECLARED_CAP = 2000     # edges one config `links` row may expand to
+
+# Comment markers: an uppercase token straight after a comment leader. The
+# core set means the same thing in every repo; config `markers` adds words.
+CORE_MARKERS = ("TODO", "FIXME", "HACK", "XXX", "NOTE", "BUG")
+MARKER_TOKEN_RE = re.compile(r"[A-Z][A-Z0-9-]{1,31}")
+ANNOTATION_CAP = 20000  # rows per ingest; the overflow count goes in meta
+ANNOTATION_LINE_MAX = 2000
+COMMENT_LEADERS = {
+    "python": ("#",), "bash": ("#",), "yaml": ("#",), "toml": ("#",),
+    "make": ("#",), "dockerfile": ("#",), "powershell": ("#",),
+    "terraform": ("#", "//"),
+    "javascript": ("//", "/*", "*"), "typescript": ("//", "/*", "*"),
+    "go": ("//", "/*", "*"), "rust": ("//", "/*", "*"),
+    "c": ("//", "/*", "*"), "java": ("//", "/*", "*"),
+    "csharp": ("//", "/*", "*"), "css": ("//", "/*", "*"),
+    "sql": ("--", "/*", "*"), "html": ("<!--",), "markdown": ("<!--",),
+}
+# Engine-authored fragments, one per leader. A leader opens a comment at the
+# start of a line or after whitespace, so `http://` and `a--b` never match.
+LEADER_RES = {
+    "#": r"(?:^|\s)#+!?\s*", "//": r"(?:^|\s)//+!?\s*", "/*": r"/\*+!?\s*",
+    "*": r"^\s*\*\s*", "--": r"(?:^|\s)--+\s*", "<!--": r"<!--+\s*",
+}
 
 # Convention-wired frameworks route by filesystem convention and settings
 # strings, so their roots have no inbound import edges - reachability from
@@ -214,6 +249,38 @@ STOPWORDS = {
 
 WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_'-]*")
 
+
+def _stdlib_names() -> frozenset[str]:
+    """Top-level standard-library module names. `sys.stdlib_module_names`
+    arrived in 3.10 and the stock macOS python3 is 3.9, where the same set is
+    read from the interpreter's own library folders."""
+    names = getattr(sys, "stdlib_module_names", None)
+    if names is not None:
+        return frozenset(names)
+    import sysconfig
+    found = set(sys.builtin_module_names)
+    paths = sysconfig.get_paths()
+    folders = [paths.get("stdlib"), paths.get("platstdlib")]
+    folders += [os.path.join(f, "lib-dynload") for f in folders if f]
+    for folder in {f for f in folders if f and os.path.isdir(f)}:
+        for entry in os.scandir(folder):
+            stem = entry.name.split(".", 1)[0]
+            # Test modules and per-install hooks are not in the 3.10+ list.
+            if (not stem.isidentifier() or stem.startswith("xx") or stem in
+                    ("test", "__pycache__", "sitecustomize", "usercustomize")):
+                continue
+            if entry.is_dir():
+                # A package, never an install folder: site-packages and
+                # lib-dynload are not identifiers and fell out above.
+                if os.path.isfile(os.path.join(entry.path, "__init__.py")):
+                    found.add(stem)
+            elif entry.name.endswith((".py", ".so", ".pyd")):
+                found.add(stem)
+    return frozenset(found)
+
+
+STDLIB_NAMES = _stdlib_names()
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files(
   id           TEXT PRIMARY KEY,       -- repo-relative posix path
@@ -269,6 +336,20 @@ CREATE TABLE IF NOT EXISTS runs(       -- event log: never wiped by ingest
 CREATE TABLE IF NOT EXISTS ignored(
   path TEXT PRIMARY KEY,
   rule TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS components( -- config `components`: named file groups
+  name    TEXT NOT NULL,
+  file_id TEXT NOT NULL,
+  PRIMARY KEY (name, file_id)
+);
+CREATE TABLE IF NOT EXISTS annotations( -- comment markers: TODO, FIXME, ...
+  file_id   TEXT NOT NULL,
+  line      INTEGER NOT NULL,           -- 1-indexed
+  marker    TEXT NOT NULL,
+  owner     TEXT NOT NULL DEFAULT '',   -- the `name` in `TODO(name):`
+  payload   TEXT NOT NULL DEFAULT '',
+  symbol_id TEXT NOT NULL DEFAULT '',   -- innermost symbol holding the line
+  PRIMARY KEY (file_id, line, marker)
 );
 CREATE TABLE IF NOT EXISTS meta(
   key   TEXT PRIMARY KEY,
@@ -332,10 +413,98 @@ def emit(args: argparse.Namespace, payload, render) -> int:
     return render(payload)
 
 
+# What prose output never passes through as-is, as codepoint ranges: C0 and C1
+# controls (newline and tab excepted), then every character that renders as
+# nothing or reorders what is displayed - soft hyphen and fillers, bidi marks,
+# zero-width characters, line and paragraph separators, bidi overrides and
+# isolates, invisible operators, the TAG plane and the variation-selector
+# supplement. The ranges follow the `sanitize` skill's invisible-codepoint
+# table, and markdown_kg.py applies the same rule. Numbers, so this file
+# never holds one of the characters.
+UNSAFE_RANGES = (
+    (0x00, 0x08), (0x0B, 0x1F), (0x7F, 0x9F),
+    (0xAD, 0xAD), (0x34F, 0x34F), (0x61C, 0x61C), (0x115F, 0x1160),
+    (0x17B4, 0x17B5), (0x180B, 0x180F), (0x200B, 0x200F), (0x2028, 0x202E),
+    (0x2060, 0x206F), (0x2800, 0x2800), (0x3164, 0x3164), (0xFE00, 0xFE0F),
+    (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF9, 0xFFFB),
+    (0xE0000, 0xE007F), (0xE0100, 0xE01EF))
+_UNSAFE_RE = re.compile("[" + "".join(
+    re.escape(chr(a)) + ("" if a == b else "-" + re.escape(chr(b)))
+    for a, b in UNSAFE_RANGES) + "]")
+_ZWJ, _EMOJI_VS, _KEYCAP = chr(0x200D), chr(0xFE0F), chr(0x20E3)
+_PICTOGRAPH_RANGES = ((0x2190, 0x21FF), (0x2300, 0x23FF), (0x25A0, 0x27BF),
+                      (0x2B00, 0x2BFF), (0x1F000, 0x1FAFF))
+_PICTOGRAPH_SINGLES = frozenset((0xA9, 0xAE, 0x203C, 0x2049, 0x2122, 0x2139,
+                                 0x3030, 0x303D, 0x3297, 0x3299))
+
+
+def _pictograph(ch: str) -> bool:
+    if not ch:
+        return False
+    cp = ord(ch)
+    return cp in _PICTOGRAPH_SINGLES or any(
+        a <= cp <= b for a, b in _PICTOGRAPH_RANGES)
+
+
+def _visible(m: re.Match) -> str:
+    """The escaped form of one unsafe character, or the character itself in
+    the two places an emoji sequence needs one: a variation selector straight
+    after a pictograph (or before a keycap), and a joiner between two."""
+    c = m.group()
+    text, i = m.string, m.start()
+    before = text[i - 1:i]
+    if 0xFE00 <= ord(c) <= 0xFE0F:
+        # One selector per pictograph: a run of them is a byte channel.
+        if _pictograph(before) or (c == _EMOJI_VS
+                                   and text[i + 1:i + 2] == _KEYCAP):
+            return c
+    elif c == _ZWJ:
+        if before == _EMOJI_VS:
+            before = text[i - 2:i - 1]
+        if _pictograph(before) and _pictograph(text[i + 1:i + 2]):
+            return c
+    shown = repr(c)[1:-1]
+    if shown != c:
+        return shown
+    return f"\\u{ord(c):04x}" if ord(c) < 0x10000 else f"\\U{ord(c):08x}"
+
+
+def _term_safe(text: str) -> str:
+    """Repo-derived text about to be printed for a human: control characters
+    and invisible or reordering characters become their escaped form, so an
+    ANSI sequence in a file name, a config value or a source line cannot
+    rewrite what the terminal shows, and a run of text nobody can see cannot
+    ride along. Newline and tab stay. The repo and the database keep the
+    text as written; this touches only what is printed."""
+    return _UNSAFE_RE.sub(_visible, text)
+
+
+class _SafeOut:
+    """A stdout that sanitizes: `main` puts every prose command behind it, so
+    no renderer, present or future, has to remember to."""
+
+    def __init__(self, real):
+        self._real = real
+
+    def write(self, s):
+        return self._real.write(_term_safe(s))
+
+    def flush(self):
+        return self._real.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
 # ---------- config ----------
 DEFAULT_CONFIG = {"ignore": [], "roots": [], "entry_points": [],
                   "aliases": {}, "profile": "", "test_command": "",
                   "deps": "none"}
+# Kept out of DEFAULT_CONFIG so `init` scaffolds the same file it always did;
+# a repo adds these keys when it has something to declare.
+EXTENSION_KEYS = ("components", "links", "markers")
+EXTENSION_ROWS_MAX = 200    # per key; every row costs a pass over the files
+COMPONENT_LIST_MAX = 50     # paths, and aliases, per component; same reason
 
 
 def load_config(repo: Path) -> dict:
@@ -365,12 +534,103 @@ def load_config(repo: Path) -> dict:
         sys.exit(f"error: {cfg_file}: unknown profile '{profile}'"
                  f" (known: {', '.join(sorted(known - {''}))})")
     out["profile"] = profile
-    out["test_command"] = str(cfg.get("test_command", ""))
+    # The command `coverage run` shows for consent before it runs anything:
+    # a character that hides or reorders text would let the line on screen
+    # differ from the command executed, so the config is refused outright.
+    out["test_command"] = _plain(cfg.get("test_command", ""), cfg_file,
+                                 "'test_command'", 1000)
     deps = str(cfg.get("deps", "none"))
     if deps not in ("none", "referenced"):
         sys.exit(f"error: {cfg_file}: 'deps' must be 'none' or 'referenced'")
     out["deps"] = deps
+    out.update(_load_extensions(cfg, cfg_file))
     return out
+
+
+def _plain(value, cfg_file: Path, where: str, limit: int = 200) -> str:
+    """A config string that reaches a terminal: one line, no control
+    characters, bounded. The config sits inside the repo, so it is as
+    untrusted as the code beside it."""
+    text = str(value).strip()
+    if (len(text) > limit or len(text.splitlines()) > 1
+            or "\t" in text or _UNSAFE_RE.search(text)):
+        sys.exit(f"error: {cfg_file}: {where} must be one line of at most"
+                 f" {limit} printable characters")
+    return text
+
+
+def _load_extensions(cfg: dict, cfg_file: Path) -> dict:
+    """The extension keys: `components`, `links` and `markers`. All three are
+    optional and absent means empty, so a config written before they existed
+    loads exactly as it did. Paths are globs for the linear-time matcher;
+    nothing here is ever compiled as a regular expression or executed."""
+    for key in EXTENSION_KEYS:
+        if not isinstance(cfg.get(key, []), list):
+            sys.exit(f"error: {cfg_file}: '{key}' must be a list")
+        if len(cfg.get(key, [])) > EXTENSION_ROWS_MAX:
+            sys.exit(f"error: {cfg_file}: '{key}' holds more than"
+                     f" {EXTENSION_ROWS_MAX} rows")
+    components, claimed = [], {}
+    for row in cfg.get("components", []):
+        if not isinstance(row, dict):
+            sys.exit(f"error: {cfg_file}: components entries must be objects")
+        name = _plain(row.get("name", ""), cfg_file, "a component name", 80)
+        if not name:
+            sys.exit(f"error: {cfg_file}: a component needs a 'name'")
+        paths = row.get("paths", [])
+        if not isinstance(paths, list) or not paths:
+            sys.exit(f"error: {cfg_file}: component {name!r} needs a"
+                     " non-empty 'paths' list")
+        aliases = row.get("aliases", [])
+        if not isinstance(aliases, list):
+            sys.exit(f"error: {cfg_file}: component {name!r} 'aliases' must"
+                     " be a list")
+        if max(len(paths), len(aliases)) > COMPONENT_LIST_MAX:
+            sys.exit(f"error: {cfg_file}: component {name!r} holds more than"
+                     f" {COMPONENT_LIST_MAX} paths or aliases")
+        aliases = [_plain(a, cfg_file, f"an alias of {name!r}", 80)
+                   for a in aliases if str(a).strip()]
+        for label in [name] + aliases:
+            if claimed.setdefault(label.lower(), name) != name:
+                sys.exit(f"error: {cfg_file}: component name or alias"
+                         f" {label!r} is claimed by both"
+                         f" {claimed[label.lower()]!r} and {name!r}")
+        components.append({
+            "name": name, "aliases": aliases,
+            "paths": [_plain(p, cfg_file, f"a path of {name!r}",
+                             GLOB_MAX_LEN) for p in paths],
+            "description": _plain(row.get("description", ""), cfg_file,
+                                  f"the description of {name!r}", 300)})
+    links = []
+    for row in cfg.get("links", []):
+        if not isinstance(row, dict):
+            sys.exit(f"error: {cfg_file}: links entries must be objects")
+        src = _plain(row.get("from", ""), cfg_file, "a links 'from'",
+                     GLOB_MAX_LEN)
+        dst = _plain(row.get("to", ""), cfg_file, "a links 'to'",
+                     GLOB_MAX_LEN)
+        if not src or not dst:
+            sys.exit(f"error: {cfg_file}: a links row needs 'from' and 'to'")
+        live = row.get("live", False)
+        if not isinstance(live, bool):
+            sys.exit(f"error: {cfg_file}: links 'live' must be true or false"
+                     f" ({src} -> {dst})")
+        links.append({"from": src, "to": dst, "live": live,
+                      "reason": _plain(row.get("reason", ""), cfg_file,
+                                       "a links 'reason'", 300)})
+    markers = []
+    for tok in cfg.get("markers", []):
+        tok = str(tok)
+        if not MARKER_TOKEN_RE.fullmatch(tok):
+            sys.exit(f"error: {cfg_file}: marker {tok!r} must be 2-32 chars"
+                     " of A-Z, 0-9 and hyphen, starting with a letter")
+        if tok in CORE_MARKERS:
+            sys.exit(f"error: {cfg_file}: {tok!r} is a core marker and"
+                     " cannot be re-registered")
+        if tok in markers:
+            sys.exit(f"error: {cfg_file}: marker {tok!r} registered twice")
+        markers.append(tok)
+    return {"components": components, "links": links, "markers": markers}
 
 
 # ---------- glob matching (linear time; patterns are untrusted input) ----------
@@ -568,6 +828,7 @@ def manifest(repo: Path) -> str:
         if lock.is_file() and not lock.is_symlink():
             st = lock.stat()
             parts.append(f"__lock__{name}|{st.st_size}|{int(st.st_mtime_ns)}")
+    parts.append(f"__index__|{INDEX_REV}")
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
@@ -1076,13 +1337,49 @@ def extract_json(rel: str, text: str, ex: Extraction) -> str:
     return ""
 
 
+TOML_TABLE_RE = re.compile(r"^\s*\[([^\[\]]*)\]\s*(?:#.*)?$")
+TOML_LINE_MAX = 1000    # no script entry is longer; a longer line is skipped
+TOML_PAIR_RE = re.compile(
+    r"""^\s*(?:[A-Za-z0-9_-]+|"[^"]*"|'[^']*')\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+TOML_INLINE_SCRIPTS_RE = re.compile(r"^\s*scripts\s*=\s*\{(.*)\}\s*(?:#.*)?$")
+
+
+def _pyproject_scripts(text: str) -> list[str]:
+    """Console-script targets from `[project.scripts]`. `tomllib` is 3.11+;
+    below that the one table is read by line, so the same pyproject yields
+    the same entry points on every interpreter."""
+    try:
+        import tomllib
+    except ImportError:
+        tomllib = None
+    if tomllib is not None:
+        scripts = tomllib.loads(text).get("project", {}).get("scripts", {})
+        return [str(t) for t in scripts.values()]
+    out, table = [], ""
+    for raw in text.splitlines():
+        if len(raw) > TOML_LINE_MAX:
+            continue    # the repo is untrusted; these patterns stay bounded
+        m = TOML_TABLE_RE.match(raw)
+        if m:
+            table = "".join(m.group(1).split())
+            continue
+        if table == "project.scripts":
+            pm = TOML_PAIR_RE.match(raw)
+            if pm:
+                out.append(pm.group(1) if pm.group(1) is not None
+                           else pm.group(2))
+        elif table == "project":
+            im = TOML_INLINE_SCRIPTS_RE.match(raw)
+            if im:
+                out.extend(a or b for a, b in re.findall(
+                    r"""=\s*(?:"([^"]*)"|'([^']*)')""", im.group(1)))
+    return out
+
+
 def extract_toml(rel: str, text: str, ex: Extraction) -> str:
     if posixpath.basename(rel) == "pyproject.toml":
         try:
-            import tomllib
-            data = tomllib.loads(text)
-            scripts = data.get("project", {}).get("scripts", {})
-            for target in scripts.values():
+            for target in _pyproject_scripts(text):
                 mod = str(target).split(":")[0]
                 _add_ref(ex, mod, "import", 0)
                 ex.entries.append(("script", str(target)))
@@ -1721,7 +2018,7 @@ class Resolver:
             if level:
                 return None, "unresolved"
             top = name.split(".")[0]
-            if top in sys.stdlib_module_names or top not in self.top_packages:
+            if top in STDLIB_NAMES or top not in self.top_packages:
                 return None, "external"
             return None, "unresolved"
         if len(uniq) > 1:
@@ -2099,6 +2396,63 @@ def _dep_name_of(lang: str, kind: str, target: str) -> tuple[str, str] | None:
     return None
 
 
+# ---------- comment markers ----------
+def marker_pattern(lang: str, markers: tuple[str, ...]) -> re.Pattern | None:
+    """One pattern per language: a comment leader, a registered marker, an
+    optional `(owner)`, then the payload. Built from engine-authored leader
+    fragments and validated marker tokens only, so nothing a repo supplies is
+    ever compiled as a pattern of its own."""
+    leaders = COMMENT_LEADERS.get(lang)
+    if not leaders or not markers:
+        return None
+    lead = "|".join(LEADER_RES[tok] for tok in leaders)
+    words = "|".join(re.escape(m) for m in
+                     sorted(markers, key=lambda m: (-len(m), m)))
+    return re.compile(rf"(?:{lead})({words})(?:\(([^()\n]{{0,60}})\))?"
+                      rf"(?=[:\s]|$):?[ \t]*(.*)$")
+
+
+def scan_annotations(lang: str, text: str,
+                     markers: tuple[str, ...]) -> list[tuple[int, str, str, str]]:
+    """(line, marker, owner, payload) for every comment marker in one file.
+    Line-based and string-blind by design: a marker inside a string literal
+    that happens to follow a comment leader is reported too, which is why the
+    result is a worklist to read and not a count to trust."""
+    pat = marker_pattern(lang, markers)
+    if pat is None:
+        return []
+    out = []
+    for i, line in enumerate(text.splitlines(), 1):
+        if len(line) > ANNOTATION_LINE_MAX:
+            continue
+        m = pat.search(line)
+        if not m:
+            continue
+        payload = m.group(3).strip()
+        for closer in ("*/", "-->"):
+            if payload.endswith(closer):
+                payload = payload[: -len(closer)].rstrip()
+        out.append((i, m.group(1), _printable(m.group(2) or "").strip(),
+                    _printable(payload)[:300]))
+    return out
+
+
+def _printable(text: str) -> str:
+    """Control characters out: payloads are repo text and reach a terminal."""
+    return "".join(c for c in text
+                   if not (ord(c) < 0x20 or 0x7F <= ord(c) < 0xA0))
+
+
+def _innermost_symbol(symbols: list[dict], line: int) -> str:
+    best, best_span = "", None
+    for s in symbols:
+        if s["line_start"] <= line <= s["line_end"]:
+            span = s["line_end"] - s["line_start"]
+            if best_span is None or span < best_span:
+                best, best_span = s["id"], span
+    return best
+
+
 # ---------- ingest (idempotent full rebuild) ----------
 def ingest(repo: Path) -> dict:
     cfg = load_config(repo)
@@ -2223,6 +2577,53 @@ def ingest(repo: Path) -> dict:
             entry_warnings.append(
                 f"config entry_points path not indexed: {ep}")
 
+    # Declared links: wiring the repo states in config. Each row expands to
+    # the cross product of its two globs, capped, and a row with an empty
+    # side is warned about the way an unmatched entry point is.
+    link_warnings = []
+    for row in cfg.get("links", []):
+        srcs = [fid for fid in sorted(file_ids) if glob_match(fid, row["from"])]
+        dsts = [fid for fid in sorted(file_ids) if glob_match(fid, row["to"])]
+        label = f"{row['from']} -> {row['to']}"
+        if not srcs or not dsts:
+            side = "'from'" if not srcs else "'to'"
+            link_warnings.append(
+                f"config links row matched nothing on {side}: {label}")
+            continue
+        kind = "declared-live" if row["live"] else "declared"
+        # Counted, never built: `**` on both sides of a large repo is a
+        # cross product no machine should hold just to keep 2000 of it.
+        total = len(srcs) * len(dsts) - len(set(srcs) & set(dsts))
+        if total > DECLARED_CAP:
+            link_warnings.append(
+                f"config links row capped at {DECLARED_CAP} of"
+                f" {total} edges: {label}")
+        for s, d in itertools.islice(
+                ((s, d) for s in srcs for d in dsts if s != d), DECLARED_CAP):
+            # Target carries the destination so each edge keeps a distinct
+            # primary key (same precedent as copy expansion).
+            all_edges.append((s, d, d, kind, 0, "resolved"))
+
+    component_rows = [(comp["name"], fid)
+                      for comp in cfg.get("components", [])
+                      for fid in sorted(file_ids)
+                      if any(glob_match(fid, g) for g in comp["paths"])]
+
+    markers = CORE_MARKERS + tuple(cfg.get("markers", []))
+    symbols_by_file: dict[str, list[dict]] = {}
+    for s in all_symbols:
+        symbols_by_file.setdefault(s["file_id"], []).append(s)
+    annotation_rows, annotations_seen = [], 0
+    for f in files:
+        for line, marker, owner, payload in scan_annotations(
+                f["language"], f["body"], markers):
+            annotations_seen += 1
+            if len(annotation_rows) < ANNOTATION_CAP:
+                annotation_rows.append(
+                    (f["id"], line, marker, owner, payload,
+                     _innermost_symbol(symbols_by_file.get(f["id"], []),
+                                       line)))
+
     dep_files: list[dict] = []
     dep_overflow: list[tuple[str, str]] = []
     if cfg.get("deps") == "referenced":
@@ -2234,7 +2635,7 @@ def ingest(repo: Path) -> dict:
                 continue
             key = _dep_name_of(lang_by_id.get(src, ""), kind, target)
             if key and key[0] == "python" \
-                    and key[1] not in sys.stdlib_module_names:
+                    and key[1] not in STDLIB_NAMES:
                 wanted_py.add(key[1])
             elif key and key[0] == "js":
                 wanted_js.add(key[1])
@@ -2274,8 +2675,16 @@ def ingest(repo: Path) -> dict:
 
     con = connect(repo)
     with con:
-        for table in ("files", "symbols", "edges", "entry_points", "ignored"):
+        for table in ("files", "symbols", "edges", "entry_points", "ignored",
+                      "components", "annotations"):
             con.execute(f"DELETE FROM {table}")
+        con.executemany("INSERT OR IGNORE INTO components(name, file_id)"
+                        " VALUES (?,?)", component_rows)
+        con.executemany(
+            "INSERT OR IGNORE INTO annotations(file_id, line, marker, owner,"
+            " payload, symbol_id) VALUES (?,?,?,?,?,?)", annotation_rows)
+        con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES"
+                    " ('annotations_seen', ?)", (str(annotations_seen),))
         con.execute("DELETE FROM symbols_fts")
         con.execute("DELETE FROM files_fts")
         for f in files + dep_files:
@@ -2337,6 +2746,14 @@ def ingest(repo: Path) -> dict:
         "profiles": profiles,
         "entry_warnings": entry_warnings,
     }
+    # Present only when the config uses the key, so the report a repo without
+    # extension keys gets is the one it always got.
+    if cfg.get("links"):
+        counts["declared_edges"] = sum(
+            1 for e in set(all_edges) if e[3] in ("declared", "declared-live"))
+        counts["link_warnings"] = link_warnings
+    if cfg.get("components"):
+        counts["components"] = len({name for name, _ in component_rows})
     con.close()
     return counts
 
@@ -2660,62 +3077,71 @@ def _greedy_modularity(adj: dict, deg: dict, m: float) -> dict[str, int]:
 
     Merge candidates live in a heap with lazy invalidation - a popped entry
     whose gain no longer matches the current graph is recomputed and pushed
-    back rather than trusted, which is what keeps this near-linear on the
-    sparse graphs import structure produces."""
+    back rather than trusted. Inter-community weight is a neighbor map per
+    community, so a merge touches the absorbed community's neighbors and
+    nothing else; scanning one table of every link on every merge is what
+    made large graphs take minutes. The groups are the same either way, and
+    a test holds this version to the first one on random graphs."""
     if m <= 0:
         return {}
-    comm = {n: i for i, n in enumerate(sorted(adj))}
-    members = {i: {n} for n, i in comm.items()}
-    tot = {comm[n]: deg[n] for n in adj}
-    # Inter-community weight, keyed low-id first.
-    link: dict[tuple[int, int], float] = {}
+    ids = {n: i for i, n in enumerate(sorted(adj))}
+    members = {i: {n} for n, i in ids.items()}
+    tot = {ids[n]: deg[n] for n in adj}
+    nbr: dict[int, dict[int, float]] = {i: {} for i in members}
     for a, nbrs in adj.items():
         for b, w in nbrs.items():
-            ca, cb = comm[a], comm[b]
-            if ca == cb:
-                continue
-            key = (ca, cb) if ca < cb else (cb, ca)
-            link[key] = w  # symmetric fill; each pair written twice, same w
+            if a != b:
+                nbr[ids[a]][ids[b]] = w
 
     def gain(ca: int, cb: int) -> float:
-        key = (ca, cb) if ca < cb else (cb, ca)
-        w = link.get(key, 0.0)
-        return w / m - (tot[ca] * tot[cb]) / (2.0 * m * m)
+        return (nbr[ca].get(cb, 0.0) / m
+                - (tot[ca] * tot[cb]) / (2.0 * m * m))
 
-    heap = [(-gain(a, b), a, b) for a, b in link]
+    heap = [(-gain(a, b), a, b) for a in nbr for b in nbr[a] if a < b]
     heapq.heapify(heap)
+    # The heap never holds the same entry twice. Every merge queues an entry
+    # per neighbor, and without this a hub with n neighbors piles up n
+    # copies of each, all popped and re-queued one by one: cubic work on a
+    # plain star, which is one module every other file imports.
+    queued = set(heap)
+
+    def queue(entry: tuple) -> None:
+        if entry not in queued:
+            queued.add(entry)
+            heapq.heappush(heap, entry)
+
     while heap:
-        negdq, ca, cb = heapq.heappop(heap)
+        entry = heapq.heappop(heap)
+        queued.discard(entry)
+        negdq, ca, cb = entry
         if ca not in members or cb not in members:
             continue
-        key = (ca, cb) if ca < cb else (cb, ca)
-        if key not in link:
+        if cb not in nbr[ca]:
             continue
         fresh = gain(ca, cb)
         if abs(fresh - (-negdq)) > 1e-12:
-            heapq.heappush(heap, (-fresh, ca, cb))
+            queue((-fresh, ca, cb))
             continue
         if fresh <= 1e-12:
             break  # no remaining merge improves Q; the heap is max-first
         keep, drop = (ca, cb) if ca < cb else (cb, ca)
-        members[keep] |= members.pop(drop)
+        # The smaller set is poured into the larger, whichever id survives.
+        big, small = members.pop(keep), members.pop(drop)
+        if len(big) < len(small):
+            big, small = small, big
+        big |= small
+        members[keep] = big
         tot[keep] += tot.pop(drop)
-        for n in members[keep]:
-            comm[n] = keep
         # Rewire every link that touched the absorbed community.
-        moved = [k for k in link if drop in k]
-        for k in moved:
-            w = link.pop(k)
-            other = k[0] if k[1] == drop else k[1]
-            if other == keep:
-                continue
-            nk = (keep, other) if keep < other else (other, keep)
-            link[nk] = link.get(nk, 0.0) + w
-        for k in list(link):
-            if keep in k:
-                other = k[0] if k[1] == keep else k[1]
-                heapq.heappush(heap, (-gain(keep, other), keep, other))
-    return comm
+        for other, w in nbr.pop(drop).items():
+            del nbr[other][drop]
+            if other != keep:
+                nbr[keep][other] = nbr[keep].get(other, 0.0) + w
+                nbr[other][keep] = nbr[keep][other]
+        for other in nbr[keep]:
+            queue((-gain(keep, other), keep, other))
+    owner = {n: cid for cid, group in members.items() for n in group}
+    return {n: owner[n] for n in sorted(adj)}
 
 
 def _community_label(files: list[str]) -> str:
@@ -2834,6 +3260,212 @@ def god_nodes_report(repo: Path, limit: int = 20) -> dict:
     # last so the ordering is total and the output is diffable.
     nodes.sort(key=lambda n: (-n["degree"], -n["fan_in"], n["file"]))
     return {"nodes": nodes[:limit], "total": len(nodes)}
+
+
+# ---------- config extensions: components, comment markers, config check ----------
+def components_report(repo: Path, name: str | None = None) -> dict:
+    """Declared components and how they depend on each other.
+
+    A component is a named group of files from the config `components`
+    array - the repo's own vocabulary for its parts, where `communities`
+    infers groups from edges. Dependencies count resolved executable edges
+    (LIVE_KINDS) that cross from one component into another. A file claimed
+    by two components counts in both and is listed under `overlaps`."""
+    cfg = load_config(repo)
+    declared = cfg.get("components", [])
+    con = open_fresh(repo)
+    if not declared:
+        con.close()
+        return {"status": "NO_COMPONENTS", "components": [],
+                "unassigned": [], "overlaps": []}
+    members: dict[str, list[str]] = {c["name"]: [] for c in declared}
+    owners: dict[str, list[str]] = {}
+    for cname, fid in con.execute(
+            "SELECT name, file_id FROM components ORDER BY name, file_id"):
+        if cname in members:
+            members[cname].append(fid)
+            owners.setdefault(fid, []).append(cname)
+    info = {fid: (role, lines) for fid, role, lines in con.execute(
+        "SELECT id, role, lines FROM files WHERE origin='project'")}
+    kinds = tuple(sorted(LIVE_KINDS))
+    edges = con.execute(
+        "SELECT src, dst, kind FROM edges WHERE status='resolved'"
+        f" AND kind IN ({','.join('?' * len(kinds))})"
+        " ORDER BY src, dst, kind", kinds).fetchall()
+    con.close()
+    comp = None
+    if name is not None:
+        wanted = name.strip().lower()
+        comp = next((c for c in declared if wanted == c["name"].lower()
+                     or wanted in (a.lower() for a in c["aliases"])), None)
+        if comp is None:
+            sys.exit(f"error: unknown component {name!r} (declared: "
+                     + ", ".join(c["name"] for c in declared) + ")")
+    me = comp["name"] if comp else None
+    # Crossing edges are counted per component pair as they are met, and
+    # kept as rows only for the one component a detail view asked about.
+    counts: dict[tuple[str, str], int] = {}
+    outbound, inbound = [], []
+    for src, dst, kind in edges:
+        for a in owners.get(src, ()):
+            for b in owners.get(dst, ()):
+                if a == b:
+                    continue
+                counts[(a, b)] = counts.get((a, b), 0) + 1
+                if a == me:
+                    outbound.append({"src": src, "dst": dst, "kind": kind,
+                                     "component": b})
+                if b == me:
+                    inbound.append({"src": src, "dst": dst, "kind": kind,
+                                    "component": a})
+
+    if comp is not None:
+        return {
+            "status": "COMPLETE", "name": me,
+            "description": comp["description"], "aliases": comp["aliases"],
+            "paths": comp["paths"],
+            "files": [{"file": fid, "role": info[fid][0],
+                       "lines": info[fid][1]} for fid in members[me]],
+            "outbound": outbound, "inbound": inbound}
+
+    out = []
+    for comp in declared:
+        me = comp["name"]
+        depends = {b: n for (a, b), n in counts.items() if a == me}
+        used_by = {a: n for (a, b), n in counts.items() if b == me}
+        out.append({"name": me, "description": comp["description"],
+                    "aliases": comp["aliases"], "files": len(members[me]),
+                    "lines": sum(info[f][1] for f in members[me]),
+                    "depends_on": dict(sorted(depends.items())),
+                    "used_by": dict(sorted(used_by.items()))})
+    return {
+        "status": "COMPLETE", "components": out,
+        "unassigned": sorted(fid for fid, (role, _) in info.items()
+                             if role == "source" and fid not in owners),
+        "overlaps": [{"file": fid, "components": names}
+                     for fid, names in sorted(owners.items())
+                     if len(names) > 1]}
+
+
+def annotations_report(repo: Path, marker: str | None = None,
+                       path: str | None = None, limit: int = 50) -> dict:
+    """Comment markers as a worklist: every `TODO`, `FIXME` and registered
+    custom marker, with its line and the symbol it sits in."""
+    cfg = load_config(repo)
+    registered = CORE_MARKERS + tuple(cfg.get("markers", []))
+    if marker is not None and marker not in registered:
+        sys.exit(f"error: unknown marker {marker!r} (registered: "
+                 + ", ".join(registered) + ")")
+    con = open_fresh(repo)
+    rows = con.execute(
+        "SELECT file_id, line, marker, owner, payload, symbol_id"
+        " FROM annotations ORDER BY file_id, line, marker").fetchall()
+    seen = con.execute(
+        "SELECT value FROM meta WHERE key='annotations_seen'").fetchone()
+    con.close()
+    if path:
+        rows = [r for r in rows if glob_match(r[0], path)]
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r[2]] = counts.get(r[2], 0) + 1
+    if marker:
+        rows = [r for r in rows if r[2] == marker]
+    total = len(rows)
+    shown = rows if limit < 0 else rows[:limit]
+    return {
+        "status": ("COMPLETE" if len(shown) == total
+                   else f"TRUNCATED {len(shown)} of {total}"),
+        "total": total, "counts": dict(sorted(counts.items())),
+        "capped": bool(seen and int(seen[0]) > ANNOTATION_CAP),
+        "rows": [{"file": f, "line": ln, "marker": m, "owner": o,
+                  "payload": p, "symbol": s} for f, ln, m, o, p, s in shown]}
+
+
+def config_report(repo: Path) -> dict:
+    """What each config row matched, from the current graph. Reads and
+    reports only: a row that matches nothing is a warning, never an error,
+    because the files it names may simply not exist yet."""
+    cfg_file = config_path(repo)
+    cfg = load_config(repo)        # exits loudly on a malformed file
+    con = open_fresh(repo)
+    file_ids = [r[0] for r in con.execute(
+        "SELECT id FROM files WHERE origin='project' ORDER BY id")]
+    ignored_by = dict(con.execute(
+        "SELECT rule, count(*) FROM ignored GROUP BY rule"))
+    entry_rows = con.execute(
+        "SELECT file_id, detail FROM entry_points WHERE kind='config'"
+    ).fetchall()
+    marker_counts = dict(con.execute(
+        "SELECT marker, count(*) FROM annotations GROUP BY marker"))
+    comp_counts = dict(con.execute(
+        "SELECT name, count(*) FROM components GROUP BY name"))
+    declared = dict(con.execute(
+        "SELECT kind, count(*) FROM edges WHERE kind IN"
+        " ('declared','declared-live') GROUP BY kind"))
+    con.close()
+    warnings: list[str] = []
+
+    def matched(pattern: str) -> int:
+        return sum(1 for fid in file_ids if glob_match(fid, pattern))
+
+    ignore = [{"pattern": pat, "matched": ignored_by.get(f"config:{pat}", 0)}
+              for pat in cfg.get("ignore", [])]
+    def root_exists(rel: str) -> bool:
+        # Confined to the repo: a config row must not turn this report into
+        # a probe for folders elsewhere on the machine.
+        try:
+            path = (repo / rel).resolve()
+            return path.is_relative_to(repo) and path.is_dir()
+        except (OSError, RuntimeError, ValueError):
+            return False
+
+    roots = [{"root": r, "exists": root_exists(r)}
+             for r in cfg.get("roots", [])]
+    entries = []
+    for ep in cfg.get("entry_points", []):
+        key = ep.strip("/")
+        n = sum(1 for fid, detail in entry_rows
+                if detail == key or (detail == "" and fid == key))
+        entries.append({"entry": ep, "matched": n})
+    components = []
+    for comp in cfg.get("components", []):
+        empty = [p for p in comp["paths"] if not matched(p)]
+        components.append({"name": comp["name"],
+                           "files": comp_counts.get(comp["name"], 0),
+                           "empty_paths": empty})
+        for p in empty:
+            warnings.append(f"component {comp['name']}: path matched"
+                            f" nothing: {p}")
+    links = []
+    for row in cfg.get("links", []):
+        srcs, dsts = matched(row["from"]), matched(row["to"])
+        links.append({"from": row["from"], "to": row["to"],
+                      "live": row["live"], "sources": srcs, "targets": dsts})
+        if not srcs or not dsts:
+            warnings.append(f"links row matched nothing: {row['from']}"
+                            f" -> {row['to']}")
+    for row in ignore:
+        if not row["matched"]:
+            warnings.append(f"ignore pattern matched nothing:"
+                            f" {row['pattern']}")
+    for row in roots:
+        if not row["exists"]:
+            warnings.append(f"root is not a folder: {row['root']}")
+    for row in entries:
+        if not row["matched"]:
+            warnings.append(f"entry_points row matched nothing:"
+                            f" {row['entry']}")
+    return {
+        "path": f"{KG_DIR}/{CONFIG_NAME}", "exists": cfg_file.exists(),
+        "status": "WARNINGS" if warnings else "OK", "warnings": warnings,
+        "ignore": ignore, "roots": roots, "entry_points": entries,
+        "aliases": len(cfg.get("aliases", {})),
+        "profile": cfg.get("profile", ""), "deps": cfg.get("deps", "none"),
+        "components": components, "links": links,
+        "declared_edges": dict(sorted(declared.items())),
+        "markers": [{"marker": m, "core": m in CORE_MARKERS,
+                     "count": marker_counts.get(m, 0)}
+                    for m in CORE_MARKERS + tuple(cfg.get("markers", []))]}
 
 
 # ---------- coverage ----------
@@ -3145,7 +3777,8 @@ def print_readout(repo: Path, counts: dict) -> None:
     if counts.get("profiles"):
         print(f"  profile: {', '.join(counts['profiles'])}")
     for note in counts.get("alias_notes", []) \
-            + counts.get("entry_warnings", []):
+            + counts.get("entry_warnings", []) \
+            + counts.get("link_warnings", []):
         print(f"  {note}")
     if counts["entry_points"] == 0:
         print("  0 entry points - dead/liveness tiers will be unreliable;"
@@ -3488,6 +4121,113 @@ def cmd_god_nodes(args: argparse.Namespace) -> int:
         shown = len(p["nodes"])
         print(f"\nshowing {shown} of {p['total']} files with"
               f" at least one executable edge")
+        return 0
+    return emit(args, payload, render)
+
+
+def cmd_components(args: argparse.Namespace) -> int:
+    payload = components_report(repo_dir(args.repo), args.name)
+
+    def render(p):
+        lim = None if args.limit < 0 else args.limit
+        if p["status"] == "NO_COMPONENTS":
+            print(f"no components declared - add a `components` array to"
+                  f" {KG_DIR}/{CONFIG_NAME} (see references/config.md)")
+            return 0
+        if "name" in p:
+            print(f"{p['name']}  ({len(p['files'])} files)"
+                  + (f"  {p['description']}" if p["description"] else ""))
+            if p["aliases"]:
+                print("aliases: " + ", ".join(p["aliases"]))
+            for f in p["files"][:lim]:
+                role = "" if f["role"] == "source" else f"  ({f['role']})"
+                print(f"  {f['file']}{role}")
+            if lim is not None and len(p["files"]) > lim:
+                print(f"  TRUNCATED: {len(p['files']) - lim} more")
+            for title, key, arrow in (("depends on", "outbound", "->"),
+                                      ("used by", "inbound", "<-")):
+                print(f"\n{title} ({len(p[key])} edges):")
+                for e in p[key][:lim]:
+                    near, far = ((e["src"], e["dst"]) if key == "outbound"
+                                 else (e["dst"], e["src"]))
+                    print(f"  {near}  {arrow}  {far}"
+                          f"  [{e['component']}, {e['kind']}]")
+                if lim is not None and len(p[key]) > lim:
+                    print(f"  TRUNCATED: {len(p[key]) - lim} more")
+            return 0
+        print("Declared components. Dependencies count executable edges that"
+              " cross from one component into another.")
+        for c in p["components"]:
+            print(f"\n{c['name']}  ({c['files']} files, {c['lines']} lines)"
+                  + (f"  {c['description']}" if c["description"] else ""))
+            for title, key in (("depends on", "depends_on"),
+                               ("used by", "used_by")):
+                if c[key]:
+                    print(f"  {title}: " + ", ".join(
+                        f"{n} ({k})" for n, k in c[key].items()))
+        if p["overlaps"]:
+            print(f"\nin more than one component ({len(p['overlaps'])}):")
+            for o in p["overlaps"][:lim]:
+                print(f"  {o['file']}  [{', '.join(o['components'])}]")
+        if p["unassigned"]:
+            print(f"\nsource files in no component ({len(p['unassigned'])}):")
+            for f in p["unassigned"][:lim]:
+                print(f"  {f}")
+            if lim is not None and len(p["unassigned"]) > lim:
+                print(f"  TRUNCATED: {len(p['unassigned']) - lim} more")
+        return 0
+    return emit(args, payload, render)
+
+
+def cmd_annotations(args: argparse.Namespace) -> int:
+    payload = annotations_report(repo_dir(args.repo), args.marker, args.path,
+                                 args.limit)
+
+    def render(p):
+        if not p["total"]:
+            print("no comment markers")
+            return 0
+        print("  ".join(f"{m} {n}" for m, n in p["counts"].items()))
+        for r in p["rows"]:
+            owner = f"({r['owner']})" if r["owner"] else ""
+            where = f"  in {r['symbol']}" if r["symbol"] else ""
+            print(f"  {r['file']}:{r['line']}  {r['marker']}{owner}"
+                  f"  {r['payload']}{where}")
+        if p["status"] != "COMPLETE":
+            print(p["status"])
+        if p["capped"]:
+            print(f"CAPPED: the index holds the first {ANNOTATION_CAP}"
+                  " markers only")
+        return 0
+    return emit(args, payload, render)
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    payload = config_report(repo_dir(args.repo))
+
+    def render(p):
+        state = "" if p["exists"] else " (not created; defaults in use)"
+        print(f"{p['path']}{state}: {p['status']}")
+        for w in p["warnings"]:
+            print(f"  warning: {w}")
+        for row in p["ignore"]:
+            print(f"  ignore {row['pattern']}: {row['matched']} files")
+        for row in p["roots"]:
+            print(f"  root {row['root']}: "
+                  + ("present" if row["exists"] else "missing"))
+        for row in p["entry_points"]:
+            print(f"  entry point {row['entry']}: {row['matched']} files")
+        if p["aliases"]:
+            print(f"  aliases: {p['aliases']}")
+        for row in p["components"]:
+            print(f"  component {row['name']}: {row['files']} files")
+        for row in p["links"]:
+            kind = "live" if row["live"] else "weak"
+            print(f"  link {row['from']} -> {row['to']} ({kind}):"
+                  f" {row['sources']} sources, {row['targets']} targets")
+        for row in p["markers"]:
+            if not row["core"]:
+                print(f"  marker {row['marker']}: {row['count']} comments")
         return 0
     return emit(args, payload, render)
 
@@ -3963,9 +4703,37 @@ def main(argv: list[str] | None = None) -> int:
     p = add("index", cmd_index)
     p.add_argument("--out")
     p.add_argument("--force", action="store_true")
+    p = add("components", cmd_components)
+    p.add_argument("name", nargs="?", default=None,
+                   help="one component, by name or alias (omit: all)")
+    p.add_argument("--limit", type=int, default=25,
+                   help="max rows per list; --json is never truncated")
+    p = add("annotations", cmd_annotations)
+    p.add_argument("--marker", default=None, metavar="MARKER",
+                   help="one marker only, e.g. TODO")
+    p.add_argument("--path", default=None, metavar="GLOB",
+                   help="only files matching this glob")
+    p.add_argument("--limit", type=int, default=50)
+    add("config", cmd_config)
 
     args = ap.parse_args(argv)
-    return args.fn(args)
+    out, err = sys.stdout, sys.stderr
+    # stderr is always read by a person: warnings, the consent text of
+    # `coverage run`, and every error message. stdout is too, unless json
+    # was asked for - that output is for a parser and json.dumps escapes
+    # control characters itself.
+    sys.stderr = _SafeOut(err)
+    if not getattr(args, "json", False):
+        sys.stdout = _SafeOut(out)
+    try:
+        return args.fn(args)
+    except SystemExit as e:
+        if isinstance(e.code, str):
+            # The interpreter prints this after the streams are restored.
+            raise SystemExit(_term_safe(e.code)) from None
+        raise
+    finally:
+        sys.stdout, sys.stderr = out, err
 
 
 if __name__ == "__main__":

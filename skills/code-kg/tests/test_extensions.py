@@ -1,0 +1,782 @@
+"""Tests for the config extension keys (components, declared links, markers),
+the `config` check command, and the interpreter floor.
+
+Behavior tests run against a temporary copy of tests/fixture-extend so the
+committed fixture never grows a database.
+"""
+import contextlib
+import io
+import json
+import shutil
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+SKILL_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(SKILL_DIR / "scripts"))
+
+import code_kg  # noqa: E402
+
+HERE = Path(__file__).resolve().parent
+FIXTURE = HERE / "fixture-extend"
+
+
+def run(*argv: str) -> tuple[int, str, str]:
+    """One engine call in-process: (exit code, stdout, stderr)."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            rc = code_kg.main(list(argv))
+        except SystemExit as e:
+            if isinstance(e.code, int) or e.code is None:
+                rc = e.code or 0
+            else:
+                rc = 1
+                err.write(str(e.code))
+    return rc, out.getvalue(), err.getvalue()
+
+
+class TestStdlibNames(unittest.TestCase):
+    """`sys.stdlib_module_names` is 3.10+; the stock macOS python3 is 3.9."""
+
+    CORE = ("os", "json", "sqlite3", "re", "pathlib", "collections", "sys",
+            "math", "email", "xml")
+
+    def test_core_modules_present(self):
+        names = code_kg._stdlib_names()
+        for name in self.CORE:
+            self.assertIn(name, names)
+
+    def test_fallback_without_the_attribute(self):
+        with mock.patch.object(sys, "stdlib_module_names", None, create=True):
+            names = code_kg._stdlib_names()
+        for name in self.CORE:
+            self.assertIn(name, names)
+        for name in ("site-packages", "__pycache__", "test", "lib-dynload",
+                     "requests", "pip"):
+            self.assertNotIn(name, names)
+
+    def test_fallback_agrees_with_the_interpreter_list(self):
+        real = getattr(sys, "stdlib_module_names", None)
+        if real is None:
+            self.skipTest("interpreter predates sys.stdlib_module_names")
+        with mock.patch.object(sys, "stdlib_module_names", None):
+            fallback = code_kg._stdlib_names()
+        # The folder scan cannot see modules this platform does not build
+        # (winreg, msvcrt), so agreement is checked one way.
+        public = {n for n in fallback if not n.startswith("_")}
+        self.assertEqual(public - set(real), set())
+        self.assertGreater(len(public), 150)
+
+
+class TestPyprojectScripts(unittest.TestCase):
+    """`tomllib` is 3.11+; the line reader must agree with it."""
+
+    TABLE = ('[build-system]\nrequires = ["setuptools"]\n\n[project]\n'
+             'name = "x"\n\n[project.scripts]\n'
+             'cli = "pkg.cli:main"  # comment\n'
+             "'other-tool' = 'pkg.other:run'\n\n"
+             '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n')
+    INLINE = ('[project]\nname = "x"\n'
+              'scripts = { cli = "pkg.cli:main", two = "pkg.two:go" }\n')
+
+    def scripts_without_tomllib(self, text):
+        with mock.patch.dict(sys.modules, {"tomllib": None}):
+            return code_kg._pyproject_scripts(text)
+
+    def test_table_form(self):
+        self.assertEqual(self.scripts_without_tomllib(self.TABLE),
+                         ["pkg.cli:main", "pkg.other:run"])
+
+    def test_inline_form(self):
+        self.assertEqual(self.scripts_without_tomllib(self.INLINE),
+                         ["pkg.cli:main", "pkg.two:go"])
+
+    def test_agrees_with_tomllib(self):
+        try:
+            import tomllib  # noqa: F401
+        except ImportError:
+            self.skipTest("interpreter predates tomllib")
+        for text in (self.TABLE, self.INLINE):
+            self.assertEqual(self.scripts_without_tomllib(text),
+                             code_kg._pyproject_scripts(text))
+
+
+def reference_greedy_modularity(adj: dict, deg: dict, m: float) -> dict:
+    """The clustering as first shipped: correct, and it rescans the whole
+    link table on every merge. Kept here as the answer key the engine's
+    faster version must reproduce exactly."""
+    import heapq
+    if m <= 0:
+        return {}
+    comm = {n: i for i, n in enumerate(sorted(adj))}
+    members = {i: {n} for n, i in comm.items()}
+    tot = {comm[n]: deg[n] for n in adj}
+    link = {}
+    for a, nbrs in adj.items():
+        for b, w in nbrs.items():
+            ca, cb = comm[a], comm[b]
+            if ca == cb:
+                continue
+            link[(ca, cb) if ca < cb else (cb, ca)] = w
+
+    def gain(ca, cb):
+        w = link.get((ca, cb) if ca < cb else (cb, ca), 0.0)
+        return w / m - (tot[ca] * tot[cb]) / (2.0 * m * m)
+
+    heap = [(-gain(a, b), a, b) for a, b in link]
+    heapq.heapify(heap)
+    while heap:
+        negdq, ca, cb = heapq.heappop(heap)
+        if ca not in members or cb not in members:
+            continue
+        if ((ca, cb) if ca < cb else (cb, ca)) not in link:
+            continue
+        fresh = gain(ca, cb)
+        if abs(fresh - (-negdq)) > 1e-12:
+            heapq.heappush(heap, (-fresh, ca, cb))
+            continue
+        if fresh <= 1e-12:
+            break
+        keep, drop = (ca, cb) if ca < cb else (cb, ca)
+        members[keep] |= members.pop(drop)
+        tot[keep] += tot.pop(drop)
+        for n in members[keep]:
+            comm[n] = keep
+        for k in [k for k in link if drop in k]:
+            w = link.pop(k)
+            other = k[0] if k[1] == drop else k[1]
+            if other == keep:
+                continue
+            nk = (keep, other) if keep < other else (other, keep)
+            link[nk] = link.get(nk, 0.0) + w
+        for k in list(link):
+            if keep in k:
+                other = k[0] if k[1] == keep else k[1]
+                heapq.heappush(heap, (-gain(keep, other), keep, other))
+    return comm
+
+
+def random_graph(rng, nodes: int, edges: int):
+    """Symmetric weighted adjacency in the shape both engines build."""
+    names = [f"n{i:05d}" for i in range(nodes)]
+    adj = {}
+    for _ in range(edges):
+        a, b = rng.choice(names), rng.choice(names)
+        if a == b:
+            continue
+        w = float(rng.randint(1, 3))
+        adj.setdefault(a, {})
+        adj.setdefault(b, {})
+        adj[a][b] = adj[a].get(b, 0.0) + w
+        adj[b][a] = adj[a][b]
+    deg = {n: sum(w.values()) for n, w in adj.items()}
+    return adj, deg, sum(deg.values()) / 2.0
+
+
+def star_graph(leaves: int):
+    """One hub linked to every leaf, unit weights. The hub sorts last."""
+    hub = "zz-hub"
+    adj = {hub: {}}
+    for i in range(leaves):
+        leaf = f"leaf{i:05d}"
+        adj[hub][leaf] = 1.0
+        adj[leaf] = {hub: 1.0}
+    deg = {n: sum(w.values()) for n, w in adj.items()}
+    return adj, deg, sum(deg.values()) / 2.0
+
+
+class TestClusteringEquivalence(unittest.TestCase):
+    def test_same_groups_as_the_reference_on_random_graphs(self):
+        import random
+        rng = random.Random(20261114)
+        for _ in range(400):
+            nodes = rng.randint(2, 45)
+            adj, deg, m = random_graph(rng, nodes, rng.randint(1, nodes * 3))
+            got = code_kg._greedy_modularity(adj, deg, m)
+            want = reference_greedy_modularity(adj, deg, m)
+            self.assertEqual(got, want)
+            self.assertEqual(list(got), list(want))
+
+    def test_same_groups_on_stars_and_tie_heavy_graphs(self):
+        """One module every other file imports is a star, and it is where a
+        merge queue that keeps its stale entries grows fastest. Unit weights
+        make every gain a tie, which is where a change in the order entries
+        leave the queue would show."""
+        import random
+        rng = random.Random(11)
+        graphs = [star_graph(n) for n in (2, 3, 7, 25, 60)]
+        for _ in range(150):
+            nodes = rng.randint(3, 30)
+            adj, deg, m = star_graph(nodes)
+            names = sorted(adj)
+            for _ in range(rng.randint(0, nodes)):
+                a, b = rng.sample(names, 2)
+                adj[a][b] = adj[b][a] = 1.0
+            deg = {n: sum(w.values()) for n, w in adj.items()}
+            graphs.append((adj, deg, sum(deg.values()) / 2.0))
+        for adj, deg, m in graphs:
+            self.assertEqual(code_kg._greedy_modularity(adj, deg, m),
+                             reference_greedy_modularity(adj, deg, m))
+
+    def test_a_star_clusters_quickly(self):
+        import time
+        adj, deg, m = star_graph(1000)
+        start = time.time()
+        got = code_kg._greedy_modularity(adj, deg, m)
+        # A queue that re-queues every stale entry needs minutes here.
+        self.assertLess(time.time() - start, 5.0)
+        self.assertEqual(len(got), 1001)
+
+    def test_empty_graph(self):
+        self.assertEqual(code_kg._greedy_modularity({}, {}, 0.0), {})
+
+    def test_a_large_graph_clusters_quickly(self):
+        import random
+        import time
+        adj, deg, m = random_graph(random.Random(7), 4000, 20000)
+        start = time.time()
+        got = code_kg._greedy_modularity(adj, deg, m)
+        # The reference needs several seconds here.
+        self.assertLess(time.time() - start, 2.0)
+        self.assertEqual(set(got), set(adj))
+
+
+class TestTermSafe(unittest.TestCase):
+    """Prose output shows every invisible or reordering character as an
+    escape. Characters are built with chr() so this file holds none."""
+
+    RLO, ZWSP, ZWJ, VS16 = chr(0x202E), chr(0x200B), chr(0x200D), chr(0xFE0F)
+
+    def test_plain_source_is_untouched(self):
+        text = "def f():\n\treturn 'caf" + chr(0xE9) + "'\n"
+        self.assertEqual(code_kg._term_safe(text), text)
+
+    def test_control_and_invisible_characters_become_visible(self):
+        for ch, shown in ((chr(0x1B), "\\x1b"), (chr(0x07), "\\x07"),
+                          ("\r", "\\r"), (chr(0xE0041), "\\U000e0041"),
+                          (self.RLO, "\\u202e"), (self.ZWSP, "\\u200b"),
+                          (chr(0x2066), "\\u2066"), (chr(0xFEFF), "\\ufeff"),
+                          (chr(0x2800), "\\u2800"), (chr(0x2028), "\\u2028")):
+            self.assertEqual(code_kg._term_safe("x" + ch + "y"),
+                             "x" + shown + "y")
+
+    def test_emoji_sequences_survive_and_a_stray_joiner_does_not(self):
+        technologist = chr(0x1F469) + self.ZWJ + chr(0x1F4BB)
+        on_fire = chr(0x2764) + self.VS16 + self.ZWJ + chr(0x1F525)
+        for text in (technologist, on_fire):
+            self.assertEqual(code_kg._term_safe(text), text)
+        self.assertEqual(code_kg._term_safe("pass" + self.ZWJ + "word"),
+                         "pass\\u200dword")
+
+    def test_variation_selectors_survive_only_where_emoji_need_them(self):
+        heart, vs16, vs15, keycap = chr(0x2764), self.VS16, chr(0xFE0E), chr(0x20E3)
+        for text in (heart + vs16, chr(0x263A) + vs15, "1" + vs16 + keycap,
+                     chr(0xA9) + vs16):
+            self.assertEqual(code_kg._term_safe(text), text)
+        # After a letter, and every selector past the first in a run: a run
+        # of selectors after one base character is a hidden byte channel.
+        self.assertEqual(code_kg._term_safe("a" + vs16), "a\\ufe0f")
+        self.assertEqual(code_kg._term_safe(heart + vs16 + chr(0xFE01) + vs15),
+                         heart + vs16 + "\\ufe01\\ufe0e")
+        self.assertEqual(code_kg._term_safe("x" + chr(0x180F)), "x\\u180f")
+
+    def test_error_messages_and_stderr_are_sanitized_too(self):
+        tmp = Path(tempfile.mkdtemp(prefix="codekg-err-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "a.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp / ".code-kg").mkdir()
+        esc, bel = chr(0x1B), chr(0x07)
+        (tmp / ".code-kg" / "config.json").write_text(json.dumps(
+            {"profile": esc + "]52;c;eA==" + bel}), encoding="utf-8")
+        rc, out, err = run("ingest", str(tmp))
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown profile", err)
+        for ch in (esc, bel):
+            self.assertNotIn(ch, out + err)
+        self.assertIn("\\x1b]52;c;eA==\\x07", err)
+
+    def test_a_test_command_that_could_hide_itself_is_refused(self):
+        tmp = Path(tempfile.mkdtemp(prefix="codekg-cmd-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "a.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp / ".code-kg").mkdir()
+        for hidden in (chr(0x1B) + "[2K\r", self.RLO, self.ZWSP):
+            (tmp / ".code-kg" / "config.json").write_text(json.dumps(
+                {"test_command": "sh -c 'echo hidden' " + hidden
+                                 + "python3 -m pytest"}), encoding="utf-8")
+            rc, out, err = run("coverage", str(tmp), "run")
+            self.assertEqual(rc, 1)
+            self.assertIn("'test_command' must be one line", err)
+        (tmp / ".code-kg" / "config.json").write_text(json.dumps(
+            {"test_command": "python3 -m coverage run -m pytest -q"}),
+            encoding="utf-8")
+        self.assertEqual(code_kg.load_config(tmp)["test_command"],
+                         "python3 -m coverage run -m pytest -q")
+
+    def test_a_reordering_comment_is_shown_in_read_output(self):
+        tmp = Path(tempfile.mkdtemp(prefix="codekg-safe-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "a.py").write_text(
+            "# TODO: check " + self.RLO + "this\nx = 1" + self.ZWSP + "\n",
+            encoding="utf-8")
+        run("init", str(tmp))
+        for cmd in (("read", "a.py"), ("annotations",), ("search", "check"),
+                    ("stats",)):
+            rc, out, _ = run(cmd[0], str(tmp), *cmd[1:])
+            self.assertEqual(rc, 0, cmd)
+            for ch in (self.RLO, self.ZWSP):
+                self.assertNotIn(ch, out, cmd)
+        rc, out, _ = run("read", str(tmp), "a.py")
+        self.assertIn("check \\u202ethis", out)
+        # The json path is for a parser and keeps the text as written.
+        rc, out, _ = run("annotations", str(tmp), "--json")
+        self.assertIn(self.RLO, json.loads(out)["rows"][0]["payload"])
+
+
+class TestTomlFallbackBounds(unittest.TestCase):
+    def test_hostile_lines_stay_fast(self):
+        import time
+        text = ("[a" + " " * 200000 + "x\n"
+                + "[project]\nscripts = {" + "}x" * 100000 + "\n"
+                + '[project.scripts]\ncli = "pkg.cli:main"\n')
+        start = time.time()
+        with mock.patch.dict(sys.modules, {"tomllib": None}):
+            got = code_kg._pyproject_scripts(text)
+        self.assertLess(time.time() - start, 2.0)
+        self.assertEqual(got, ["pkg.cli:main"])
+
+    def test_table_header_spacing(self):
+        text = '[ project . scripts ]  # entry points\ncli = "a.b:c"\n'
+        with mock.patch.dict(sys.modules, {"tomllib": None}):
+            self.assertEqual(code_kg._pyproject_scripts(text), ["a.b:c"])
+
+
+class RepoCase(unittest.TestCase):
+    """Base: a temp copy of fixture-extend, with helpers to edit its config."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="codekg-ext-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.repo = self.tmp / "repo"
+        shutil.copytree(FIXTURE, self.repo)
+        self.cfg_file = self.repo / ".code-kg" / "config.json"
+        # Read commands refuse to run without a database; after this, a
+        # config edit is picked up by the drift check on the next read.
+        run("ingest", str(self.repo))
+
+    def config(self) -> dict:
+        return json.loads(self.cfg_file.read_text(encoding="utf-8"))
+
+    def write_config(self, cfg) -> None:
+        self.cfg_file.write_text(json.dumps(cfg), encoding="utf-8")
+
+    def json(self, *argv: str):
+        rc, out, err = run(argv[0], str(self.repo), *argv[1:], "--json")
+        self.assertEqual(rc, 0, err)
+        return json.loads(out)
+
+    def edges(self, where: str = "1=1", *params):
+        import sqlite3
+        con = sqlite3.connect(code_kg.db_path(self.repo))
+        rows = con.execute(
+            "SELECT src, dst, kind, status FROM edges WHERE " + where
+            + " ORDER BY src, dst, kind", params).fetchall()
+        con.close()
+        return rows
+
+
+class TestConfigValidation(RepoCase):
+    def rejects(self, cfg: dict, fragment: str) -> None:
+        self.write_config(cfg)
+        rc, _, err = run("ingest", str(self.repo))
+        self.assertEqual(rc, 1)
+        self.assertIn(fragment, err)
+
+    def test_config_without_extension_keys_loads_as_before(self):
+        self.write_config({"ignore": ["web/**"]})
+        cfg = code_kg.load_config(self.repo)
+        self.assertEqual(cfg["ignore"], ["web/**"])
+        for key in code_kg.EXTENSION_KEYS:
+            self.assertEqual(cfg[key], [])
+
+    def test_init_scaffold_is_unchanged(self):
+        self.cfg_file.unlink()
+        run("init", str(self.repo))
+        self.assertEqual(self.config(), code_kg.DEFAULT_CONFIG)
+
+    def test_components_must_be_a_list(self):
+        self.rejects({"components": {"name": "x"}}, "'components' must be")
+
+    def test_component_needs_name_and_paths(self):
+        self.rejects({"components": [{"paths": ["a/**"]}]}, "needs a 'name'")
+        self.rejects({"components": [{"name": "a"}]}, "non-empty 'paths'")
+
+    def test_component_names_and_aliases_are_unique(self):
+        self.rejects({"components": [
+            {"name": "core", "paths": ["a/**"]},
+            {"name": "other", "aliases": ["Core"], "paths": ["b/**"]}]},
+            "claimed by both")
+
+    def test_control_characters_are_refused(self):
+        self.rejects({"components": [
+            {"name": "bad\u001b[31m", "paths": ["a/**"]}]}, "printable")
+        self.rejects({"components": [
+            {"name": "bad" + chr(0x202E) + "name", "paths": ["a/**"]}]},
+            "printable")
+
+    def test_paths_and_aliases_per_component_are_bounded(self):
+        self.rejects({"components": [
+            {"name": "wide", "paths": [f"d{i}/**" for i in range(51)]}]},
+            "more than 50 paths or aliases")
+        self.rejects({"components": [
+            {"name": "wide", "paths": ["a/**"],
+             "aliases": [f"alias{i}" for i in range(51)]}]},
+            "more than 50 paths or aliases")
+
+    def test_link_needs_both_sides_and_a_boolean_live(self):
+        self.rejects({"links": [{"from": "a.py"}]}, "'from' and 'to'")
+        self.rejects({"links": [{"from": "a.py", "to": "b.py",
+                                 "live": "yes"}]}, "true or false")
+
+    def test_marker_token_rules(self):
+        self.rejects({"markers": ["lowercase"]}, "must be 2-32 chars")
+        self.rejects({"markers": ["TODO"]}, "core marker")
+        self.rejects({"markers": ["SAFETY", "SAFETY"]}, "registered twice")
+
+
+class TestComponents(RepoCase):
+    def test_member_counts(self):
+        got = {c["name"]: c for c in self.json("components")["components"]}
+        self.assertEqual({n: c["files"] for n, c in got.items()},
+                         {"control": 4, "sensors": 3, "actuators": 3,
+                          "reporting": 3, "dashboard": 2})
+
+    def test_cross_component_edge_counts(self):
+        got = {c["name"]: c for c in self.json("components")["components"]}
+        # cli.py reaches both sensor modules and their package init; the
+        # registry reaches the plugins through the declared live link.
+        self.assertEqual(got["control"]["depends_on"],
+                         {"actuators": 3, "reporting": 1, "sensors": 5})
+        self.assertEqual(got["actuators"]["depends_on"],
+                         {"control": 2, "reporting": 1, "sensors": 6})
+        self.assertEqual(got["dashboard"]["depends_on"], {})
+        self.assertEqual(got["sensors"]["used_by"],
+                         {"actuators": 6, "control": 5, "reporting": 5})
+
+    def test_overlaps_and_unassigned(self):
+        got = self.json("components")
+        self.assertEqual(got["overlaps"], [
+            {"file": "greenhouse/sensors/humidity.py",
+             "components": ["reporting", "sensors"]}])
+        self.assertEqual(got["unassigned"], ["scripts/nightly.sh"])
+
+    def test_detail_by_alias(self):
+        got = self.json("components", "plugins")
+        self.assertEqual(got["name"], "actuators")
+        self.assertEqual([f["file"] for f in got["files"]],
+                         ["greenhouse/plugins/__init__.py",
+                          "greenhouse/plugins/misting.py",
+                          "greenhouse/plugins/shade.py"])
+        self.assertIn({"src": "greenhouse/registry.py",
+                       "dst": "greenhouse/plugins/misting.py",
+                       "kind": "declared-live", "component": "control"},
+                      got["inbound"])
+
+    def test_unknown_component_is_an_error(self):
+        rc, _, err = run("components", str(self.repo), "nope")
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown component", err)
+
+    def test_no_components_declared(self):
+        self.write_config({})
+        self.assertEqual(self.json("components")["status"], "NO_COMPONENTS")
+        rc, out, _ = run("components", str(self.repo))
+        self.assertEqual(rc, 0)
+        self.assertIn("no components declared", out)
+
+    def test_text_render(self):
+        rc, out, _ = run("components", str(self.repo))
+        self.assertEqual(rc, 0)
+        self.assertIn("control  (4 files", out)
+        self.assertIn("depends on: actuators (3)", out)
+        self.assertIn("source files in no component (1):", out)
+
+
+class TestDeclaredLinks(RepoCase):
+    PLUGINS = ["greenhouse/plugins/__init__.py",
+               "greenhouse/plugins/misting.py", "greenhouse/plugins/shade.py"]
+
+    def tiers(self) -> dict:
+        return self.json("dead")["tiers"]
+
+    def test_live_link_becomes_executable_edges(self):
+        run("ingest", str(self.repo))
+        self.assertEqual(
+            self.edges("kind='declared-live'"),
+            [("greenhouse/registry.py", p, "declared-live", "resolved")
+             for p in self.PLUGINS])
+
+    def test_live_link_makes_the_plugins_live(self):
+        tiers = self.tiers()
+        for p in self.PLUGINS:
+            self.assertIn(p, tiers["live"])
+
+    def test_weak_link_does_not_join_liveness(self):
+        tiers = self.tiers()
+        self.assertIn("greenhouse/reports/summary.py", tiers["weak-only"])
+        self.assertNotIn("greenhouse/reports/summary.py", tiers["live"])
+
+    def test_without_links_the_plugins_are_unreachable(self):
+        cfg = self.config()
+        del cfg["links"]
+        self.write_config(cfg)
+        tiers = self.tiers()
+        for p in self.PLUGINS + ["greenhouse/reports/summary.py"]:
+            self.assertIn(p, tiers["unreachable"])
+        self.assertEqual(self.edges("kind LIKE 'declared%'"), [])
+
+    def test_live_false_keeps_plugins_out_of_the_live_tier(self):
+        cfg = self.config()
+        cfg["links"][0]["live"] = False
+        self.write_config(cfg)
+        tiers = self.tiers()
+        for p in self.PLUGINS[1:]:
+            self.assertIn(p, tiers["weak-only"])
+
+    def test_declared_edge_shows_in_importers_and_path(self):
+        got = self.json("importers", "greenhouse/plugins/misting.py")
+        self.assertIn("greenhouse/registry.py", json.dumps(got))
+        chain = self.json("path", "greenhouse/registry.py",
+                          "greenhouse/plugins/shade.py")
+        self.assertEqual(len(chain), 2, chain)
+
+    def test_unmatched_row_is_warned_about_not_fatal(self):
+        rc, out, _ = run("ingest", str(self.repo))
+        self.assertEqual(rc, 0)
+        self.assertIn("config links row matched nothing on 'to':"
+                      " greenhouse/scheduler.py -> jobs/**", out)
+
+    def test_row_is_capped(self):
+        old = code_kg.DECLARED_CAP
+        self.addCleanup(setattr, code_kg, "DECLARED_CAP", old)
+        code_kg.DECLARED_CAP = 2
+        cfg = self.config()
+        cfg["links"] = [{"from": "greenhouse/**", "to": "greenhouse/**"}]
+        self.write_config(cfg)
+        counts = self.json("ingest")
+        self.assertEqual(counts["declared_edges"], 2)
+        self.assertIn("capped at 2 of", counts["link_warnings"][0])
+
+    def test_cap_never_builds_the_cross_product(self):
+        import tracemalloc
+        files = [f"pkg/m{i:04d}.py" for i in range(1500)]
+        for rel in files:
+            path = self.repo / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x = 1\n", encoding="utf-8")
+        cfg = self.config()
+        cfg["links"] = [{"from": "pkg/**", "to": "pkg/**"}]
+        self.write_config(cfg)
+        tracemalloc.start()
+        counts = code_kg.ingest(self.repo)
+        peak = tracemalloc.get_traced_memory()[1]
+        tracemalloc.stop()
+        self.assertEqual(counts["declared_edges"], code_kg.DECLARED_CAP)
+        self.assertIn("capped at 2000 of 2248500 edges",
+                      counts["link_warnings"][0])
+        # 2.2 million pairs held as tuples is well over 100 MB.
+        self.assertLess(peak, 60 * 1024 * 1024)
+
+    def test_row_count_is_bounded(self):
+        cfg = self.config()
+        cfg["links"] = [{"from": "a.py", "to": "b.py"}] * 201
+        self.write_config(cfg)
+        rc, _, err = run("ingest", str(self.repo))
+        self.assertEqual(rc, 1)
+        self.assertIn("more than 200 rows", err)
+
+    def test_report_keys_absent_without_the_config_keys(self):
+        self.write_config({})
+        counts = self.json("ingest")
+        for key in ("declared_edges", "link_warnings", "components"):
+            self.assertNotIn(key, counts)
+
+
+class TestAnnotations(RepoCase):
+    def rows(self, *argv: str) -> list:
+        return [(r["file"], r["line"], r["marker"], r["owner"], r["payload"])
+                for r in self.json("annotations", *argv)["rows"]]
+
+    def test_every_marker_in_the_fixture(self):
+        self.assertEqual(self.rows(), [
+            ("greenhouse/cli.py", 12, "TODO", "",
+             "accept a --dry-run flag that skips the actuators"),
+            ("greenhouse/registry.py", 9, "SAFETY", "",
+             "a plugin that fails to import must not stop the others"),
+            ("greenhouse/reports/summary.py", 6, "TODO", "reports",
+             "include the weekly average"),
+            ("greenhouse/scheduler.py", 7, "FIXME", "",
+             "every job runs on every call; there is no due-time check yet"),
+            ("greenhouse/sensors/humidity.py", 6, "NOTE", "",
+             "the bench sensor reports 0 when it is unplugged"),
+            ("web/api.ts", 3, "TODO", "", "retry once on a network error"),
+            ("web/dashboard.ts", 3, "HACK", "",
+             "polls on a timer until the controller exposes events"),
+        ])
+
+    def test_a_marker_word_outside_a_comment_is_not_a_marker(self):
+        # scheduler.py assigns STATUS = "TODO"; only its FIXME comment counts.
+        self.assertEqual([r[2] for r in self.rows(
+            "--path", "greenhouse/scheduler.py")], ["FIXME"])
+
+    def test_symbol_is_the_innermost_one(self):
+        got = self.json("annotations", "--marker", "FIXME")["rows"][0]
+        self.assertEqual(got["symbol"],
+                         "greenhouse/scheduler.py::run_due_jobs")
+
+    def test_filters_and_counts(self):
+        got = self.json("annotations", "--marker", "TODO")
+        self.assertEqual(got["total"], 3)
+        self.assertEqual(got["counts"], {"FIXME": 1, "HACK": 1, "NOTE": 1,
+                                         "SAFETY": 1, "TODO": 3})
+        self.assertEqual(len(self.rows("--path", "web/**")), 2)
+
+    def test_custom_marker_needs_registration(self):
+        cfg = self.config()
+        cfg["markers"] = []
+        self.write_config(cfg)
+        self.assertNotIn("SAFETY", [r[2] for r in self.rows()])
+        rc, _, err = run("annotations", str(self.repo), "--marker", "SAFETY")
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown marker", err)
+
+    def test_truncation_is_declared(self):
+        got = self.json("annotations", "--limit", "2")
+        self.assertEqual(got["status"], "TRUNCATED 2 of 7")
+        self.assertEqual(len(got["rows"]), 2)
+
+    def test_scanner_units(self):
+        scan = code_kg.scan_annotations
+        core = code_kg.CORE_MARKERS
+        self.assertEqual(scan("python", "x = 1  # TODO: later\n", core),
+                         [(1, "TODO", "", "later")])
+        self.assertEqual(scan("javascript", "/* FIXME(ana): tidy */\n", core),
+                         [(1, "FIXME", "ana", "tidy")])
+        self.assertEqual(scan("c", " * NOTE continues here\n", core),
+                         [(1, "NOTE", "", "continues here")])
+        self.assertEqual(scan("sql", "SELECT 1; -- HACK: temp\n", core),
+                         [(1, "HACK", "", "temp")])
+        self.assertEqual(scan("html", "<!-- TODO: alt text -->\n", core),
+                         [(1, "TODO", "", "alt text")])
+        # Not a comment, not at a word boundary, or a language with no
+        # comment syntax: nothing.
+        self.assertEqual(scan("python", 'url = "http://TODO"\n', core), [])
+        self.assertEqual(scan("python", "# TODOLIST of things\n", core), [])
+        self.assertEqual(scan("json", '{"a": "# TODO: x"}\n', core), [])
+        self.assertEqual(scan("python", "#" + " TODO: x" * 400 + "\n", core),
+                         [])
+
+    def test_payload_and_owner_drop_control_characters(self):
+        got = code_kg.scan_annotations(
+            "python", "# TODO(a\u001b[1mb): red\u001b[31m alert\n",
+            code_kg.CORE_MARKERS)
+        self.assertEqual(got, [(1, "TODO", "a[1mb", "red[31m alert")])
+
+
+class TestConfigCommand(RepoCase):
+    def test_reports_what_each_row_matched(self):
+        got = self.json("config")
+        self.assertEqual(got["status"], "WARNINGS")
+        self.assertEqual(got["warnings"], [
+            "links row matched nothing: greenhouse/scheduler.py -> jobs/**"])
+        self.assertEqual({c["name"]: c["files"] for c in got["components"]},
+                         {"control": 4, "sensors": 3, "actuators": 3,
+                          "reporting": 3, "dashboard": 2})
+        self.assertEqual(got["links"][0]["targets"], 3)
+        self.assertEqual(got["declared_edges"],
+                         {"declared": 1, "declared-live": 3})
+        custom = [m for m in got["markers"] if not m["core"]]
+        self.assertEqual(custom, [{"marker": "SAFETY", "core": False,
+                                   "count": 1}])
+
+    def test_empty_component_path_is_a_warning(self):
+        cfg = self.config()
+        cfg["components"].append({"name": "jobs", "paths": ["jobs/**"]})
+        self.write_config(cfg)
+        got = self.json("config")
+        self.assertIn("component jobs: path matched nothing: jobs/**",
+                      got["warnings"])
+
+    def test_clean_config_is_ok(self):
+        self.write_config({"ignore": ["web/**"]})
+        got = self.json("config")
+        self.assertEqual(got["status"], "OK")
+        self.assertEqual(got["ignore"], [{"pattern": "web/**", "matched": 2}])
+
+    def test_control_characters_never_reach_the_terminal(self):
+        hostile = "\u001b]0;x\u0007\u001b[2Jr"
+        self.write_config({"roots": [hostile], "ignore": [hostile],
+                           "entry_points": [hostile]})
+        rc, out, _ = run("config", str(self.repo))
+        self.assertEqual(rc, 0)
+        self.assertNotIn("\u001b", out)
+        self.assertNotIn("\u0007", out)
+        self.assertIn("\\x1b]0;x\\x07\\x1b[2Jr", out)
+        rc, out, _ = run("ingest", str(self.repo))
+        self.assertNotIn("\u001b", out)
+
+    def test_control_characters_in_a_file_name_are_escaped(self):
+        name = "greenhouse/odd\u001b[2Jname.py"
+        (self.repo / name).write_text("# TODO: rename this file\n",
+                                      encoding="utf-8")
+        for cmd in (("annotations",), ("components",), ("stats",),
+                    ("dead",), ("components", "control")):
+            rc, out, _ = run(cmd[0], str(self.repo), *cmd[1:])
+            self.assertEqual(rc, 0, cmd)
+            self.assertNotIn("\u001b", out, cmd)
+        rc, out, _ = run("annotations", str(self.repo))
+        self.assertIn("odd\\x1b[2Jname.py", out)
+
+    def test_a_root_outside_the_repo_is_never_probed(self):
+        (self.tmp / "outside").mkdir()
+        self.write_config({"roots": ["greenhouse", "../outside", "/tmp"]})
+        got = self.json("config")
+        self.assertEqual(got["roots"], [
+            {"root": "greenhouse", "exists": True},
+            {"root": "../outside", "exists": False},
+            {"root": "/tmp", "exists": False}])
+
+    def test_missing_config_reports_defaults(self):
+        self.cfg_file.unlink()
+        run("ingest", str(self.repo))
+        got = self.json("config")
+        self.assertFalse(got["exists"])
+        self.assertEqual(got["status"], "OK")
+
+    def test_writes_nothing(self):
+        run("ingest", str(self.repo))
+        before = self.cfg_file.read_bytes()
+        run("config", str(self.repo))
+        self.assertEqual(self.cfg_file.read_bytes(), before)
+
+
+class TestIndexRevision(RepoCase):
+    def test_a_revision_bump_reingests_on_the_next_read(self):
+        run("ingest", str(self.repo))
+        import sqlite3
+        con = sqlite3.connect(code_kg.db_path(self.repo))
+        con.execute("DELETE FROM annotations")
+        con.commit()
+        con.close()
+        self.assertEqual(self.json("annotations")["total"], 0)
+        old = code_kg.INDEX_REV
+        self.addCleanup(setattr, code_kg, "INDEX_REV", old)
+        code_kg.INDEX_REV = old + 1
+        self.assertEqual(self.json("annotations")["total"], 7)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,22 @@
+{
+  "components": [
+    {"name": "control", "aliases": ["core"],
+     "description": "command line, plugin registry and scheduler",
+     "paths": ["greenhouse/*.py"]},
+    {"name": "sensors", "paths": ["greenhouse/sensors/**"]},
+    {"name": "actuators", "aliases": ["plugins"],
+     "paths": ["greenhouse/plugins/**"]},
+    {"name": "reporting",
+     "paths": ["greenhouse/reports/**", "greenhouse/sensors/humidity.py"]},
+    {"name": "dashboard", "paths": ["web/**"]}
+  ],
+  "links": [
+    {"from": "greenhouse/registry.py", "to": "greenhouse/plugins/*.py",
+     "live": true, "reason": "plugins are imported by name at run time"},
+    {"from": "scripts/nightly.sh", "to": "greenhouse/reports/summary.py",
+     "reason": "the nightly job reaches the report through the console script"},
+    {"from": "greenhouse/scheduler.py", "to": "jobs/**",
+     "reason": "planned jobs folder, not created yet"}
+  ],
+  "markers": ["SAFETY"]
+}

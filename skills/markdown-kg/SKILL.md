@@ -129,6 +129,35 @@ path and no submission protocol. Field reference: `references/config.md`.
    what context". `links --unresolved` is a worklist of broken and ambiguous
    links with the note that wrote them.
 
+   Standard markdown links become edges the same way wikilinks do:
+   `[text](note.md)`, reference-style `[text][label]`, and targets with
+   no extension. In an Obsidian vault (an `.obsidian/` folder is present) a
+   link that misses its relative path also resolves vault-wide, as Obsidian
+   does; in any other tree it stays unresolved. A link that names a heading
+   or a block (`[[Note#Heading]]`, `[[Note#^block]]`, `[x](note.md#heading)`,
+   `[x](#local)`) also resolves below note level.
+
+   ```bash
+   python3 <skill-dir>/scripts/markdown_kg.py links     <vault> "Some Note" --anchors
+   python3 <skill-dir>/scripts/markdown_kg.py links     <vault> --unresolved --anchors
+   python3 <skill-dir>/scripts/markdown_kg.py backlinks <vault> "Some Note" --anchors
+   python3 <skill-dir>/scripts/markdown_kg.py fields    <vault> --note "Some Note"
+   python3 <skill-dir>/scripts/markdown_kg.py related   <vault> "Some Note"
+   python3 <skill-dir>/scripts/markdown_kg.py communities <vault>
+   ```
+
+   `--anchors` gives the section and line each anchor lands on; with
+   `--unresolved` it is the worklist of anchors whose note exists and whose
+   heading or block does not. `fields` reads the name a link was written
+   under - a frontmatter key (`up: "[[Parent]]"`) or an inline field
+   (`up:: [[Parent]]`) - so a typed relation needs no syntax beyond the
+   link. `related` ranks notes by personalized PageRank from one note. The
+   score reflects position in the link graph and says nothing about
+   content, so read a note before treating it as relevant. `communities`
+   clusters notes that link mostly to each other and reports a modularity
+   score; below about 0.3, treat the groups as a hint rather than as real
+   structure.
+
    Every edge above is EXTRACTED provenance - explicit link syntax in the
    corpus. An INFERRED relation is a recorded judgment, written only by an
    explicit command with evidence that is verified at write time, never by
@@ -178,7 +207,9 @@ path and no submission protocol. Field reference: `references/config.md`.
    frontmatter: keys with counts, notes carrying a key, strict
    `--older-than`/`--newer-than` date filters (unreadable values land in an
    `unparsed` bucket, never dropped), `--missing` for notes lacking the key,
-   `--note` for one note's properties.
+   `--note` for one note's properties. `tags` counts frontmatter tags;
+   `tags --inline` adds the `#tags` written in body text, and `--nested`
+   makes a parent tag match its children (`water` matches `water/pump`).
 
    ```bash
    python3 <skill-dir>/scripts/markdown_kg.py ingest <vault> --keep-previous
@@ -255,6 +286,28 @@ however large it is. When a unit exceeds the size ceiling the engine represents
 it by its child headings; only a run of prose with no structure left gets split,
 at scored break points, never inside a fence, and never at an arbitrary offset.
 A unit that cannot be split is returned whole and marked `oversize`.
+
+## Extend a vault
+
+Everything specific to one vault is a row in its config file, and these keys
+extend what the engine knows about it:
+
+| key | adds |
+|---|---|
+| `entities` | named entities with aliases and a time model |
+| `entity_sources` | entities derived from notes that already have a page each, by folder glob or `kg-type`, which is a cheap way to seed a wiki-shaped vault |
+| `relations` | the inverse name of a link field, such as `up` and `down` |
+| `markers` | custom annotation vocabulary |
+| `link_resolution` | `obsidian` or `relative`, overriding detection |
+
+Edit the config file, then check the edit:
+
+```bash
+python3 <skill-dir>/scripts/markdown_kg.py config <vault>
+```
+
+`config` reports what each row matched and warns on a row that matched
+nothing. It writes nothing.
 
 ## Two corpus shapes
 
@@ -352,10 +405,11 @@ brief as the author's own writing. A graph with no log-dated note returns
   question, when the graph is the wrong tool, and how to verify a config edit
   (READ when a corpus resists the obvious query).
 - `references/config.md` - config field reference: ignore, profiles, slots,
-  entities, markers (READ before editing a vault's config).
+  entities, entity sources, relations, markers (READ before editing a
+  vault's config).
 - `references/annotations.md` - annotation grammar, effects, `kg-type`
   taxonomy, and how agent and user co-write the layer (READ before an
   annotation pass).
 - `references/schema.md` - DB schema reference (READ when writing raw SQL).
-- `tests/` - three fixture vaults plus the unit and behavior suite
+- `tests/` - four fixture vaults plus the unit, behavior and golden suites
   (`python3 -m unittest discover -s skills/markdown-kg/tests`).

@@ -212,8 +212,12 @@ this engine's on the same corpus; its temporality columns and its reserved
 `extractions`/`conflicts` tables folded in. Those tables now carry the inferred
 side of edge provenance: `relate` records evidence-verified inferred relations,
 traversal joins them only behind an explicit flag, and everything ingest
-extracts from link syntax is the extracted side. Contradiction detection over
-entities and community detection remain phase 2. A Postgres/Docker/MCP design
+extracts from link syntax is the extracted side. Wikilinks and standard markdown
+links are edges on the same footing, resolved down to the heading or block they
+name; a markdown link follows Obsidian's resolution rules inside an Obsidian vault
+and plain relative paths anywhere else. `communities` clusters the note graph and
+`related` ranks it from one note. Contradiction detection over entities remains
+phase 2. A Postgres/Docker/MCP design
 stays rejected as over-scaled,
 and an MCP wrapper waits until the CLI surface settles. Full design and the
 dropped-with-reasons list: `tasks/completed/SPEC-VAULT-KG-2026-08-08.md`.

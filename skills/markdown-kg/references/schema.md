@@ -11,6 +11,9 @@ Read this before writing raw SQL against the DB; prefer the CLI subcommands othe
 - [properties](#properties)
 - [tags / aliases](#tags--aliases)
 - [edges](#edges)
+- [anchors](#anchors)
+- [link_fields](#link_fields)
+- [inline_tags](#inline_tags)
 - [members](#members)
 - [entities / entity_aliases / mentions](#entities--entity_aliases--mentions)
 - [ignored](#ignored)
@@ -112,10 +115,65 @@ Resolution rules (mirror Obsidian):
   case-insensitive path suffix; a bare name whose basename collides is recorded
   `ambiguous` with `dst` NULL - the engine never guesses.
 - markdown links resolve as relative paths from the source file (or vault-root
-  paths when leading `/`); only internal `.md` targets become edges - external
-  URLs and asset targets are skipped and counted in the ingest report.
+  paths when leading `/`); only note targets become edges - external URLs and
+  asset targets are skipped and counted in the ingest report. A target with no
+  extension is a note target when that path names a note. Reference-style
+  links (`[text][label]` plus a `[label]: target` definition) become edges
+  like inline ones.
+- in `obsidian` link mode (an `.obsidian/` folder, or config
+  `link_resolution`), a markdown link that misses its relative path and is not
+  an explicit `./`, `../` or `/` path resolves like a wikilink: by basename or
+  path suffix, `ambiguous` on a collision. In `relative` mode it stays
+  `unresolved`.
 
-Graph traversal (`neighbors`, `path`) runs undirected over `resolved` edges.
+Graph traversal (`neighbors`, `path`, `related`, `communities`) runs undirected
+over `resolved` edges.
+
+## anchors
+
+One row per link that names a heading or a block, in either syntax:
+`[[Note#Heading]]`, `[[Note#A#B]]`, `[[Note#^block]]`, `[x](note.md#heading)`,
+and same-note links (`[[#Heading]]`, `[x](#heading)`). The note-level link is
+still a row in `edges`; this table adds where inside the note it points.
+Every ingest wipes and rebuilds it, and `links --anchors` and
+`backlinks --anchors` read it.
+
+| column | meaning |
+|---|---|
+| `src` | source note id |
+| `section_id` | the section the link was written in |
+| `dst` | resolved note id, NULL when the note did not resolve; the source note for a same-note link |
+| `target` | the note target as written, `''` for a same-note link |
+| `anchor` | what followed `#`, as written (md anchors URL-decoded) |
+| `dst_section` | the smallest indexed section containing the heading or block. A short heading that was rolled up into its parent resolves to the parent |
+| `dst_line` | 1-indexed line of the heading or block in the target note; `0` unless resolved |
+| `syntax` | `wiki` or `md` |
+| `status` | `resolved`; `anchor-missing` when the note exists and the heading or block does not; otherwise the note-level status (`unresolved`, `ambiguous`, `ignored`) |
+
+A heading matches on its exact text (case-insensitive), then on its plain text
+with emphasis characters removed, then on the slug a renderer generates for it
+(lowercase, punctuation dropped, spaces as hyphens, `-1`, `-2` for a repeated
+heading). `A#B` requires `A` among the ancestors of `B`. Where two headings
+match, the first in the note wins. A `^id` matches a block identifier at the
+end of a line or on a line of its own.
+
+## link_fields
+
+One row per link written under a named field: a frontmatter key or an inline
+field (`name:: [[Target]]`). The columns are `(src, field, origin, target,
+dst, status, section_id)`; `origin` is `frontmatter` or `inline`, and `field`
+is lowercased with spaces as hyphens. Every row here is also a row in
+`edges`; this table adds the name. Every ingest wipes and rebuilds it, and
+`fields` reads it.
+
+## inline_tags
+
+The `#tags` written in body text, with columns `(note_id, section_id, tag,
+count)`. A tag is
+letters, digits, `_`, `-` and `/` after a `#` that starts a line or follows
+whitespace, with at least one letter. A `#` in code, in a comment or in
+frontmatter is never a tag. The `tags` table stays frontmatter-only, and
+`tags --inline` reads both. Every ingest wipes and rebuilds this table.
 
 ## members
 
@@ -128,9 +186,14 @@ member.
 The registry, derived from the config file's `entities` array and therefore
 rebuilt every ingest.
 
-- `entities(canonical, type, time, note, t_start, t_end)` - `type` is free text
-  and nothing branches on it. `time` is `static`, `evolving`, or `bounded` with
-  `t_start`/`t_end` filled from a `<start>..<end>` config value.
+- `entities(canonical, type, time, note, t_start, t_end, origin)` - `type` is
+  free text and nothing branches on it. `time` is `static`, `evolving`, or
+  `bounded` with `t_start`/`t_end` filled from a `<start>..<end>` config value.
+  `origin` is `config` for a hand-written row and `note` for one an
+  `entity_sources` row derived.
+- `entity_skips(note_id, name, reason)` - derived names an ingest left out: a
+  note a hand-written row already names, a name another entity already claims,
+  or a name shorter than three characters. `config` reports them.
 - `entity_aliases(canonical, alias)` - the canonical name plus every declared
   alias. An alias claimed by two canonicals fails the ingest loudly.
 - `mentions(canonical, section_id, note_id, doc_date, count)` - gazetteer hits
@@ -180,8 +243,8 @@ different object; `relations --conflicts` is the worklist,
 `relations --retire <id>` is the exit for a wrong relation: status flips to
 `retired` - sticky, never resurrected by reconcile, out of traversal, the
 default listing, and the dup/conflict checks, with the row and its evidence
-kept per the never-delete rule. Contradiction detection over entities and
-community detection remain phase 2.
+kept per the never-delete rule. Contradiction detection over entities remains
+phase 2.
 
 ## session_reads
 

@@ -49,6 +49,9 @@ Edge kinds, strongest first:
   (capped at 200), each edge carrying the expanded path as its target.
 - `include-sys` (`#include <...>`) is recorded external and never joins
   liveness.
+- **Declared** (`declared`, `declared-live`) - written by a config `links`
+  row, line `0`, target equal to the destination path. `declared` is weak;
+  `declared-live` is executable and drives liveness like an import.
 
 Statuses: `resolved` means the target exists in this repo; `external` means
 a package, stdlib module, base image or marketplace action outside the repo;
@@ -72,6 +75,22 @@ Both survive re-ingest; coverage rows for deleted files are pruned.
 ### ignored
 What an ingest excluded and why: `config:<glob>`, `oversize`,
 `symlink-or-escape`.
+
+### components
+`(name, file_id)`: one row per file a config `components` row matched. A file
+in two components has two rows. Names, aliases and descriptions stay in the
+config; `components` reads both.
+
+### annotations
+`(file_id, line, marker, owner, payload, symbol_id)`: one row per comment
+marker in a project file. `owner` is the name in `TODO(name):`, `symbol_id` the
+innermost symbol containing the line or `''`. Capped at 20000 rows per ingest;
+`meta.annotations_seen` holds the uncapped count.
+
+### meta
+`manifest` is the fingerprint read commands compare before answering: the
+indexable file set, the config, lockfiles and the engine's `INDEX_REV`, so a
+parser or schema change re-ingests an unchanged repo once.
 
 ### FTS
 `symbols_fts(id, qualname, body)` indexes each symbol's text slice;
