@@ -216,9 +216,18 @@ class TestDeterministicFails(unittest.TestCase):
             return run(str(f))
 
     def test_missing_pointer_fails(self):
-        code, err = self._fail(index="# Memory Index\n\n(empty)\n")
-        self.assertEqual(code, 2)
-        self.assertIn("no pointer", err)
+        """Another memory with no pointer fails; the one just written only gets a reminder,
+        since its pointer line lands in the next write."""
+        with tempfile.TemporaryDirectory() as t:
+            f = make_dir(Path(t), index="# Memory Index\n\n(empty)\n")
+            code, err = run(str(f))
+            self.assertEqual(code, 0, err)
+            self.assertIn("add its pointer line", err)
+            other = f.with_name("other-fact.md")
+            other.write_text(GOOD_MEM.replace("sample-fact", "other-fact"), encoding="utf-8")
+            code, err = run(str(other))
+            self.assertEqual(code, 2)
+            self.assertIn("sample-fact.md: no pointer", err)
 
     def test_missing_index_fails(self):
         code, err = self._fail(index=None)

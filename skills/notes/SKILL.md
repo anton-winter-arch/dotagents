@@ -158,9 +158,11 @@ shorter or equal: rewrite in place, never annotate.
 
 ## Step 7 - Re-measure and report
 
-Re-run the step 2 measurement and report **before → after** counts. A hot file may
-end larger only when the session added that much active state, and the report says
-so. **Reporting a number instead of running the relocation is not a close.**
+Re-run the step 2 measurement once and report **before → after** counts. A hot file
+may end larger only when the session added that much active state, and the report
+says so. **Reporting a number instead of running the relocation is not a close**,
+but one relocation pass is the whole job: a file still over budget after it is
+reported with the decision it needs, never swept again.
 
 Then: files updated or created, what moved to cold storage, and anything left out.
 A restructure too large for this sweep becomes a `todo.md` entry naming the

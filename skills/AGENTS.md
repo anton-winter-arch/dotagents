@@ -42,7 +42,7 @@ live-project details, personal constants, credentials, or paths that name a
 person or machine. Write every skill for an outside reader, because it has one;
 anything project-specific belongs in that project's own repo, and anything
 private to this repo belongs in `tasks/`, which is held back from publication.
-The pre-commit gate (`/my-security-review`) scans for exactly these, so a slip
+The commit gate (the `sanitize` skill's `gate`) scans for exactly these, so a slip
 is caught mechanically - but write as if the gate were not there.
 
 **Systems of record stay behind the interface.**

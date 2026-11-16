@@ -5,34 +5,13 @@ description: Pre-merge security gate for agent tooling - skills, subagents, comm
 
 # My Security Review Checklist
 
-## Overview
-
-A tight, runnable security gate for the kind of code in this ecosystem: **agent
-skills, subagents, slash commands, hooks, shell and sync scripts, dotfiles, and
-plugin/MCP configuration.** This is not web-app security - for that, use
-`agent-skills:security-and-hardening`. This checklist exists because agent
-tooling has its own attack surface: arbitrary command execution via hooks,
-untrusted LLM/agent output flowing into actions, secrets sitting in config
-files, and destructive file operations on a synced source of truth.
-
-Run it **before merge, not after.** The review is the gate.
-
-**It is a pre-push ritual, not an audit.** It runs several times a day, so its
-scope is the files this session changed, read against every domain below, plus
-the whole folder of any skill or hook that did not exist before. The standards
-do not relax with the scope: a changed line gets the full checklist. What the
-ritual does not do is sweep the rest of the repository - that is a separate job
-the user asks for by name, and a reviewer that drifts into it reports late on a
-tree that has already moved.
-
-## When to Use
-
-- Before **pushing to a remote**, over everything committed since the last push: skills, subagents, commands, hooks, settings files, shell and sync scripts
-- At the **end of a session**, as the wrap-up gate, over the files the session created or edited, as listed by the caller
-- **On demand**, when the user asks for a review of a file, a diff, or pasted content
-- Before **installing, updating, or trusting a plugin or MCP server**
-- Never on an individual edit, hook change, or local commit
-- Whenever code will **consume untrusted input** - agent inbox messages, web/MCP responses, file contents, command output
+The one rubric for reviewing agent tooling. To run a review, spawn the
+`my-security-reviewer` subagent over the changed files (the staged set, else the unpushed
+range, plus any files the user names); it preloads this checklist and owns the procedure,
+budget and report format. Where no subagent is available, apply the checklist inline.
+It covers the changed files and the whole folder of any new skill or hook, once per piece
+of work, and never sweeps the rest of the repository. Why each check exists, the OWASP
+agentic mapping and a red-flag summary are in [references/rationale.md](references/rationale.md).
 
 ## The Checklist
 
@@ -76,13 +55,6 @@ or destructive file ops as Critical until proven otherwise.
 
 ### 4a. Hidden characters: what the reviewer sees vs what the model reads
 
-Reviewing a diff is reviewing *rendered* text, but the model reads codepoints.
-Characters that render as nothing, or that reorder the display without reordering
-the bytes, let an attacker put one instruction on the screen and a different one in
-the agent's context. The reviewer approves what they saw. This applies to every file
-an agent reads as instructions - skills, subagents, commands, rules, hooks, settings,
-inbox messages - and to anything pasted in from a web page, an issue, or another agent.
-
 - [ ] Run the scanner over changed files: `python3 skills/my-security-review-checklist/scripts/unicode_smuggle_check.py <path>...` (add `--json` for machine output, `--strict` to fail on warnings). Exit 1 means a finding.
 - [ ] No **TAG characters** (`U+E0000-U+E007F`). These mirror ASCII inside an invisible plane, so a whole sentence of them occupies zero pixels. There is no legitimate use in prose or source; treat any hit as Critical and as evidence of a deliberate injection attempt, not an encoding accident.
 - [ ] No **bidi overrides or isolates** (`U+202A-U+202E`, `U+2066-U+2069`) - the Trojan Source attack, where displayed order and byte order disagree.
@@ -115,11 +87,7 @@ inbox messages - and to anything pasted in from a web page, an issue, or another
 
 ### 7a. Network exposure: never bind a local service off loopback
 
-Local model servers, MCP servers over HTTP, dev servers and debug endpoints are
-almost always **unauthenticated**. They assume they are unreachable, and a bind
-address is the only thing enforcing that. Moving one off loopback publishes an
-open endpoint to every device on the network, and on a cafe or hotel LAN, to
-strangers. Treat any such change as **Critical** until proven otherwise.
+Treat any change that moves a local service off loopback as **Critical** until proven otherwise.
 
 - [ ] **No `0.0.0.0`, `::`, or a routable IP bound by a host process.** Loopback
       (`127.0.0.1`, `::1`, `localhost`) is the only acceptable default for anything
@@ -149,10 +117,6 @@ strangers. Treat any such change as **Critical** until proven otherwise.
 
 ### 7b. Egress & persistence
 
-Sections 4 and 4a cover what comes in. These cover what leaves, and what survives
-after a review passes. Both are how a single bad skill becomes an ongoing problem
-rather than a one-off.
-
 - [ ] **Every outbound path is intentional.** A skill that reads local files and
       also fetches a URL, posts to an inbox, or pushes a branch has an exfiltration
       route. The combination is the risk, not either half. Name where data goes and
@@ -172,19 +136,11 @@ rather than a one-off.
 
 ### 8. Portability & personal-constant hygiene (no user/device overfitting)
 
-A shared source of truth (`~/.agents`) syncs to every machine and every user context, so
-a path that only resolves on the author's box is a defect - it silently breaks on another
-device and can leak the username into git history. **On macOS, prefer `~/`-relative (docs)
-or `"$HOME/..."` (shell); discover context, don't hardcode it.**
-
-The rule generalizes beyond paths: **no hardcoded personal fact the agent can't infer at
-runtime.** Anything personal - username, real name, email, GitHub handle/repo URL, vault or
-project names, hostnames - must be discovered live (session context, env vars, `$HOME`,
-`git config`/`git remote`, workspace metadata) or asked of the user in real time, never
-baked into shared tooling.
+**Prefer `~/`-relative (docs) or `"$HOME/..."` (shell); discover context, don't hardcode it.**
 
 - [ ] **No user-specific absolute paths.** The sweep (`python3 skills/wrap-up/scripts/closeout_lint.py <paths>`)
-      reports home directories and email addresses as `station-path`; rewrite each hit and re-run it.
+      reports home directories and email addresses as `station-path`; rewrite each real hit,
+      and name a false positive (a stand-in, or a line the change did not touch) with its reason.
 - [ ] **No device/vault overfitting.** No hardcoded hostname, single-vault path, or absolute
       path to one repo in something meant to be shared/global. A global skill/script must
       **discover** its context (`git rev-parse --show-toplevel`, CWD, `$HOME`), not assume one location.
@@ -202,6 +158,13 @@ baked into shared tooling.
       surfaced for judgment, never hard-failed: whether it came from a real
       tracker cannot be decided by shape, and a test that tries goes stale at
       once. Judge the value, say why, and let the author rule.
+- [ ] **Judge the value, not the shape.** An obviously synthetic stand-in is never a
+      finding, and raising one as new is a defect in the review: `OKF` is Google's
+      public Open Knowledge Format; `BEGIN PRIVATE KEY` in a file holding no key
+      material is a fixture or rule table, though a live-credential prefix (`AKIA`,
+      `ghp_`, `github_pat_`, `sk-`, `xox…`) never qualifies; an absolute path or
+      project name in prose describing another repo is a mention, since a personal
+      constant is one the tooling would *use*.
 - [ ] **Commit messages meet the published-file bar.** They travel with the history
       and cannot be scrubbed from a clone that already pulled them: no identifiers,
       project or vault names, personal constants or station paths, and no process
@@ -214,13 +177,11 @@ baked into shared tooling.
       only *username-bearing* absolute paths (`/Users/<name>/...`) are the defect.
 - [ ] **Fix, don't just flag:** rewrite `/Users/<name>/X` → `~/X` (markdown/prose) or
       `"$HOME/X"` (shell - `~` does not expand inside quotes); replace a hardcoded
-      single-repo path with root discovery. Apply the fix, then re-run the scan to confirm zero hits.
+      single-repo path with root discovery.
 
 ### 9. The multi-agent surface
 
-Sections 1-8 review one agent editing files. These risks only exist once work fans
-out across agents, sessions or repos, and none of them are visible in a single diff -
-each needs a question asked of the *arrangement*, not the change.
+Ask these of the arrangement, not the change: they only exist once work fans out.
 
 - [ ] **Memory and context are a write surface.** Anything an agent reads as
       instruction next session - `MEMORY.md` and its linked files, rules files, a
@@ -255,52 +216,10 @@ each needs a question asked of the *arrangement*, not the change.
       permissions - and confirm it matches what the prose claims. A documented scope
       is not a control; §7 already says this, and it applies hardest here.
 
-**Mapping to OWASP Top 10 for Agentic Applications 2026** (published 2025-12-09; that
-is the artifact's real name - "OWASP Agentic Top 10" is a colloquial contraction that
-matches no OWASP document). This table exists so a coverage claim stays checkable; the
-sections above stay organized by artifact, because that is how a review is actually run.
+## Done when
 
-| OWASP | Covered by |
-|---|---|
-| ASI01 Agent Goal Hijack | §4, §4a |
-| ASI02 Tool Misuse | §3, §7 |
-| ASI03 Identity & Privilege Abuse | §1, §7 - thin by design: a single-operator station has one principal |
-| ASI04 Agentic Supply Chain | §5 - **plugin and MCP install trust only.** Whether a catalog or corpus entry understates a license or reads as an endorsement to install is not covered by any section; that discipline is convention, not a gate |
-| ASI05 Unexpected Code Execution | §2, §3 |
-| ASI06 Memory & Context Poisoning | §9 |
-| ASI07 Insecure Inter-Agent Communication | §9 |
-| ASI08 Cascading Failures | §9 - parallel fan-out only; sequential retry storms and escalation loops are uncovered |
-| ASI09 Human-Agent Trust Exploitation | §4a |
-| ASI10 Rogue Agents | §9 |
-
-## Red Flags
-
-- A hook or script that builds a command string from untrusted content
-- `rm -rf "$VAR/..."` where `$VAR` could be empty or attacker-influenced
-- Secrets, tokens, or `.env` contents in a staged diff
-- **`0.0.0.0`, `::`, or `OLLAMA_HOST` set to anything routable** - an
-  unauthenticated local service published to the network
-- Installing a plugin/MCP server from an unverified or look-alike source
-- Untrusted agent/web/MCP output being executed or obeyed as an instruction
-- **Any invisible or display-reordering character in a file an agent reads as instructions** - a Unicode tag character (`U+E0000-U+E007F`) has no innocent explanation, and a bidi override means the rendered diff and the bytes disagree
-- Destructive file ops on `~/.agents` or `~/.claude` with no archive/git safety net
-- Wildcard permission grants in `settings.json`
-- A **username-bearing absolute path** (`/Users/<name>/...`, `/home/<name>/...`) in a shared/global skill, script, or doc - or a global tool hardcoded to one vault/device instead of discovering its context
-- Any **hardcoded personal fact** (name, email, GitHub handle/repo URL, vault/project name, hostname) in shared tooling that the agent could instead infer from session context, env vars, git config/metadata, or ask for in real time
-- A **memory, rules, or skill file edited from content an agent returned** - the persistence channel written from an untrusted one
-- A **write-capable fan-out with no ceiling** - no agent cap, no spend cap, no wall-clock cap - or one where two workers can write the same file
-
-## Verification
-
-Before you call the change safe:
-
-- [ ] `sanitize gate` clean on the staged set or the unpushed range, or each finding judged
-- [ ] Every new/changed command, hook, and script reviewed line-by-line
-- [ ] All untrusted-input paths validated and never executed/obeyed blindly
-- [ ] Hidden-character scan clean - `unicode_smuggle_check.py` exits 0 on the changed files, and any variation-selector warnings were confirmed to sit on real emoji
-- [ ] Destructive operations are reversible (archive + git) and guarded against empty vars
-- [ ] Any new plugin/MCP source verified as official and trusted
-- [ ] Path-hygiene scan clean - no `/Users/<name>/` or `/home/<name>/` in shared files; any found were rewritten to `~/`/`$HOME` or root-discovery
-- [ ] Personal-constant scan clean - no names, emails, handles, personal repo URLs, or private vault/project names in shared tooling; all such context is derived at runtime or asked for live
-- [ ] Multi-agent surface checked where the change touches memory, rules, an agent channel, or a fan-out - and skipped, deliberately, where it does not
-- [ ] All **Critical** and **Important** findings resolved or explicitly deferred with justification
+Every new or changed command, hook and script was read line by line, section 9 was
+applied where the change touches memory, rules, an agent channel or a fan-out (and
+skipped on purpose where it does not), and every **Critical** and **Important** finding
+is resolved or deferred with a stated reason. The review then ends; it is not run again
+over its own fixes unless the user asks for a re-review.

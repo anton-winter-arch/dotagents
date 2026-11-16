@@ -86,7 +86,7 @@ def sse(event: str, payload) -> bytes:
 # contributes a short turn to a round, so it keeps main's model (real tool
 # work in an unfamiliar repo needs it) but thinks less. A seat's own model
 # or effort - from the roster or the invite - overrides both. Code-level
-# rather than config keys: SPEC-GROUP-CHAT-V1 makes new config keys beyond
+# rather than config keys, since SPEC-GROUP-CHAT-V1 makes new config keys beyond
 # seats.json an ask-first change.
 SEAT_MODEL = "sonnet"
 SEAT_EFFORT = "low"

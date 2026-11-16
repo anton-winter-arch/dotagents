@@ -19,7 +19,7 @@ A UI that was never rendered and looked at is unfinished, however clean its sour
 5. **Build the hero and story peak first, then prove one representative composition** with long content and a non-happy state before repeating it ([stress checks](references/finishing.md#content-stress-checks)). Choose [named moves](references/foundations.md#named-moves) that realize the direction and fit the project's [browser floor](references/foundations.md#platform-capabilities), and label mock data as mock.
 6. **Implement with the project's tools**, keeping content order, user control, visible focus, and every piece of task information across widths and motion preferences ([reduced motion](references/interaction.md#reduced-motion), [state matrix](references/finishing.md#state-matrix)).
 7. **Run the source gate** below and record every retained exception ([handling findings](references/tells.md#handling-findings)).
-8. **Run the render gate** below as a loop until the captures show the committed direction and every probe finding is fixed or explained ([the render loop](references/finishing.md#the-render-loop), [direction review](references/finishing.md#direction-review)).
+8. **Run the render gate** below as a loop of at most three rounds, until the captures show the committed direction and every probe finding is fixed or explained ([the render loop](references/finishing.md#the-render-loop), [direction review](references/finishing.md#direction-review)).
 9. **Report** with the template below, claiming only what a capture, measurement, or command showed ([reporting findings](references/finishing.md#reporting-findings)).
 
 ## Design read and direction

@@ -90,9 +90,14 @@ def main() -> int:
         body_all.append(text)
         stem = f.stem
 
-        # Pointer in the index (unindexed memory is never recalled).
+        # Pointer in the index (unindexed memory is never recalled). The file just
+        # written cannot have its pointer yet, since the two land in separate writes,
+        # so for it the missing line is a reminder, not a failure to undo the write over.
         if f.name not in index_text and stem not in index_text:
-            errors.append(f"{f.name}: no pointer line in MEMORY.md (an unindexed memory is dead weight)")
+            if f.name == p.name:
+                warns.append(f"{f.name}: add its pointer line to MEMORY.md next")
+            else:
+                errors.append(f"{f.name}: no pointer line in MEMORY.md (an unindexed memory is dead weight)")
 
         fm = frontmatter(text)
         if fm is None:

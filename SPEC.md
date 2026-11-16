@@ -24,9 +24,8 @@ authors or forks (**34 skills** `agent-conference`, `agent-cc-configs-sync`,
 release and loads no description;
 **9 subagents** `my-security-reviewer`, `supervisor`, `ai-engineer`, `advisor`,
 `researcher`, `reader`, `worker`, `curator`, `support-local`;
-**14 commands** `advisor`, `agent-mail`, `my-security-review`, `reflect`,
-`wrap-up`, `cmon`, `voice`, and the agent-skills aliases `spec`, `plan`, `build`, `test`,
-`review`, `code-simplify`, `ship` - the aliases carry
+**8 commands** `advisor`, and the agent-skills aliases `spec`, `plan`, `build`, `test`,
+`review`, `code-simplify`, `ship` (a skill is its own slash command, so none shadows one) - the aliases carry
 `disable-model-invocation: true`, so they exist for the user's slash invocation
 and fallback on stations without the plugin, without double-listing beside the
 plugin's own entries in the model's context).
