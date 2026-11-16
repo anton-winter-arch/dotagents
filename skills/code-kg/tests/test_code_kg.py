@@ -16,6 +16,7 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_DIR / "scripts"))
 
 import code_kg  # noqa: E402
+from fixture_copy import copy_fixture  # noqa: E402
 
 FIXTURE = Path(__file__).resolve().parent / "fixture-repo"
 ARTIFACTS = Path(__file__).resolve().parent / "artifacts"
@@ -1248,7 +1249,7 @@ class TestDepsIndexing(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.repo = Path(self.tmpdir) / "repo"
-        shutil.copytree(DEPS_FIXTURE, self.repo)
+        copy_fixture(DEPS_FIXTURE, self.repo)
         for rel, body in VENDORED.items():
             dst = self.repo / rel
             dst.parent.mkdir(parents=True, exist_ok=True)

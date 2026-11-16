@@ -62,8 +62,8 @@ means two candidates matched and none was chosen.
 
 ### symbol_edges
 Rebuilt by every ingest. Python is read with `ast`; JS/TS, bash, SQL and
-HTML with stdlib scanners that blank comments and strings first (see
-SKILL.md for what each language records).
+HTML are read with stdlib scanners that blank comments and strings first.
+SKILL.md, under Interpreting output, lists what each language records.
 
 | column | meaning |
 |---|---|
@@ -80,9 +80,9 @@ A def nested inside a function is not a symbol: its calls are filed under
 the enclosing symbol.
 
 ### data_edges
-Rebuilt by every ingest: Python, bash (`env`), SQL (`table`), HTML and CSS
-(`css-*`). Literal names only: a table, file or variable name built at run
-time is not guessed.
+Rebuilt by every ingest from Python, bash (`env`), SQL (`table`), HTML and
+CSS (`css-*`). Only literal names are recorded: a table, file or variable
+name built at run time is not guessed.
 
 | column | meaning |
 |---|---|
@@ -90,7 +90,8 @@ time is not guessed.
 | `kind` | `read`, `write`, `open` (a database file), `define` and `use` (CSS names), `passes` (an argument of a resolved call), `param` (one row per parameter, numbered as callers pass them) |
 | `node_kind` | `global`, `table`, `file`, `env`, `config`, `css-class`, `css-id`, `css-var`, `literal`, `param` |
 | `node` | the name; `param:<name>` when the caller's parameter names it; a global is `file::NAME` |
-| `status` | `resolved` (named in the source), `param` (named by a parameter), `weak` (config keys, found by receiver name) |
+| `status` | `resolved` (named in the source), `param` (named by a parameter), `weak` (config keys found by receiver name, and bash `$NAME` reads that may be shell variables) |
+| `provenance` | `extracted`; `flow` reports a row it reached through a call as `inferred`, at query time |
 | `via` | the call that touches the node, or `callee#arg` for `passes` |
 
 Tables come from SQL string literals passed to `execute`, `executemany`
@@ -100,8 +101,8 @@ FROM and JOIN read.
 ### observed_calls / observed_entries / observed_lines
 Written by `coverage run --yes --calls`, keyed by `run_id` (a `runs` row of
 kind `trace-run` whose `detail` holds the command, exit code, process count
-and the tree manifest at run time). They survive ingest like `coverage`;
-`observed_lines` is pruned to live files.
+and the tree manifest at run time). Like `coverage`, these tables survive
+ingest; `observed_lines` is pruned to files still indexed.
 
 | table | columns |
 |---|---|

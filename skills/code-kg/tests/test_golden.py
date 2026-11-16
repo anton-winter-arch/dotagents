@@ -25,6 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import code_kg  # noqa: E402
+from fixture_copy import copy_fixture  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 GOLDEN = HERE / "golden"
@@ -75,7 +76,7 @@ def capture(fixture: str) -> dict:
     tmp = Path(tempfile.mkdtemp(prefix="codekg-golden-"))
     try:
         repo = tmp / "repo"
-        shutil.copytree(HERE / fixture, repo)
+        copy_fixture(HERE / fixture, repo)
         r = str(repo)
         got: dict = {}
 

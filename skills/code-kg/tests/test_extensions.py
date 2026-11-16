@@ -21,6 +21,7 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_DIR / "scripts"))
 
 import code_kg  # noqa: E402
+from fixture_copy import copy_fixture  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 FIXTURE = HERE / "fixture-extend"
@@ -364,7 +365,7 @@ class RepoCase(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="codekg-ext-"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.repo = self.tmp / "repo"
-        shutil.copytree(FIXTURE, self.repo)
+        copy_fixture(FIXTURE, self.repo)
         self.cfg_file = self.repo / ".code-kg" / "config.json"
         # Read commands refuse to run without a database; after this, a
         # config edit is picked up by the drift check on the next read.

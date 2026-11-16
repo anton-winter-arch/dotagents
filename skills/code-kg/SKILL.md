@@ -40,9 +40,9 @@ machine-readable.
 | `dead <repo>` | liveness tiers (below) |
 | `dead <repo> --symbols` | python functions, classes and methods with no resolved use from another symbol, and those whose only callers are name matches on an unknown receiver; static evidence, not proof |
 | `callers <repo> <symbol>` | what calls, references, imports, decorates or extends a symbol, plus `name_matched` calls on an unknown receiver; `--depth N` follows resolved edges |
-| `callees <repo> <symbol>` | every call site, reference, import, decorator and base in a symbol, resolved or not; `<file>::<module>` is a file's top-level code |
+| `callees <repo> <symbol>` | every call site, reference, import, decorator and base class in a symbol, resolved or not; `<file>::<module>` names a file's top-level code |
 | `extends <repo> <class>` | a class's bases and subclasses |
-| `flow <repo> <symbol> --depth N` | the globals, SQL tables, files, environment variables and config keys a python symbol reads and writes, then through each resolved call, with a callee's parameter replaced by the literal or parameter the call site passes; `inferred` rows name the call chain in `via` |
+| `flow <repo> <symbol> --depth N` | the globals, SQL tables, files, environment variables and config keys a python symbol reads and writes, directly and through each resolved call, with each callee parameter replaced by the literal or parameter the call site passes; `inferred` rows name the call chain in `via` |
 | `touches <repo> kind:name` | the symbols that read, write, define or use one data node: `table:readings`, `env:HOME`, `file:out.txt`, `global:path.py::NAME`, `config:key`, `css-class:card`, `css-id:main`, `css-var:accent` |
 | `god-nodes <repo>` | files ranked by executable-edge degree - fan-in, fan-out, blast radius |
 | `communities <repo>` | subsystems clustered from the import graph, with a modularity score |
@@ -52,17 +52,17 @@ machine-readable.
 | `data <repo> --inspect STORE --yes` | read-only look inside one SQLite store (consent gate below) |
 | `coverage <repo> ingest <artifact>` | fold in coverage.py json / lcov / istanbul |
 | `coverage <repo> run --yes` | run the repo's OWN tests under coverage |
-| `coverage <repo> run --yes --calls` | run them under the stdlib tracer instead: lines, function entries and calls of every python process the tests start, recorded by run, lines folded into coverage |
-| `observed <repo> <symbol>` | the symbol's static edges against the last traced run, each `observed`, `caller_never_ran`, `line_never_ran` or `line_ran_not_called`, with entry count, lines run, and calls the static graph missed; `STALE` when the tree changed since |
-| `observed <repo> --gap` | observed calls not in the static graph, and those that confirm a listed candidate: the measure of what static reading misses |
+| `coverage <repo> run --yes --calls` | run them under the stdlib tracer instead, recording the lines, function entries and calls of every python process the tests start, keyed by run; the lines also fold into coverage |
 | `coverage <repo> report` | per-file %, symbols no test ever executed |
+| `observed <repo> <symbol>` | the symbol's static edges checked against the last traced run, each marked `observed`, `caller_never_ran`, `line_never_ran` or `line_ran_not_called`, with the entry count, lines run and calls the static graph missed; marked `STALE` when the tree has changed since that run |
+| `observed <repo> --gap` | observed calls missing from the static graph, and those that confirm a listed candidate, which together measure what static reading misses |
 | `stats <repo>` | counts, edge statuses, parse errors, agent-layer topology |
 | `index <repo> --out PATH` | rendered repo map (marked auto-generated) |
 | `components <repo> [NAME]` | declared components: members, edges that cross between them, unassigned files |
 | `annotations <repo> [--marker M] [--path GLOB]` | comment markers (TODO, FIXME, HACK, XXX, NOTE, BUG, custom) with line and enclosing symbol |
 | `config <repo>` | what each config row matched; warns on a row that matched nothing |
 | `docs <repo> <path>` | the doc sections that link to a file, with line ranges, from every `markdown-kg` vault indexed inside the repo; without that skill or a vault database it says so in one line and lists the doc links this graph holds |
-| `docs <repo> <path> --mentions` | also the sections that name the file, or a symbol defined in it, in a code span. `corroborated` is true when the same doc also names or links the file; a bare name without that can be a coincidence. Each list is cut at `--limit` (default 50, 0 for all) after ranking: the file named outright, then corroborated symbols, then primary docs before archives; `status` says `COMPLETE` or what was cut |
+| `docs <repo> <path> --mentions` | also the sections that name the file, or a symbol defined in it, in a code span. `corroborated` is true when the same doc also names or links the file; without it, a bare name can be a coincidence. Each list is ranked (the file named outright, then corroborated symbols, then primary docs before archives) and cut at `--limit` (default 50, 0 for all); `status` says `COMPLETE` or what was cut |
 | `resolve <repo> <text> ...` | what a name written in a doc refers to: `file`, `symbol`, `ambiguous` (several definitions, listed, never guessed), `weak` (one definition, but an ordinary word or a member written without its class) or `none` |
 
 `init` ends with a health readout: detected profile, aliases loaded (and
@@ -156,33 +156,33 @@ watches lockfiles, so re-`ingest` after installing packages.
   investigate, never a delete list. With coverage folded in, `dead` adds
   the sharpest cut: live but never executed by any recorded run.
 - **Symbol edges (python, static):** each row has a `status`. `resolved`
-  names the target symbol: through imports, a local def, `self`/`cls`/
-  `super()` and base classes in the repo, a local bound once to a repo
-  class, or a parameter annotated with one. `weak` (one method of that
-  name in the repo) and `ambiguous` (several, listed) are calls on a
-  receiver whose class is unknown: evidence of a name, not a target.
+  names the target symbol, reached through imports, a local def,
+  `self`/`cls`/`super()` and base classes in the repo, a local bound once
+  to a repo class, a parameter annotated with one, `self.attr.m()` when
+  the class's methods assign `attr` an instance of one repo class, or an import from a
+  folder the file adds to `sys.path`. `weak` (one method of that name in
+  the repo) and `ambiguous` (several, listed) are calls on a receiver whose
+  class is unknown: evidence of a name, not a target. A call through a
+  module-level dict of functions lists those functions as candidates.
   `external` is stdlib, builtins or a package; `unresolved` is a local
   value, a nested function or a name nothing binds. Calls through
   `getattr`, registries and overrides reached by dispatch are invisible.
-  Also resolved: `self.attr.m()` when the class's methods assign `attr` one
-  repo class, and imports from a folder the file adds to `sys.path`. A
-  call through a module-level dict of functions lists them as candidates.
-- **Other languages (stdlib scanners, comments and strings blanked
-  first):** JS/TS calls, `new`, JSX elements, values and types resolved
-  through `import`/`require` bindings and `extends`; bash calls to
-  functions defined in the file or a file it sources, `export` writes and
-  `$NAME` reads (`weak`); SQL views, indexes, triggers and functions
-  linked to the tables they name, `REFERENCES` between tables, and table
-  reads and writes; HTML and CSS meet on `css-class`, `css-id` and
-  `css-var` data nodes (`define` in stylesheets and `<style>`, `use` in
-  markup and `var()`), and an inline `on*=` handler is a `weak` call to a
-  script function of that name. JS method calls on an object other than an
-  imported namespace stay `unresolved`.
+- **Other languages:** stdlib scanners blank comments and strings first.
+  JS/TS calls, `new`, JSX elements, values and types resolve through
+  `import`/`require` bindings and `extends`; JS method calls on an object
+  other than an imported namespace stay `unresolved`. Bash records calls
+  to functions defined in the file or a file it sources, `export` writes
+  and `$NAME` reads (`weak`). SQL links views, indexes, triggers and
+  functions to the tables they name and tables to each other through
+  `REFERENCES`, and records table reads and writes. HTML and CSS meet on
+  `css-class`, `css-id` and `css-var` data nodes (`define` in stylesheets
+  and `<style>`, `use` in markup and `var()`), and an inline `on*=`
+  handler is a `weak` call to a script function of that name.
 - **Observed edges add use, never remove it.** Only `line_ran_not_called`
-  is evidence against a static edge, and only for that run's inputs. Read
-  `entries` and lines run before trusting a quiet answer: thin coverage
-  proves little. `dead --symbols` moves a symbol the run entered into
-  `observed_live`.
+  is evidence against a static edge, and only for that run's inputs.
+  Before trusting a result that shows no use, read `entries` and the lines
+  run, because a run that executed little code proves little.
+  `dead --symbols` moves a symbol the run entered into `observed_live`.
 - **`communities` is only as good as its modularity score** - read that
   first. Above ~0.3 the groups are real structure; near zero the repo has no
   community structure and the split is arbitrary. Groups follow edges, not
