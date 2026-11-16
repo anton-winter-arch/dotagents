@@ -2041,19 +2041,20 @@ def _finish_sections(out: list[dict], text: str) -> None:
             if parent:
                 sec["doc_date"] = parent["doc_date"]
     for sec in out:
-        keep = [True] * (sec["char_end"] - sec["char_start"])
-        for other in out:
-            if other is sec:
-                continue
-            if (other["char_start"] >= sec["char_start"]
-                    and other["char_end"] <= sec["char_end"]
-                    and (other["char_end"] - other["char_start"])
-                    < (sec["char_end"] - sec["char_start"])):
-                for i in range(other["char_start"] - sec["char_start"],
-                               other["char_end"] - sec["char_start"]):
-                    keep[i] = False
+        start, end = sec["char_start"], sec["char_end"]
+        nested = sorted((o["char_start"] - start, o["char_end"] - start) for o in out
+                        if o is not sec and o["char_start"] >= start and o["char_end"] <= end
+                        and 0 < o["char_end"] - o["char_start"] < end - start)
+        # The body minus the nested spans, cut by slices rather than per character.
         body = sec["body"]
-        sec["own_body"] = "".join(c for c, k in zip(body, keep) if k)
+        limit = max(0, min(len(body), end - start))
+        pieces, pos = [], 0
+        for a, b in nested:
+            if a > pos:
+                pieces.append(body[min(pos, limit):min(a, limit)])
+            pos = max(pos, b)
+        pieces.append(body[min(pos, limit):limit])
+        sec["own_body"] = "".join(pieces)
         sec["own_words"] = word_count(sec["own_body"])
 
 
@@ -2644,6 +2645,41 @@ def alias_pattern(alias: str) -> re.Pattern:
                       re.IGNORECASE)
 
 
+def _case_fold_tables() -> tuple[dict, dict] | None:
+    """Tables that fold text the way re.IGNORECASE compares it, character by
+    character: U+0130 to its one-character lowercase, then str.lower(), then each
+    of re's extra equivalence groups (dotless i, long s, Greek variants) to one
+    member. None when this Python hides the groups; callers then skip the fold."""
+    try:
+        from re import _casefix
+        groups = [(k, *v) for k, v in _casefix._EXTRA_CASES.items()]
+    except Exception:           # private API: any change in a new Python turns the fold off
+        try:
+            import sre_compile
+            groups = [tuple(g) for g in sre_compile._equivalences]
+        except Exception:
+            return None
+    equiv = {}
+    for group in groups:
+        rep = chr(min(group))
+        for cp in group:
+            equiv[cp] = rep
+    return {0x130: "i"}, equiv
+
+
+_FOLD = _case_fold_tables()
+
+
+def case_fold(text: str) -> str | None:
+    """`text` folded so that a case-insensitive alias match implies the folded
+    alias is a substring of it; None when the fold is unavailable."""
+    if _FOLD is None:
+        return None
+    if text.isascii():          # both tables leave ASCII unchanged
+        return text.lower()
+    return text.translate(_FOLD[0]).lower().translate(_FOLD[1])
+
+
 ENTITY_NAME_MIN = 3      # a derived name shorter than this matches too much
 ENTITY_NAME_MAX = 120
 
@@ -2773,15 +2809,20 @@ def load_entities(con: sqlite3.Connection, cfg: dict, sections: list[dict],
 
     # longest alias first, so a longer name is never eaten by a shorter one
     pairs.sort(key=lambda p: (-len(p[0]), p[0]))
-    compiled = [(alias_pattern(name), canonical) for name, canonical in pairs]
+    compiled = [(case_fold(name), alias_pattern(name), canonical) for name, canonical in pairs]
     mentions = 0
     for sec in sections:
         # own_body, so a name inside a child section is counted against that
         # child and not a second time against the unit that contains it
         text = strip_code(sec["own_body"])
+        folded = case_fold(text)
         claimed = [False] * len(text)
         counts: dict[str, int] = {}
-        for pattern, canonical in compiled:
+        for alias_folded, pattern, canonical in compiled:
+            # A cheap substring test first: the regex can only match where the
+            # folded alias occurs, and most sections name no entity at all.
+            if folded is not None and alias_folded not in folded:
+                continue
             for m in pattern.finditer(text):
                 if any(claimed[m.start():m.end()]):
                     continue

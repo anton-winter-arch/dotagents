@@ -3274,5 +3274,21 @@ class FolderNameTests(VaultCase):
         self.assertFalse((self.vault / "vault-kg").exists())
 
 
+class CaseFoldPrefilter(unittest.TestCase):
+    """load_entities skips a section unless the folded alias occurs in its folded
+    text, so every match re.IGNORECASE finds must survive the fold. These pairs
+    are the characters where str.lower() and re disagree."""
+
+    def test_every_case_insensitive_match_survives_the_fold(self):
+        if markdown_kg.case_fold("x") is None:
+            self.skipTest("this Python hides re's case table; the prefilter is off")
+        pairs = [("kiss", "KİSS"), ("kiss", "kiſs"), ("kiss", "KIß"), ("Odysseus", "ODYSSEUS'S"),
+                 ("σοφία", "ΣΟΦΊΑ"), ("ὀδυσσεύς", "ὈΔΥΣΣΕΎΣ"), ("µm", "μM"), ("ok", "OK")]
+        for alias, text in pairs:
+            with self.subTest(alias=alias, text=text):
+                if markdown_kg.alias_pattern(alias).search(text):
+                    self.assertIn(markdown_kg.case_fold(alias), markdown_kg.case_fold(text))
+
+
 if __name__ == "__main__":
     unittest.main()
