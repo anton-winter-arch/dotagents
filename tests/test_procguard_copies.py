@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Every procguard.py in the repo is byte-identical to the canonical copy.
 
-    python3 tests/test_procguard_copies.py
+    python3 tests/test_procguard_copies.py           # check
+    python3 tests/test_procguard_copies.py --sync    # copy the canonical file over every copy
 
 Skills are self-contained, so each spawning skill (and hooks/, and the app) keeps its own
 copy of skills/skill-authoring/scripts/procguard.py. A fix lands in the canonical file and
-is copied out with `cp`; this test fails on the first copy that drifted.
+is copied out with `--sync`, which uses the same file match as the check: never a
+hand-written glob, since `*procguard.py` also matches test_procguard.py.
 """
 from __future__ import annotations
 
@@ -30,8 +32,16 @@ class ProcguardCopies(unittest.TestCase):
         found = copies()
         self.assertIn(CANONICAL, found)
         drifted = [str(p.relative_to(ROOT)) for p in found if p.read_bytes() != want]
-        self.assertEqual(drifted, [], "copy the canonical file over these with cp")
+        self.assertEqual(drifted, [], "run this file with --sync")
 
 
 if __name__ == "__main__":
-    unittest.main()
+    import sys
+    if sys.argv[1:] == ["--sync"]:
+        want = CANONICAL.read_bytes()
+        for path in copies():
+            if path != CANONICAL and path.read_bytes() != want:
+                path.write_bytes(want)
+                print(f"synced {path.relative_to(ROOT)}")
+    else:
+        unittest.main()

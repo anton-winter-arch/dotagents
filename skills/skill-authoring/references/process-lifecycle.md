@@ -14,7 +14,7 @@ Every such resource has an owner and a bounded life, and it ends with its owner 
 
 1. **Spawn through `procguard`.**
    - Agent CLIs, model runners, shells, servers and any child that can run for more than a few seconds start through `procguard.run`, `procguard.popen`, or `procguard.wrap` with `procguard.stop` for async callers.
-   - The canonical file is `skills/skill-authoring/scripts/procguard.py`. A skill that spawns keeps a byte-identical copy in its own `scripts/`, and `tests/test_procguard_copies.py` fails on any drift.
+   - The canonical file is `skills/skill-authoring/scripts/procguard.py`. A skill that spawns keeps a byte-identical copy in its own `scripts/`. `tests/test_procguard_copies.py` fails on any drift, and its `--sync` mode copies a canonical fix out to every copy.
    - A plain `subprocess.run` is allowed only for a short utility (`git`, `ps`, `sysctl`, a version probe) and always sets `timeout=`.
    - `skills/skill-authoring/scripts/check_spawns.py` enforces both rules.
 2. **Every child has a wall-clock cap.**

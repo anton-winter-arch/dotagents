@@ -1,359 +1,261 @@
-"""Run a child process so that it, and everything it starts, cannot outlive its owner.
+#!/usr/bin/env python3
+"""Tests for procguard.py - stdlib only, and every test runs real processes.
 
-The house lifecycle standard (references/process-lifecycle.md) requires every
-spawn of an agent CLI, model runner, shell, server or other long-lived child to
-go through this module. It gives each child:
+    python3 -m unittest discover -s skills/skill-authoring/tests
 
-- its own process group, led by a small watchdog (this file run as a script);
-- a mandatory wall-clock cap, enforced by the watchdog and by the caller;
-- a stop sequence of SIGTERM to the whole group, a grace period, then SIGKILL
-  to each process still verified to be in that group. SIGTERM first matters:
-  `claude -p` kills its own command trees and runs its SessionEnd hooks on
-  SIGTERM, and a bare SIGKILL skips that cleanup;
-- a parent-death check: the watchdog stops the group when its parent goes away,
-  even when the parent was SIGKILLed and could run no cleanup of its own.
-
-Safety: the module only ever signals the process group it created, and only
-SIGKILLs a process after `ps` shows it is still in that group. It never matches
-processes by name. A child that calls setsid() leaves the group and is outside
-this guarantee; the reaper hook reports such escapees.
-
-Library use (a drop-in for subprocess.run, timeout required):
-
-    import procguard
-    procguard.install_signal_handlers()      # once, in main()
-    proc = procguard.run(argv, input=text, capture_output=True, text=True, timeout=600)
-
-`run` raises subprocess.TimeoutExpired after the whole group is stopped. For
-async callers, start `wrap(argv, timeout)` with start_new_session=True and stop
-it with `stop(pid)`.
-
-Shell use (what a background agent command runs under):
-
-    python3 procguard.py --timeout 600 -- <command> [args...]
-
-A pipeline goes inside the wrapped command (`-- sh -c 'a | b'`). Piping the
-guard's own output (`procguard.py ... | tee log`) in a job-control shell makes
-the watchdog lead the pipeline's group, so its stop would reach `tee` too.
-
-Exit status: the child's own status; 124 when the time limit stopped it; 143
-when the parent went away or a signal stopped it. Each copy of this file in the
-repo is byte-identical to skills/skill-authoring/scripts/procguard.py, and a
-test enforces that.
+Each test tags the processes it starts with a fresh random token in their argv,
+asserts on the processes carrying that token, and kills only those in tearDown.
+The cases replay each way an owner can go away: a timeout, a child that ignores
+SIGTERM, a grandchild left behind, the parent SIGKILLed, SIGTERMed or hung up,
+and the shell around the command-line form killed.
 """
-from __future__ import annotations
 
-import argparse
-import atexit
 import os
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import unittest
+import uuid
+from pathlib import Path
 
-GRACE = 5.0
-MAX_GRACE = 60.0
-POLL = 0.2
-EXIT_TIMEOUT = 124
-EXIT_STOPPED = 143
-_STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
+SCRIPT = SCRIPTS / "procguard.py"
+sys.path.insert(0, str(SCRIPTS))
 
-_live: dict[int, subprocess.Popen] = {}
-_lock = threading.Lock()
-_closed = False
+import procguard  # noqa: E402
 
-
-# ---------- caller side ----------
-
-def wrap(argv: list[str], timeout: float, grace: float = GRACE) -> list[str]:
-    """The argv that runs `argv` under a watchdog owned by this process. Start
-    it with start_new_session=True so the watchdog leads a fresh group."""
-    if timeout is None or not 0 < float(timeout) < float("inf"):    # also refuses NaN
-        raise ValueError("procguard needs a positive, finite timeout")
-    return [sys.executable, "-I", os.path.abspath(__file__), "--parent", str(os.getpid()),
-            "--timeout", f"{float(timeout):g}", "--grace", f"{float(grace):g}", "--", *argv]
+PY = sys.executable
+SLEEPER = "import time; time.sleep(300)"
+SPAWNER = ("import subprocess, sys, time\n"
+           "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)', sys.argv[1]])\n"
+           "time.sleep(300)")
+STUBBORN = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(300)"
+LEAVER = ("import subprocess, sys\n"
+          "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)', sys.argv[1]])")
 
 
-def stop(pid: int, grace: float = GRACE, leader_alive: bool = True) -> None:
-    """Stop the group led by watchdog `pid`. While the watchdog is alive and not
-    yet reaped, ask it (it runs the TERM-then-KILL sequence on its group). Once
-    it has been reaped its pid may belong to someone else, so only the group is
-    signaled: a group id is never reused while any member of it lives. The
-    group gets SIGKILL if it outlasts the stop window. Safe to call twice."""
-    if leader_alive:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            leader_alive = False
-    if not leader_alive:
-        if not _group_alive(pid):
-            return        # nothing left in it, and its id may now lead another group
-        try:
-            os.killpg(pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            return
-    end = time.monotonic() + 2 * grace + 2
+def tagged(token: str) -> list:
+    out = subprocess.run(["ps", "-A", "-o", "pid=,stat=,command="], capture_output=True, text=True,
+                         timeout=10).stdout
+    pids = []
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and token in parts[2] and not parts[1].startswith("Z"):
+            pids.append(int(parts[0]))
+    return pids
+
+
+def wait_for(cond, limit: float = 10.0) -> bool:
+    end = time.monotonic() + limit
     while time.monotonic() < end:
-        if not _group_alive(pid):
-            return
-        time.sleep(POLL)
-    try:
-        os.killpg(pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
+        if cond():
+            return True
+        time.sleep(0.1)
+    return cond()
 
 
-def popen(argv: list[str], *, timeout: float, grace: float = GRACE, **kwargs) -> subprocess.Popen:
-    """subprocess.Popen under a watchdog. The caller must eventually wait() on it
-    or call stop(proc.pid); stop_all() and the exit handlers cover the rest.
-    stdin defaults to /dev/null rather than the caller's terminal."""
-    for banned in ("start_new_session", "preexec_fn", "process_group"):
-        if banned in kwargs:
-            raise ValueError(f"procguard sets the process group itself; drop {banned}")
-    kwargs.setdefault("stdin", subprocess.DEVNULL)
-    # Spawn and register under the lock, so a closing stop_all() either sees
-    # this child or refuses it; none slips in between.
-    with _lock:
-        if _closed:
-            raise RuntimeError("procguard is stopping; no new children")
-        proc = subprocess.Popen(wrap(argv, timeout, grace), start_new_session=True, **kwargs)
-        _live[proc.pid] = proc
-    return proc
+class Base(unittest.TestCase):
+    def setUp(self):
+        self.token = f"procguard-test-{uuid.uuid4().hex}"
 
-
-def run(argv: list[str], *, timeout: float, input=None, capture_output: bool = False,
-        check: bool = False, grace: float = GRACE, **kwargs) -> subprocess.CompletedProcess:
-    """subprocess.run under a watchdog. On timeout, or on any exception while
-    waiting (KeyboardInterrupt included), the whole group is stopped before the
-    exception propagates."""
-    if capture_output:
-        kwargs["stdout"] = kwargs["stderr"] = subprocess.PIPE
-    if input is not None:
-        kwargs["stdin"] = subprocess.PIPE
-    started = time.monotonic()
-    proc = popen(argv, timeout=timeout, grace=grace, **kwargs)
-    try:
-        # The watchdog enforces `timeout`; this backstop covers a watchdog that
-        # could not run its own stop sequence.
-        out, err = proc.communicate(input=input, timeout=float(timeout) + 2 * grace + 5)
-    except subprocess.TimeoutExpired:
-        _finish(proc, grace)
-        raise subprocess.TimeoutExpired(argv, timeout)
-    except BaseException:
-        _finish(proc, grace)
-        raise
-    _forget(proc)
-    # 124 alone could be the child's own status; the elapsed time tells them apart.
-    if proc.returncode == EXIT_TIMEOUT and time.monotonic() - started >= float(timeout):
-        raise subprocess.TimeoutExpired(argv, timeout, output=out, stderr=err)
-    if check and proc.returncode:
-        raise subprocess.CalledProcessError(proc.returncode, argv, out, err)
-    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
-
-
-def stop_all(grace: float = GRACE, close: bool = False) -> None:
-    """Stop every group this process still owns. Threads blocked in run() then
-    return, so an executor's shutdown no longer waits on a hung child. With
-    `close`, which the signal handlers use, every later popen() or run() is
-    refused, so a worker thread cannot start a child after the stop."""
-    global _closed
-    with _lock:
-        if close:
-            _closed = True
-        procs = list(_live.values())
-    for proc in procs:
-        _finish(proc, grace)
-
-
-def install_signal_handlers() -> None:
-    """Make SIGTERM and SIGHUP behave like Ctrl-C, after stopping every owned
-    group first. Call once from the main thread of a CLI that spawns."""
-    def handler(signum, frame):
-        stop_all(close=True)
-        raise KeyboardInterrupt(signal.Signals(signum).name)
-    for sig in _STOP_SIGNALS:
-        signal.signal(sig, handler)
-
-
-def release(proc: subprocess.Popen) -> None:
-    """Drop a popen() child the caller has already waited on from the registry
-    that stop_all() and the exit handlers walk."""
-    _forget(proc)
-
-
-def _finish(proc: subprocess.Popen, grace: float) -> None:
-    rc = proc.poll()
-    # A watchdog that exited on its own swept its group first; only one that is
-    # still running, or was killed before it could sweep and left members
-    # behind, needs stopping. An empty group is never signaled: its id may
-    # already lead someone else's group.
-    if rc is None or (rc < 0 and _group_alive(proc.pid)):
-        stop(proc.pid, grace, leader_alive=rc is None)
-    for stream in (proc.stdin, proc.stdout, proc.stderr):
-        if stream:
+    def tearDown(self):
+        procguard.stop_all(grace=0.5)
+        for pid in tagged(self.token):
             try:
-                stream.close()
+                os.kill(pid, signal.SIGKILL)
             except OSError:
                 pass
-    try:
-        proc.wait(timeout=grace)
-    except subprocess.TimeoutExpired:
-        pass
-    _forget(proc)
+
+    def assert_gone(self, limit: float = 10.0):
+        self.assertTrue(wait_for(lambda: not tagged(self.token), limit),
+                        f"left running: {tagged(self.token)}")
 
 
-def _forget(proc: subprocess.Popen) -> None:
-    with _lock:
-        _live.pop(proc.pid, None)
+class RunTests(Base):
+    def test_output_and_status(self):
+        p = procguard.run([PY, "-c", "print(42)"], timeout=10, capture_output=True, text=True)
+        self.assertEqual((p.returncode, p.stdout), (0, "42\n"))
+
+    def test_input_reaches_child(self):
+        p = procguard.run([PY, "-c", "import sys; print(sys.stdin.read().upper())"], timeout=10,
+                          input="abc", capture_output=True, text=True)
+        self.assertEqual(p.stdout.strip(), "ABC")
+
+    def test_timeout_is_required(self):
+        with self.assertRaises(TypeError):
+            procguard.run([PY, "-c", "pass"])  # type: ignore[call-arg]
+        for bad in (0, float("nan"), float("inf")):
+            with self.assertRaises(ValueError):
+                procguard.run([PY, "-c", "pass"], timeout=bad)
+
+    def test_child_status_124_is_not_a_timeout(self):
+        p = procguard.run([PY, "-c", "raise SystemExit(124)"], timeout=10)
+        self.assertEqual(p.returncode, 124)
+
+    def test_timeout_stops_the_whole_tree(self):
+        with self.assertRaises(subprocess.TimeoutExpired):
+            procguard.run([PY, "-c", SPAWNER, self.token], timeout=1, grace=0.5)
+        self.assert_gone(5)
+
+    def test_sweep_does_not_depend_on_path(self):
+        with self.assertRaises(subprocess.TimeoutExpired):
+            procguard.run([PY, "-c", SPAWNER, self.token], timeout=1, grace=0.5,
+                          env={"PATH": "/nonexistent"})
+        self.assert_gone(5)
+
+    def test_child_ignoring_sigterm_is_killed(self):
+        start = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            procguard.run([PY, "-c", STUBBORN, self.token], timeout=1, grace=0.5)
+        self.assertLess(time.monotonic() - start, 8)
+        self.assert_gone(5)
+
+    def test_grandchild_left_behind_is_swept(self):
+        p = procguard.run([PY, "-c", LEAVER, self.token], timeout=30, grace=0.5)
+        self.assertEqual(p.returncode, 0)
+        self.assert_gone(5)
+
+    def test_stop_all_unblocks_threads(self):
+        results = []
+
+        def worker():
+            try:
+                results.append(procguard.run([PY, "-c", SLEEPER, self.token], timeout=300, grace=0.5))
+            except BaseException as e:  # noqa: BLE001 - any outcome counts as unblocked
+                results.append(e)
+        threads = [threading.Thread(target=worker) for _ in range(3)]
+        for t in threads:
+            t.start()
+        self.assertTrue(wait_for(lambda: len(tagged(self.token)) >= 3))
+        procguard.stop_all(grace=0.5)
+        for t in threads:
+            t.join(10)
+            self.assertFalse(t.is_alive())
+        self.assertEqual(len(results), 3)
+        self.assert_gone(5)
 
 
-def _group_alive(pgid: int) -> bool:
-    try:
-        os.killpg(pgid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # macOS answers EPERM for a group whose members have all exited but are
-        # not reaped yet: nothing in it can run, so it counts as gone.
-        return False
+class CloseTests(Base):
+    def test_a_closing_stop_refuses_new_children(self):
+        # In a child interpreter: closing is one-way for the process that does it.
+        body = (f"import sys; sys.path.insert(0, {str(SCRIPTS)!r})\n"
+                "import procguard\n"
+                "procguard.stop_all(close=True)\n"
+                "try:\n"
+                "    procguard.run([sys.executable, '-c', 'pass'], timeout=10)\n"
+                "except RuntimeError:\n"
+                "    print('refused')\n")
+        p = subprocess.run([PY, "-c", body], capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.stdout.strip(), "refused", p.stderr)
+
+    def test_a_signal_during_a_spawn_does_not_hang(self):
+        # A signal handler runs stop_all() on the thread that may already hold the
+        # lock inside popen(); the lock must let that same thread back in.
+        body = (f"import sys; sys.path.insert(0, {str(SCRIPTS)!r})\n"
+                "import procguard\n"
+                "with procguard._lock:\n"
+                "    procguard.stop_all(close=True)\n"
+                "print('returned')\n")
+        p = subprocess.run([PY, "-c", body], capture_output=True, text=True, timeout=30)
+        self.assertEqual(p.stdout.strip(), "returned", p.stderr)
+
+    def test_stopping_a_finished_group_signals_nothing(self):
+        p = subprocess.Popen([PY, "-c", "pass"], start_new_session=True)
+        p.wait(10)
+        procguard.stop(p.pid, grace=0.5, leader_alive=False)   # must return at once, no error
 
 
-atexit.register(stop_all)
+class ParentDeathTests(Base):
+    """A parent process that runs a spawner under procguard, then is stopped."""
+
+    def start_parent(self, handlers: bool, capture: bool = False) -> subprocess.Popen:
+        body = (f"import sys; sys.path.insert(0, {str(SCRIPTS)!r})\n"
+                "import procguard\n"
+                + ("procguard.install_signal_handlers()\n" if handlers else "")
+                + f"procguard.run([sys.executable, '-c', {SPAWNER!r}, {self.token!r}], timeout=300, grace=0.5"
+                + (", capture_output=True, text=True" if capture else "") + ")\n")
+        self.tmp = tempfile.TemporaryDirectory()
+        script = Path(self.tmp.name) / "parent.py"
+        script.write_text(body)
+        parent = subprocess.Popen([PY, str(script)], stdin=subprocess.DEVNULL)
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(lambda: parent.poll() is None and parent.kill())
+        self.assertTrue(wait_for(lambda: len(tagged(self.token)) >= 2), "spawner never started")
+        return parent
+
+    def test_parent_sigkill(self):
+        parent = self.start_parent(handlers=False)
+        parent.kill()
+        parent.wait(5)
+        self.assert_gone(8)
+
+    def test_parent_sigkill_while_capturing_output(self):
+        # The watchdog's stderr is then a pipe whose reader is dead; its stop
+        # notice must not cut the sweep short.
+        parent = self.start_parent(handlers=False, capture=True)
+        parent.kill()
+        parent.wait(5)
+        self.assert_gone(8)
+
+    def test_parent_sigterm(self):
+        parent = self.start_parent(handlers=True)
+        parent.send_signal(signal.SIGTERM)
+        parent.wait(10)
+        self.assert_gone(8)
+
+    def test_parent_sighup(self):
+        parent = self.start_parent(handlers=True)
+        parent.send_signal(signal.SIGHUP)
+        parent.wait(10)
+        self.assert_gone(8)
 
 
-# ---------- watchdog side ----------
+class CommandLineTests(Base):
+    def test_time_limit_exit_status(self):
+        p = subprocess.run([PY, str(SCRIPT), "--timeout", "1", "--grace", "0.5", "--",
+                            PY, "-c", SPAWNER, self.token], capture_output=True, text=True, timeout=30)
+        self.assertEqual(p.returncode, procguard.EXIT_TIMEOUT)
+        self.assertIn("time limit", p.stderr)
+        self.assert_gone(5)
 
-def _members(exclude: set[int]) -> list[int]:
-    """Live processes in this watchdog's group, other than `exclude`."""
-    me = os.getpgrp()
-    # By absolute path: a caller's PATH may not hold /bin, and a missing ps
-    # must never be the reason a sweep finds nothing.
-    ps = subprocess.Popen(["/bin/ps", "-A", "-o", "pid=,pgid=,stat="], stdout=subprocess.PIPE,
-                          stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, text=True)
-    try:
-        out, _ = ps.communicate(timeout=5)
-    except subprocess.TimeoutExpired:
-        ps.kill()
-        ps.wait()
-        return []
-    found = []
-    for line in out.splitlines():
-        parts = line.split()
-        if len(parts) < 3 or not parts[0].isdigit() or not parts[1].isdigit():
-            continue
-        pid, pgid, stat = int(parts[0]), int(parts[1]), parts[2]
-        if pgid == me and pid not in exclude and pid != ps.pid and not stat.startswith("Z"):
-            found.append(pid)
-    return found
+    def test_child_status_passes_through(self):
+        p = subprocess.run([PY, str(SCRIPT), "--timeout", "10", "--", PY, "-c", "raise SystemExit(3)"],
+                           timeout=30)
+        self.assertEqual(p.returncode, 3)
 
+    def test_killed_shell_stops_the_group(self):
+        # `; true` keeps the shell alive as the watchdog's parent instead of exec'ing it.
+        cmd = f"{PY} {SCRIPT} --timeout 300 --grace 0.5 -- {PY} -c \"{SPAWNER}\" {self.token}; true"
+        shell = subprocess.Popen(["/bin/sh", "-c", cmd], stdin=subprocess.DEVNULL)
+        self.addCleanup(lambda: shell.poll() is None and shell.kill())
+        self.assertTrue(wait_for(lambda: len(tagged(self.token)) >= 2), "spawner never started")
+        shell.kill()
+        shell.wait(5)
+        self.assert_gone(8)
 
-def _sweep(child: subprocess.Popen, grace: float) -> None:
-    """TERM the group, wait out the grace period, then KILL whatever ps still
-    shows in it. The watchdog's own handlers absorb its copy of the TERM."""
-    me = os.getpid()
-    try:
-        os.killpg(os.getpgrp(), signal.SIGTERM)
-    except OSError:
-        pass
-    end = time.monotonic() + grace
-    while time.monotonic() < end:
-        child.poll()
-        if not _members({me}):
-            return
-        time.sleep(POLL)
-    for pid in _members({me}):
-        try:
-            # Re-check membership at the last moment: a pid from the listing may
-            # have exited and been reused since.
-            if os.getpgid(pid) == os.getpgrp():
-                os.kill(pid, signal.SIGKILL)
-        except OSError:
-            pass
-    end = time.monotonic() + grace
-    while time.monotonic() < end:
-        child.poll()
-        if not _members({me}):
-            return
-        time.sleep(POLL)
+    def test_detached_outlives_its_caller_until_the_time_limit(self):
+        cmd = f"{PY} {SCRIPT} --detached --timeout 2 --grace 0.5 -- {PY} -c \"{SPAWNER}\" {self.token}; true"
+        shell = subprocess.Popen(["/bin/sh", "-c", cmd], stdin=subprocess.DEVNULL)
+        self.addCleanup(lambda: shell.poll() is None and shell.kill())
+        self.assertTrue(wait_for(lambda: len(tagged(self.token)) >= 2), "spawner never started")
+        shell.kill()
+        shell.wait(5)
+        time.sleep(0.6)
+        self.assertGreaterEqual(len(tagged(self.token)), 2, "a detached job must survive its caller")
+        self.assert_gone(8)
 
-
-def _watch(argv: list[str], parent: int, timeout: float, grace: float) -> int:
-    if os.getpgrp() != os.getpid():
-        os.setsid()
-    reason: list[str] = []
-
-    def on_signal(signum, frame):
-        if not reason:
-            reason.append(signal.Signals(signum).name)
-    for sig in _STOP_SIGNALS:
-        signal.signal(sig, on_signal)
-
-    deadline = time.monotonic() + timeout
-    try:
-        child = subprocess.Popen(argv)
-    except OSError as e:
-        _notice(f"procguard: cannot start {argv[0]}: {e}")
-        return 127
-    while True:
-        rc = child.poll()
-        if rc is not None:
-            # The child is done; anything it left in the group goes with it.
-            _sweep(child, grace)
-            return rc if rc >= 0 else 128 - rc
-        if not reason:
-            if parent and os.getppid() != parent:
-                reason.append("parent exited")
-            elif time.monotonic() >= deadline:
-                reason.append(f"time limit {timeout:g} s")
-        if reason:
-            # Sweep before saying anything: when the parent died, its end of our
-            # stderr may be a closed pipe, and a failed write must not skip the sweep.
-            _sweep(child, grace)
-            _notice(f"procguard: stopped {os.path.basename(argv[0])} ({reason[0]})")
-            return EXIT_TIMEOUT if reason[0].startswith("time limit") else EXIT_STOPPED
-        time.sleep(POLL)
-
-
-def _notice(text: str) -> None:
-    try:
-        print(text, file=sys.stderr, flush=True)
-    except (OSError, ValueError):
-        pass
-
-
-def main(args: list[str] | None = None) -> int:
-    # Exact option names only, each at most once: an abbreviation or a repeated
-    # --timeout must never change what a hook that read the line approved.
-    ap = argparse.ArgumentParser(prog="procguard.py", allow_abbrev=False,
-                                 description="Run a command under a wall-clock cap in its own process group; "
-                                             "the whole group stops at the cap or when the caller goes away.")
-    ap.add_argument("--timeout", type=float, required=True, help="seconds before the group is stopped")
-    ap.add_argument("--grace", type=float, default=GRACE,
-                    help=f"seconds between SIGTERM and SIGKILL, at most {MAX_GRACE:g}")
-    ap.add_argument("--parent", type=int, default=0, help="pid whose exit stops the group (default: the caller)")
-    ap.add_argument("--detached", action="store_true",
-                    help="the command is meant to outlive its caller (a hook's follow-up job): "
-                         "only the time limit stops it")
-    ap.add_argument("command", nargs=argparse.REMAINDER, help="-- command [args...]")
-    raw = sys.argv[1:] if args is None else args
-    head = raw[:raw.index("--")] if "--" in raw else raw
-    for opt in ("--timeout", "--grace", "--parent", "--detached"):
-        if sum(1 for t in head if t == opt or t.startswith(opt + "=")) > 1:
-            ap.error(f"{opt} given more than once")
-    a = ap.parse_args(args)
-    if not 0 <= a.grace <= MAX_GRACE:
-        ap.error(f"--grace must be between 0 and {MAX_GRACE:g} seconds")
-    cmd = a.command[1:] if a.command[:1] == ["--"] else a.command
-    if not cmd:
-        ap.error("no command given after --")
-    if not 0 < a.timeout < float("inf"):                            # also refuses NaN
-        ap.error("--timeout must be positive and finite")
-    if a.detached and a.parent:
-        ap.error("--detached and --parent contradict each other")
-    return _watch(cmd, 0 if a.detached else (a.parent or os.getppid()), a.timeout, a.grace)
+    def test_requires_a_command_and_a_positive_timeout(self):
+        for argv in (["--timeout", "5"], ["--timeout", "0", "--", "true"], ["--", "true"],
+                     ["--timeout", "nan", "--", "true"], ["--timeout", "inf", "--", "true"],
+                     ["--timeout", "5", "--det", "--", "true"],              # no abbreviations
+                     ["--timeout", "5", "--timeout", "99999", "--", "true"],  # no repeats
+                     ["--timeout", "5", "--grace", "61", "--", "true"]):
+            p = subprocess.run([PY, str(SCRIPT), *argv], capture_output=True, text=True, timeout=30)
+            self.assertEqual(p.returncode, 2, argv)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    unittest.main()

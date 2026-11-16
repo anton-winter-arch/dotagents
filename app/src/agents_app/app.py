@@ -469,6 +469,21 @@ def _leader_command(pid: int) -> str | None:
         return None
 
 
+def _group_is_ours(pgid: int) -> bool | None:
+    """True when a live member of group pgid is this app, None when ps failed. A
+    leaderless group under a stale pid file's number may be another program's."""
+    try:
+        out = subprocess.run(["/bin/ps", "-A", "-o", "pgid=,command="], capture_output=True,
+                             text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in out.splitlines():
+        group, _, command = line.strip().partition(" ")
+        if group == str(pgid) and "agents_app" in command:
+            return True
+    return False
+
+
 def _signal_server(pgid: int, sig: int) -> None:
     """Signal the server's whole process GROUP, never the bare pid. Each
     agent CLI the lanes spawned runs in its own group under a procguard
@@ -488,13 +503,14 @@ def cmd_down() -> int:
     pid, _port = recorded
     # A pid file can outlive its server (a reboot, a crash that took the group
     # down), and the number can then lead someone else's process group. A live
-    # leader must still be this app's server. A dead leader with live members
-    # is ours: a group id is never reused while any member of it lives.
+    # leader must still be this app's server; with the leader gone, a member of
+    # the group must be this app.
     leader = _leader_command(pid)
-    if leader is None:
+    ours = _group_is_ours(pid) if leader == "" and _group_alive(pid) else True
+    if leader is None or ours is None:
         print(f"could not check process {pid}, so nothing was signaled; run `agents down` again")
         return 1
-    if leader and _SERVER_MARK not in leader:
+    if (leader and _SERVER_MARK not in leader) or not ours:
         print("not running (the recorded pid now belongs to another program; stale pid file removed)")
     elif _group_alive(pid):
         _signal_server(pid, signal.SIGTERM)

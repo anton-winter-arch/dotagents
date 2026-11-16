@@ -60,7 +60,9 @@ EXIT_STOPPED = 143
 _STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 
 _live: dict[int, subprocess.Popen] = {}
-_lock = threading.Lock()
+# Reentrant: a signal handler runs stop_all() on the main thread, possibly while
+# that same thread holds the lock inside popen(); a plain Lock would hang there.
+_lock = threading.RLock()
 _closed = False
 
 

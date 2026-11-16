@@ -106,7 +106,10 @@ def segments(command: str) -> list[list[str]]:
     out: list[list[str]] = []
     current: list[str] = []
     for tok in tokens:
-        if tok in SEPARATOR_TOKENS:
+        # shlex merges a run of punctuation into one token (`;\n`, `&&\n`, `|(`), so any
+        # all-punctuation token holding a separator character separates; redirects
+        # (`>`, `>&`, `&>`) hold none and stay words.
+        if tok in SEPARATOR_TOKENS or (not tok.strip(";&|()<>\n") and any(c in tok for c in ";|()\n")):
             if current:
                 out.append(current)
             current = []

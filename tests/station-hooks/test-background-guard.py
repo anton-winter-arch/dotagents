@@ -68,6 +68,8 @@ class BackgroundCase(unittest.TestCase):
         f"{PG} --timeout 60 -- python3 -I -",
         f"git status; {PG} --timeout 60 -- make",
         f"{PG} --timeout 10 -- sleep 1 > >(sleep 999)",                              # runs outside the guard
+        f"cd /tmp;\nsleep 99999\n{PG} --timeout 10 -- true",                         # `;\n` is one token
+        f"cd /tmp &&\nsleep 99999\n{PG} --timeout 10 -- true",
         f"cd {TARGET.parent} && python3 procguard.py --timeout 10 -- sleep 1",        # relative path
         f"{PG} --timeout 10 -- echo " + "x" * 33_000,                                 # too long to check
     ]

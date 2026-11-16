@@ -54,7 +54,7 @@ python3 "<skill-dir>/../skill-authoring/scripts/check_spawns.py" <files>   # exi
 timeout 30 python3 ~/.claude/hooks/reaper.py --report                       # skip if the hook is not installed
 ```
 
-Write the list, one diff of those files and the sweep (`--json`) to the scratchpad and spawn `my-security-reviewer` with the three paths. Pass `model: sonnet` unless the list holds executable surface (scripts, hooks, settings, a new skill) or a claim about the outside world (a package, endpoint, version). Skip the review only when the list is under ten prose files, none under `skills/`, `specs/`, `agents/`, `commands/` or `app/`, and the sweep is clean.
+Spawn `my-security-reviewer` with the file list and the sweep's FAIL and WARN lines in the prompt, each with what you already ruled on it; it reads the diff from git itself. Pass `model: sonnet` unless the list holds executable surface (scripts, hooks, settings, a new skill) or a claim about the outside world (a package, endpoint, version). Skip the review only when the list is under ten prose files, none under `skills/`, `specs/`, `agents/`, `commands/` or `app/`, and the sweep is clean.
 
 Spawn `curator` alongside it only when the user asks for a presentation pass, over the changed reader-facing files that `notes` does not write: skill bodies, references, agent and command files, and published docs. Its scope never includes frontmatter, `README.md`, `SPEC.md` or `tasks/`.
 

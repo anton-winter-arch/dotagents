@@ -257,6 +257,24 @@ def test_cmd_down_signals_nothing_when_ps_fails(monkeypatch, tmp_path):
     assert (tmp_path / "pid").exists()
 
 
+def test_cmd_down_leaves_a_leaderless_foreign_group_alone(monkeypatch, tmp_path):
+    """A stale pid file's number can name another program's group whose leader
+    exited while its members run on; with no member that is this app, nothing
+    is signaled and the stale file goes."""
+    import os as os_module
+    from agents_app import app as app_module
+    monkeypatch.setenv("AGENTS_APP_HOME", str(tmp_path))
+    (tmp_path / "pid").write_text("4242\n8765\n")
+    monkeypatch.setattr(os_module, "killpg", lambda *a: pytest.fail("signaled a foreign group"))
+    monkeypatch.setattr(app_module, "_leader_command", lambda pid: "")
+    monkeypatch.setattr(app_module, "_group_alive", lambda pgid: True)
+    monkeypatch.setattr(app_module, "_group_is_ours", lambda pgid: False)
+    monkeypatch.setattr(app_module, "_release_local_models", lambda: None)
+
+    assert app_module.cmd_down() == 0
+    assert not (tmp_path / "pid").exists()
+
+
 def test_agents_snapshot_endpoint():
     from agents_app import registry
     registry._rows.clear()

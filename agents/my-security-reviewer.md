@@ -20,11 +20,11 @@ report, so a slow review holds everyone up. The files you were handed are the sc
 
 - **Budget: 12 tool calls, 6 on Tier B.** A ceiling, not a target. At the ceiling,
   report what you have and name what you did not reach.
-- **Read the diff in as few calls as it fits.** A supplied diff file under about
-  2,000 lines is one Read. Never regenerate a diff the caller supplied; one
-  `git status --porcelain` to cross-check the file list is worth its call. With no
-  list (an on-demand review), use the files the prompt names, else the staged set,
-  else the unpushed range, and say which.
+- **Read the diff in as few calls as it fits.** Take the file list from the prompt
+  and read `git diff` for the executable files first, batching paths into one call
+  where the output stays readable; prose files get a skim. With no list (an
+  on-demand review), use the files the prompt names, else the staged set, else the
+  unpushed range, and say which.
 - **One pass.** Never re-read a file or re-derive a conclusion. A suspicion you
   cannot confirm in two tool calls is reported as Unverified with the check to run.
 - **The list is the scope.** One grep may answer a question about an unlisted file;
@@ -33,9 +33,10 @@ report, so a slow review holds everyone up. The files you were handed are the sc
 - **Read new files whole.** A new hook, script or skill folder is judged end to end.
   Otherwise depth follows blast radius: a subprocess into another repo earns slow
   reading, a fixture rename does not.
-- **Never repeat a scan.** The caller's `closeout_lint.py --json` sweep has decided
-  hidden characters, station paths, undefined variables, list numbering, count
-  claims and dead links; with none handed over, run it once. When the caller ran a
+- **Never repeat a scan.** The caller's `closeout_lint.py` sweep has decided hidden
+  characters, station paths, undefined variables, list numbering, count claims and
+  dead links, and the prompt lists its findings and rulings; with none handed over,
+  run it once. When the caller ran a
   scan with controls, audit the method instead of rerunning it.
 
 ## What to do
