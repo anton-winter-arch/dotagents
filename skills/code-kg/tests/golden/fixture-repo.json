@@ -66,7 +66,7 @@
  },
  "file <REPO> Dockerfile --json": {
   "err": "",
-  "out": "{\n  \"entry_points\": [\n    {\n      \"detail\": \"Dockerfile\",\n      \"kind\": \"dockerfile\"\n    }\n  ],\n  \"file\": \"Dockerfile\",\n  \"inbound\": [\n    {\n      \"kind\": \"copy\",\n      \"src\": \"docker-compose.yml\"\n    }\n  ],\n  \"language\": \"dockerfile\",\n  \"lines\": 6,\n  \"outbound\": [\n    {\n      \"dst\": null,\n      \"kind\": \"uses\",\n      \"status\": \"external\",\n      \"target\": \"python:3.12-slim\"\n    },\n    {\n      \"dst\": \"app/__init__.py\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"app/__init__.py\"\n    },\n    {\n      \"dst\": \"app/helpers.py\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"app/helpers.py\"\n    },\n    {\n      \"dst\": \"app/main.py\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"app/main.py\"\n    },\n    {\n      \"dst\": \"app/only_tested.py\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"app/only_tested.py\"\n    },\n    {\n      \"dst\": \"app/orphan.py\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"app/orphan.py\"\n    },\n    {\n      \"dst\": \"app/util.py\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"app/util.py\"\n    },\n    {\n      \"dst\": \"queries/report.sql\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"queries/report.sql\"\n    },\n    {\n      \"dst\": \"app/main.py\",\n      \"kind\": \"exec\",\n      \"status\": \"resolved\",\n      \"target\": \"app/main.py\"\n    }\n  ],\n  \"parse_error\": \"\",\n  \"role\": \"source\",\n  \"size\": 122,\n  \"symbols\": []\n}\n",
+  "out": "{\n  \"entry_points\": [\n    {\n      \"detail\": \"Dockerfile\",\n      \"kind\": \"dockerfile\"\n    }\n  ],\n  \"file\": \"Dockerfile\",\n  \"inbound\": [\n    {\n      \"kind\": \"copy\",\n      \"src\": \"docker-compose.yml\"\n    }\n  ],\n  \"language\": \"dockerfile\",\n  \"lines\": 6,\n  \"outbound\": [\n    {\n      \"dst\": null,\n      \"kind\": \"uses\",\n      \"status\": \"external\",\n      \"target\": \"python:3.12-slim\"\n    },\n    {\n      \"dst\": \"app/__init__.py\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"app/__init__.py\"\n    },\n    {\n      \"dst\": \"app/helpers.py\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"app/helpers.py\"\n    },\n    {\n      \"dst\": \"app/main.py\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"app/main.py\"\n    },\n    {\n      \"dst\": \"app/only_tested.py\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"app/only_tested.py\"\n    },\n    {\n      \"dst\": \"app/orphan.py\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"app/orphan.py\"\n    },\n    {\n      \"dst\": \"app/util.py\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"app/util.py\"\n    },\n    {\n      \"dst\": \"queries/report.sql\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"queries/report.sql\"\n    },\n    {\n      \"dst\": \"app/main.py\",\n      \"kind\": \"exec\",\n      \"status\": \"resolved\",\n      \"target\": \"app/main.py\"\n    }\n  ],\n  \"parse_error\": \"\",\n  \"role\": \"source\",\n  \"size\": 122,\n  \"symbols\": [\n    {\n      \"kind\": \"stage\",\n      \"lines\": \"1-5\",\n      \"qualname\": \"stage.0\"\n    }\n  ]\n}\n",
   "rc": 0
  },
  "file <REPO> app/__init__.py --json": {
@@ -86,7 +86,7 @@
  },
  "file <REPO> docker-compose.yml --json": {
   "err": "",
-  "out": "{\n  \"entry_points\": [\n    {\n      \"detail\": \"docker-compose.yml\",\n      \"kind\": \"compose\"\n    }\n  ],\n  \"file\": \"docker-compose.yml\",\n  \"inbound\": [],\n  \"language\": \"yaml\",\n  \"lines\": 8,\n  \"outbound\": [\n    {\n      \"dst\": \"Dockerfile\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"Dockerfile\"\n    },\n    {\n      \"dst\": \"queries/report.sql\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"queries/report.sql\"\n    }\n  ],\n  \"parse_error\": \"\",\n  \"role\": \"config\",\n  \"size\": 118,\n  \"symbols\": []\n}\n",
+  "out": "{\n  \"entry_points\": [\n    {\n      \"detail\": \"docker-compose.yml\",\n      \"kind\": \"compose\"\n    }\n  ],\n  \"file\": \"docker-compose.yml\",\n  \"inbound\": [],\n  \"language\": \"yaml\",\n  \"lines\": 8,\n  \"outbound\": [\n    {\n      \"dst\": \"Dockerfile\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"Dockerfile\"\n    },\n    {\n      \"dst\": \"queries/report.sql\",\n      \"kind\": \"copy\",\n      \"status\": \"resolved\",\n      \"target\": \"queries/report.sql\"\n    }\n  ],\n  \"parse_error\": \"\",\n  \"role\": \"config\",\n  \"size\": 118,\n  \"symbols\": [\n    {\n      \"kind\": \"service\",\n      \"lines\": \"2-7\",\n      \"qualname\": \"services.api\"\n    }\n  ]\n}\n",
   "rc": 0
  },
  "file <REPO> infra/modules/net/main.tf --json": {
@@ -226,12 +226,12 @@
  },
  "ingest <REPO> --json": {
   "err": "",
-  "out": "{\n  \"alias_notes\": [\n    \"1 aliases loaded from tsconfig.json\"\n  ],\n  \"dep_files\": 0,\n  \"edges\": 39,\n  \"entry_points\": 7,\n  \"entry_warnings\": [],\n  \"files\": 23,\n  \"ignored\": 0,\n  \"parse_errors\": 0,\n  \"profiles\": [],\n  \"symbols\": 24\n}\n",
+  "out": "{\n  \"alias_notes\": [\n    \"1 aliases loaded from tsconfig.json\"\n  ],\n  \"dep_files\": 0,\n  \"edges\": 39,\n  \"entry_points\": 7,\n  \"entry_warnings\": [],\n  \"files\": 23,\n  \"ignored\": 0,\n  \"parse_errors\": 0,\n  \"profiles\": [],\n  \"symbols\": 28\n}\n",
   "rc": 0
  },
  "init <REPO>": {
   "err": "",
-  "out": "initialized <REPO>/.code-kg\n  1 aliases loaded from tsconfig.json\ningest: {\"alias_notes\": [\"1 aliases loaded from tsconfig.json\"], \"dep_files\": 0, \"edges\": 39, \"entry_points\": 7, \"entry_warnings\": [], \"files\": 23, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [], \"symbols\": 24}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
+  "out": "initialized <REPO>/.code-kg\n  1 aliases loaded from tsconfig.json\ningest: {\"alias_notes\": [\"1 aliases loaded from tsconfig.json\"], \"dep_files\": 0, \"edges\": 39, \"entry_points\": 7, \"entry_warnings\": [], \"files\": 23, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [], \"symbols\": 28}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
   "rc": 0
  },
  "neighbors <REPO> .github/actions/setup/action.yml --depth 2 --json": {
@@ -336,17 +336,17 @@
  },
  "search <REPO> load config --json": {
   "err": "",
-  "out": "{\n  \"question\": \"load config\",\n  \"results\": [\n    {\n      \"file\": \"app/main.py\",\n      \"kind\": \"function\",\n      \"lines\": \"10-12\",\n      \"qualname\": \"load_report_sql\",\n      \"score\": -3.462,\n      \"symbol\": \"app/main.py::load_report_sql\"\n    },\n    {\n      \"file\": \"app/main.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-23\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -1.593\n    }\n  ],\n  \"rung\": \"any-term\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE; +1 relaxed\"\n}\n",
+  "out": "{\n  \"question\": \"load config\",\n  \"results\": [\n    {\n      \"file\": \"app/main.py\",\n      \"kind\": \"function\",\n      \"lines\": \"10-12\",\n      \"qualname\": \"load_report_sql\",\n      \"score\": -3.675,\n      \"symbol\": \"app/main.py::load_report_sql\"\n    },\n    {\n      \"file\": \"app/main.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-23\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -1.593\n    }\n  ],\n  \"rung\": \"any-term\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE; +1 relaxed\"\n}\n",
   "rc": 0
  },
  "search <REPO> main": {
   "err": "",
-  "out": "[symbols/all-terms] COMPLETE\n  app/main.py:15-18  function main\n  infra/main.tf:1-4  module module.net\n  infra/main.tf:5-7  output output.net_id\n  infra/modules/net/main.tf:5-7  output output.vpc_id\n  infra/modules/net/main.tf:1-4  resource resource.aws_vpc.core\n  app/main.py:10-12  function load_report_sql\n",
+  "out": "[symbols/all-terms] COMPLETE\n  app/main.py:15-18  function main\n  infra/main.tf:1-4  module module.net\n  infra/main.tf:5-7  output output.net_id\n  infra/modules/net/main.tf:5-7  output output.vpc_id\n  infra/modules/net/main.tf:1-4  resource resource.aws_vpc.core\n  app/main.py:10-12  function load_report_sql\n  Dockerfile:1-5  stage stage.0\n",
   "rc": 0
  },
  "search <REPO> main --json": {
   "err": "",
-  "out": "{\n  \"question\": \"main\",\n  \"results\": [\n    {\n      \"file\": \"app/main.py\",\n      \"kind\": \"function\",\n      \"lines\": \"15-18\",\n      \"qualname\": \"main\",\n      \"score\": -1.59,\n      \"symbol\": \"app/main.py::main\"\n    },\n    {\n      \"file\": \"infra/main.tf\",\n      \"kind\": \"module\",\n      \"lines\": \"1-4\",\n      \"qualname\": \"module.net\",\n      \"score\": -1.264,\n      \"symbol\": \"infra/main.tf::module.net\"\n    },\n    {\n      \"file\": \"infra/main.tf\",\n      \"kind\": \"output\",\n      \"lines\": \"5-7\",\n      \"qualname\": \"output.net_id\",\n      \"score\": -1.134,\n      \"symbol\": \"infra/main.tf::output.net_id\"\n    },\n    {\n      \"file\": \"infra/modules/net/main.tf\",\n      \"kind\": \"output\",\n      \"lines\": \"5-7\",\n      \"qualname\": \"output.vpc_id\",\n      \"score\": -1.079,\n      \"symbol\": \"infra/modules/net/main.tf::output.vpc_id\"\n    },\n    {\n      \"file\": \"infra/modules/net/main.tf\",\n      \"kind\": \"resource\",\n      \"lines\": \"1-4\",\n      \"qualname\": \"resource.aws_vpc.core\",\n      \"score\": -0.983,\n      \"symbol\": \"infra/modules/net/main.tf::resource.aws_vpc.core\"\n    },\n    {\n      \"file\": \"app/main.py\",\n      \"kind\": \"function\",\n      \"lines\": \"10-12\",\n      \"qualname\": \"load_report_sql\",\n      \"score\": -0.922,\n      \"symbol\": \"app/main.py::load_report_sql\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
+  "out": "{\n  \"question\": \"main\",\n  \"results\": [\n    {\n      \"file\": \"app/main.py\",\n      \"kind\": \"function\",\n      \"lines\": \"15-18\",\n      \"qualname\": \"main\",\n      \"score\": -1.606,\n      \"symbol\": \"app/main.py::main\"\n    },\n    {\n      \"file\": \"infra/main.tf\",\n      \"kind\": \"module\",\n      \"lines\": \"1-4\",\n      \"qualname\": \"module.net\",\n      \"score\": -1.277,\n      \"symbol\": \"infra/main.tf::module.net\"\n    },\n    {\n      \"file\": \"infra/main.tf\",\n      \"kind\": \"output\",\n      \"lines\": \"5-7\",\n      \"qualname\": \"output.net_id\",\n      \"score\": -1.147,\n      \"symbol\": \"infra/main.tf::output.net_id\"\n    },\n    {\n      \"file\": \"infra/modules/net/main.tf\",\n      \"kind\": \"output\",\n      \"lines\": \"5-7\",\n      \"qualname\": \"output.vpc_id\",\n      \"score\": -1.091,\n      \"symbol\": \"infra/modules/net/main.tf::output.vpc_id\"\n    },\n    {\n      \"file\": \"infra/modules/net/main.tf\",\n      \"kind\": \"resource\",\n      \"lines\": \"1-4\",\n      \"qualname\": \"resource.aws_vpc.core\",\n      \"score\": -0.995,\n      \"symbol\": \"infra/modules/net/main.tf::resource.aws_vpc.core\"\n    },\n    {\n      \"file\": \"app/main.py\",\n      \"kind\": \"function\",\n      \"lines\": \"10-12\",\n      \"qualname\": \"load_report_sql\",\n      \"score\": -0.933,\n      \"symbol\": \"app/main.py::load_report_sql\"\n    },\n    {\n      \"file\": \"Dockerfile\",\n      \"kind\": \"stage\",\n      \"lines\": \"1-5\",\n      \"qualname\": \"stage.0\",\n      \"score\": -0.896,\n      \"symbol\": \"Dockerfile::stage.0\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
   "rc": 0
  },
  "search <REPO> render": {
@@ -371,12 +371,12 @@
  },
  "stats <REPO>": {
   "err": "",
-  "out": "files: 23 (bash 2, dockerfile 1, json 2, markdown 1, python 7, sql 1, terraform 2, toml 1, typescript 3, yaml 3)\nroles: ci 1, config 5, docs 1, source 15, test 1\nsymbols: 24  entry points: 7\nedges: external 3, resolved 34, unresolved 1\ningested at: <UTC>\n",
+  "out": "files: 23 (bash 2, dockerfile 1, json 2, markdown 1, python 7, sql 1, terraform 2, toml 1, typescript 3, yaml 3)\nroles: ci 1, config 5, docs 1, source 15, test 1\nsymbols: 28  entry points: 7\nedges: external 3, resolved 34, unresolved 1\ningested at: <UTC>\n",
   "rc": 0
  },
  "stats <REPO> --json": {
   "err": "",
-  "out": "{\n  \"agent_layer\": {\n    \"files\": 0,\n    \"instruction_dirs\": [],\n    \"instruction_files\": [],\n    \"skills\": []\n  },\n  \"coverage_files\": 0,\n  \"edges_by_kind\": {\n    \"copy\": 9,\n    \"exec\": 2,\n    \"from-import\": 4,\n    \"import\": 5,\n    \"import-type\": 1,\n    \"link\": 2,\n    \"module\": 1,\n    \"path-ref\": 3,\n    \"pkg-init\": 4,\n    \"script\": 3,\n    \"source\": 1,\n    \"uses\": 3\n  },\n  \"edges_by_status\": {\n    \"external\": 3,\n    \"resolved\": 34,\n    \"unresolved\": 1\n  },\n  \"entry_points\": 7,\n  \"files_by_language\": {\n    \"bash\": 2,\n    \"dockerfile\": 1,\n    \"json\": 2,\n    \"markdown\": 1,\n    \"python\": 7,\n    \"sql\": 1,\n    \"terraform\": 2,\n    \"toml\": 1,\n    \"typescript\": 3,\n    \"yaml\": 3\n  },\n  \"files_by_origin\": {\n    \"project\": 23\n  },\n  \"files_by_role\": {\n    \"ci\": 1,\n    \"config\": 5,\n    \"docs\": 1,\n    \"source\": 15,\n    \"test\": 1\n  },\n  \"ignored\": {},\n  \"ingested_at\": \"<UTC>\",\n  \"parse_errors\": [],\n  \"symbols\": 24\n}\n",
+  "out": "{\n  \"agent_layer\": {\n    \"files\": 0,\n    \"instruction_dirs\": [],\n    \"instruction_files\": [],\n    \"skills\": []\n  },\n  \"coverage_files\": 0,\n  \"edges_by_kind\": {\n    \"copy\": 9,\n    \"exec\": 2,\n    \"from-import\": 4,\n    \"import\": 5,\n    \"import-type\": 1,\n    \"link\": 2,\n    \"module\": 1,\n    \"path-ref\": 3,\n    \"pkg-init\": 4,\n    \"script\": 3,\n    \"source\": 1,\n    \"uses\": 3\n  },\n  \"edges_by_status\": {\n    \"external\": 3,\n    \"resolved\": 34,\n    \"unresolved\": 1\n  },\n  \"entry_points\": 7,\n  \"files_by_language\": {\n    \"bash\": 2,\n    \"dockerfile\": 1,\n    \"json\": 2,\n    \"markdown\": 1,\n    \"python\": 7,\n    \"sql\": 1,\n    \"terraform\": 2,\n    \"toml\": 1,\n    \"typescript\": 3,\n    \"yaml\": 3\n  },\n  \"files_by_origin\": {\n    \"project\": 23\n  },\n  \"files_by_role\": {\n    \"ci\": 1,\n    \"config\": 5,\n    \"docs\": 1,\n    \"source\": 15,\n    \"test\": 1\n  },\n  \"ignored\": {},\n  \"ingested_at\": \"<UTC>\",\n  \"parse_errors\": [],\n  \"symbols\": 28\n}\n",
   "rc": 0
  },
  "symbols <REPO> .github/actions/setup/action.yml --json": {
@@ -386,7 +386,7 @@
  },
  "symbols <REPO> Dockerfile --json": {
   "err": "",
-  "out": "[]\n",
+  "out": "[\n  {\n    \"exported\": true,\n    \"kind\": \"stage\",\n    \"lines\": \"1-5\",\n    \"qualname\": \"stage.0\",\n    \"symbol\": \"Dockerfile::stage.0\"\n  }\n]\n",
   "rc": 0
  },
  "symbols <REPO> app/__init__.py --json": {
@@ -406,7 +406,7 @@
  },
  "symbols <REPO> docker-compose.yml --json": {
   "err": "",
-  "out": "[]\n",
+  "out": "[\n  {\n    \"exported\": true,\n    \"kind\": \"service\",\n    \"lines\": \"2-7\",\n    \"qualname\": \"services.api\",\n    \"symbol\": \"docker-compose.yml::services.api\"\n  }\n]\n",
   "rc": 0
  },
  "symbols <REPO> infra/modules/net/main.tf --json": {
@@ -1008,6 +1008,26 @@
   "ignored": [],
   "symbols": [
    [
+    ".github/workflows/ci.yml::jobs.test",
+    ".github/workflows/ci.yml",
+    "job",
+    "test",
+    "jobs.test",
+    5,
+    11,
+    1
+   ],
+   [
+    "Dockerfile::stage.0",
+    "Dockerfile",
+    "stage",
+    "stage.0",
+    "stage.0",
+    1,
+    5,
+    1
+   ],
+   [
     "app/helpers.py::clamp_flow",
     "app/helpers.py",
     "function",
@@ -1098,6 +1118,16 @@
     1
    ],
    [
+    "docker-compose.yml::services.api",
+    "docker-compose.yml",
+    "service",
+    "api",
+    "services.api",
+    2,
+    7,
+    1
+   ],
+   [
     "infra/main.tf::module.net",
     "infra/main.tf",
     "module",
@@ -1135,6 +1165,16 @@
     "resource.aws_vpc.core",
     1,
     4,
+    1
+   ],
+   [
+    "package.json::scripts.build",
+    "package.json",
+    "script",
+    "build",
+    "scripts.build",
+    9,
+    9,
     1
    ],
    [

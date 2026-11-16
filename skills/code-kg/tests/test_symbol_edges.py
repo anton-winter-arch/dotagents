@@ -103,6 +103,7 @@ class TestStaticEdges(FixtureCase):
              18),
             (f"{Y}::LoggingStation.summary", f"{S}::Station.summary", "call",
              20),
+            ("scripts/backfill.sh::<module>", f"{C}::<module>", "call", 6),
         ]))
 
     def test_callers_of_a_function(self):
@@ -717,7 +718,9 @@ class TestOtherLanguages(FixtureCase):
             (f"{B}::setup", f"{M}::log", "call", 4),
             (f"{B}::main", f"{B}::setup", "call", 9),
             (f"{B}::main", f"{M}::log", "call", 9),
-            (f"{B}::<module>", f"{B}::main", "call", 12)]))
+            (f"{B}::<module>", f"{B}::main", "call", 12),
+            # `source "$(dirname "$0")/common.sh"` runs that file.
+            (f"{B}::<module>", f"{M}::<module>", "call", 2)]))
         self.assertEqual(self.data("tools/build.sh"), sorted([
             (f"{B}::setup", "write", "env", "BUILD_MODE", 5, "resolved"),
             (f"{B}::main", "read", "env", "HOME_DIR", 10, "weak")]))
@@ -747,6 +750,28 @@ class TestOtherLanguages(FixtureCase):
         self.assertEqual([r["access"] for r in unused], ["define"])
         var = self.json("touches", "css-var:accent")["rows"]
         self.assertEqual(sorted(r["access"] for r in var), ["define", "use"])
+
+    def test_jsx_class_names_are_css_uses(self):
+        (self.repo / "web/card.tsx").write_text(
+            "export function Card() {\n"
+            '  return <div className="card wide">\n'
+            "    <span className='label'>x</span>\n"
+            "  </div>\n"
+            "}\n"
+            '// <p className="card">in a comment</p>\n'
+            'const s = "className=\\"card\\"";\n', encoding="utf-8")
+        run("ingest", str(self.repo))
+        got = self.json("touches", "css-class:card")["rows"]
+        self.assertEqual(sorted((r["src"], r["access"], r["line"])
+                                for r in got if r["src"].startswith(
+                                    "web/card.tsx")),
+                         [("web/card.tsx::Card", "use", 2)])
+        wide = self.json("touches", "css-class:wide")["rows"]
+        self.assertIn(("web/card.tsx::Card", "use"),
+                      [(r["src"], r["access"]) for r in wide])
+        label = self.json("touches", "css-class:label")["rows"]
+        self.assertEqual([(r["src"], r["line"]) for r in label],
+                         [("web/card.tsx::Card", 3)])
 
     def test_template_literal_holes_are_code(self):
         text = "const c = `x ${f(`y ${g({a: 1})}`)} z(`;\n// h()\n'i()'"
@@ -854,7 +879,7 @@ class TestHostileInput(unittest.TestCase):
 
 class TestIndexRevision(unittest.TestCase):
     def test_revision_is_bumped_for_the_new_table(self):
-        self.assertEqual(code_kg.INDEX_REV, 2)
+        self.assertEqual(code_kg.INDEX_REV, 3)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ Read this before writing raw SQL against the DB; prefer the CLI subcommands othe
 - [members](#members)
 - [entities / entity_aliases / mentions](#entities--entity_aliases--mentions)
 - [ignored](#ignored)
+- [other_files](#other_files)
 - [annotations / annotation_candidates](#annotations--annotation_candidates)
 - [extractions / conflicts](#extractions--conflicts)
 - [session_reads](#session_reads)
@@ -239,6 +240,13 @@ rebuilt every ingest.
 
 `(path, rule)` for every file an ignore rule excluded, so `stats` can report
 what was left out and which rule matched.
+
+## other_files
+
+`(path, ext, size, reason)` for every file in the vault that is not a note:
+attachments, data and anything else the walk sees, listed by `tree` and
+never opened. `reason` is `no-parser`. Rebuilt by every ingest; a change to
+any of these files is drift, so `tree` stays current.
 
 ## annotations / annotation_candidates
 

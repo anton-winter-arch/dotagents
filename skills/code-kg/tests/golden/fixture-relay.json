@@ -61,7 +61,7 @@
  },
  "file <REPO> .github/workflows/ci.yml --json": {
   "err": "",
-  "out": "{\n  \"entry_points\": [\n    {\n      \"detail\": \"ci.yml\",\n      \"kind\": \"workflow\"\n    }\n  ],\n  \"file\": \".github/workflows/ci.yml\",\n  \"inbound\": [],\n  \"language\": \"yaml\",\n  \"lines\": 36,\n  \"outbound\": [\n    {\n      \"dst\": null,\n      \"kind\": \"uses\",\n      \"status\": \"external\",\n      \"target\": \"actions/checkout@v4\"\n    },\n    {\n      \"dst\": null,\n      \"kind\": \"uses\",\n      \"status\": \"external\",\n      \"target\": \"actions/setup-python@v5\"\n    },\n    {\n      \"dst\": null,\n      \"kind\": \"script\",\n      \"status\": \"external\",\n      \"target\": \"coverage.json\"\n    },\n    {\n      \"dst\": null,\n      \"kind\": \"uses\",\n      \"status\": \"external\",\n      \"target\": \"actions/upload-artifact@v4\"\n    },\n    {\n      \"dst\": null,\n      \"kind\": \"script\",\n      \"status\": \"external\",\n      \"target\": \"coverage.json\"\n    },\n    {\n      \"dst\": null,\n      \"kind\": \"uses\",\n      \"status\": \"external\",\n      \"target\": \"actions/checkout@v4\"\n    },\n    {\n      \"dst\": \"tsconfig.json\",\n      \"kind\": \"script\",\n      \"status\": \"resolved\",\n      \"target\": \"tsconfig.json\"\n    },\n    {\n      \"dst\": null,\n      \"kind\": \"uses\",\n      \"status\": \"external\",\n      \"target\": \"actions/checkout@v4\"\n    },\n    {\n      \"dst\": \"scripts/release.sh\",\n      \"kind\": \"script\",\n      \"status\": \"resolved\",\n      \"target\": \"scripts/release.sh\"\n    }\n  ],\n  \"parse_error\": \"\",\n  \"role\": \"ci\",\n  \"size\": 812,\n  \"symbols\": []\n}\n",
+  "out": "{\n  \"entry_points\": [\n    {\n      \"detail\": \"ci.yml\",\n      \"kind\": \"workflow\"\n    }\n  ],\n  \"file\": \".github/workflows/ci.yml\",\n  \"inbound\": [],\n  \"language\": \"yaml\",\n  \"lines\": 36,\n  \"outbound\": [\n    {\n      \"dst\": null,\n      \"kind\": \"uses\",\n      \"status\": \"external\",\n      \"target\": \"actions/checkout@v4\"\n    },\n    {\n      \"dst\": null,\n      \"kind\": \"uses\",\n      \"status\": \"external\",\n      \"target\": \"actions/setup-python@v5\"\n    },\n    {\n      \"dst\": null,\n      \"kind\": \"script\",\n      \"status\": \"external\",\n      \"target\": \"coverage.json\"\n    },\n    {\n      \"dst\": null,\n      \"kind\": \"uses\",\n      \"status\": \"external\",\n      \"target\": \"actions/upload-artifact@v4\"\n    },\n    {\n      \"dst\": null,\n      \"kind\": \"script\",\n      \"status\": \"external\",\n      \"target\": \"coverage.json\"\n    },\n    {\n      \"dst\": null,\n      \"kind\": \"uses\",\n      \"status\": \"external\",\n      \"target\": \"actions/checkout@v4\"\n    },\n    {\n      \"dst\": \"tsconfig.json\",\n      \"kind\": \"script\",\n      \"status\": \"resolved\",\n      \"target\": \"tsconfig.json\"\n    },\n    {\n      \"dst\": null,\n      \"kind\": \"uses\",\n      \"status\": \"external\",\n      \"target\": \"actions/checkout@v4\"\n    },\n    {\n      \"dst\": \"scripts/release.sh\",\n      \"kind\": \"script\",\n      \"status\": \"resolved\",\n      \"target\": \"scripts/release.sh\"\n    }\n  ],\n  \"parse_error\": \"\",\n  \"role\": \"ci\",\n  \"size\": 812,\n  \"symbols\": [\n    {\n      \"kind\": \"job\",\n      \"lines\": \"8-21\",\n      \"qualname\": \"jobs.python\"\n    },\n    {\n      \"kind\": \"job\",\n      \"lines\": \"23-27\",\n      \"qualname\": \"jobs.web\"\n    },\n    {\n      \"kind\": \"job\",\n      \"lines\": \"29-35\",\n      \"qualname\": \"jobs.release\"\n    }\n  ]\n}\n",
   "rc": 0
  },
  "file <REPO> migrations/002_runs.sql --json": {
@@ -226,12 +226,12 @@
  },
  "ingest <REPO> --json": {
   "err": "",
-  "out": "{\n  \"alias_notes\": [\n    \"2 aliases loaded from tsconfig.json\"\n  ],\n  \"dep_files\": 0,\n  \"edges\": 369,\n  \"entry_points\": 16,\n  \"entry_warnings\": [],\n  \"files\": 63,\n  \"ignored\": 0,\n  \"parse_errors\": 0,\n  \"profiles\": [],\n  \"symbols\": 288\n}\n",
+  "out": "{\n  \"alias_notes\": [\n    \"2 aliases loaded from tsconfig.json\"\n  ],\n  \"dep_files\": 0,\n  \"edges\": 369,\n  \"entry_points\": 16,\n  \"entry_warnings\": [],\n  \"files\": 63,\n  \"ignored\": 0,\n  \"parse_errors\": 0,\n  \"profiles\": [],\n  \"symbols\": 296\n}\n",
   "rc": 0
  },
  "init <REPO>": {
   "err": "",
-  "out": "initialized <REPO>/.code-kg\n  2 aliases loaded from tsconfig.json\ningest: {\"alias_notes\": [\"2 aliases loaded from tsconfig.json\"], \"dep_files\": 0, \"edges\": 369, \"entry_points\": 16, \"entry_warnings\": [], \"files\": 63, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [], \"symbols\": 288}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
+  "out": "initialized <REPO>/.code-kg\n  2 aliases loaded from tsconfig.json\ningest: {\"alias_notes\": [\"2 aliases loaded from tsconfig.json\"], \"dep_files\": 0, \"edges\": 369, \"entry_points\": 16, \"entry_warnings\": [], \"files\": 63, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [], \"symbols\": 296}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
   "rc": 0
  },
  "neighbors <REPO> .github/workflows/ci.yml --depth 2 --json": {
@@ -336,17 +336,17 @@
  },
  "search <REPO> load config --json": {
   "err": "",
-  "out": "{\n  \"question\": \"load config\",\n  \"results\": [\n    {\n      \"file\": \"tests/test_planner.py\",\n      \"kind\": \"method\",\n      \"lines\": \"17-19\",\n      \"qualname\": \"TestPlanner.setUp\",\n      \"score\": -7.99,\n      \"symbol\": \"tests/test_planner.py::TestPlanner.setUp\"\n    },\n    {\n      \"file\": \"tests/test_report.py\",\n      \"kind\": \"method\",\n      \"lines\": \"10-15\",\n      \"qualname\": \"TestReport.setUp\",\n      \"score\": -6.781,\n      \"symbol\": \"tests/test_report.py::TestReport.setUp\"\n    },\n    {\n      \"file\": \"src/relay/cli.py\",\n      \"kind\": \"function\",\n      \"lines\": \"74-83\",\n      \"qualname\": \"cmd_memory\",\n      \"score\": -6.447,\n      \"symbol\": \"src/relay/cli.py::cmd_memory\"\n    },\n    {\n      \"file\": \"src/relay/cli.py\",\n      \"kind\": \"function\",\n      \"lines\": \"38-48\",\n      \"qualname\": \"cmd_serve\",\n      \"score\": -6.366,\n      \"symbol\": \"src/relay/cli.py::cmd_serve\"\n    },\n    {\n      \"file\": \"src/relay/config.py\",\n      \"kind\": \"function\",\n      \"lines\": \"81-105\",\n      \"qualname\": \"load_config\",\n      \"score\": -6.132,\n      \"symbol\": \"src/relay/config.py::load_config\"\n    },\n    {\n      \"file\": \"src/relay/cli.py\",\n      \"kind\": \"function\",\n      \"lines\": \"51-63\",\n      \"qualname\": \"cmd_compact\",\n      \"score\": -6.112,\n      \"symbol\": \"src/relay/cli.py::cmd_compact\"\n    },\n    {\n      \"file\": \"src/relay/cli.py\",\n      \"kind\": \"function\",\n      \"lines\": \"19-35\",\n      \"qualname\": \"cmd_run\",\n      \"score\": -5.657,\n      \"symbol\": \"src/relay/cli.py::cmd_run\"\n    },\n    {\n      \"file\": \"tests/test_planner.py\",\n      \"kind\": \"class\",\n      \"lines\": \"16-32\",\n      \"qualname\": \"TestPlanner\",\n      \"score\": -5.044,\n      \"symbol\": \"tests/test_planner.py::TestPlanner\"\n    },\n    {\n      \"file\": \"tests/test_report.py\",\n      \"kind\": \"class\",\n      \"lines\": \"9-29\",\n      \"qualname\": \"TestReport\",\n      \"score\": -4.94,\n      \"symbol\": \"tests/test_report.py::TestReport\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
+  "out": "{\n  \"question\": \"load config\",\n  \"results\": [\n    {\n      \"file\": \"tests/test_planner.py\",\n      \"kind\": \"method\",\n      \"lines\": \"17-19\",\n      \"qualname\": \"TestPlanner.setUp\",\n      \"score\": -8.067,\n      \"symbol\": \"tests/test_planner.py::TestPlanner.setUp\"\n    },\n    {\n      \"file\": \"tests/test_report.py\",\n      \"kind\": \"method\",\n      \"lines\": \"10-15\",\n      \"qualname\": \"TestReport.setUp\",\n      \"score\": -6.838,\n      \"symbol\": \"tests/test_report.py::TestReport.setUp\"\n    },\n    {\n      \"file\": \"src/relay/cli.py\",\n      \"kind\": \"function\",\n      \"lines\": \"74-83\",\n      \"qualname\": \"cmd_memory\",\n      \"score\": -6.499,\n      \"symbol\": \"src/relay/cli.py::cmd_memory\"\n    },\n    {\n      \"file\": \"src/relay/cli.py\",\n      \"kind\": \"function\",\n      \"lines\": \"38-48\",\n      \"qualname\": \"cmd_serve\",\n      \"score\": -6.42,\n      \"symbol\": \"src/relay/cli.py::cmd_serve\"\n    },\n    {\n      \"file\": \"src/relay/config.py\",\n      \"kind\": \"function\",\n      \"lines\": \"81-105\",\n      \"qualname\": \"load_config\",\n      \"score\": -6.176,\n      \"symbol\": \"src/relay/config.py::load_config\"\n    },\n    {\n      \"file\": \"src/relay/cli.py\",\n      \"kind\": \"function\",\n      \"lines\": \"51-63\",\n      \"qualname\": \"cmd_compact\",\n      \"score\": -6.159,\n      \"symbol\": \"src/relay/cli.py::cmd_compact\"\n    },\n    {\n      \"file\": \"src/relay/cli.py\",\n      \"kind\": \"function\",\n      \"lines\": \"19-35\",\n      \"qualname\": \"cmd_run\",\n      \"score\": -5.7,\n      \"symbol\": \"src/relay/cli.py::cmd_run\"\n    },\n    {\n      \"file\": \"tests/test_planner.py\",\n      \"kind\": \"class\",\n      \"lines\": \"16-32\",\n      \"qualname\": \"TestPlanner\",\n      \"score\": -5.08,\n      \"symbol\": \"tests/test_planner.py::TestPlanner\"\n    },\n    {\n      \"file\": \"tests/test_report.py\",\n      \"kind\": \"class\",\n      \"lines\": \"9-29\",\n      \"qualname\": \"TestReport\",\n      \"score\": -4.972,\n      \"symbol\": \"tests/test_report.py::TestReport\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
   "rc": 0
  },
  "search <REPO> main": {
   "err": "",
-  "out": "[symbols/all-terms] TRUNCATED 10 shown; +8 relaxed\n  src/relay/cli.py:118-120  function main\n  web/src/main.tsx:7-30  function mount\n  tests/test_experimental.py:1-21  (python, test)  [files/all-terms]\n  .github/workflows/ci.yml:1-36  (yaml, ci)  [files/all-terms]\n  tests/test_audit.py:1-29  (python, test)  [files/all-terms]\n  tests/test_report.py:1-34  (python, test)  [files/all-terms]\n  pyproject.toml:1-20  (toml, config)  [files/all-terms]\n  tests/test_planner.py:1-37  (python, test)  [files/all-terms]\n  tests/test_tools.py:1-48  (python, test)  [files/all-terms]\n  web/public/index.html:1-22  (html, source)  [files/all-terms]\n",
+  "out": "[symbols/all-terms] COMPLETE\n  src/relay/cli.py:118-120  function main\n  .github/workflows/ci.yml:29-35  job jobs.release\n  web/src/main.tsx:7-30  function mount\n",
   "rc": 0
  },
  "search <REPO> main --json": {
   "err": "",
-  "out": "{\n  \"question\": \"main\",\n  \"results\": [\n    {\n      \"file\": \"src/relay/cli.py\",\n      \"kind\": \"function\",\n      \"lines\": \"118-120\",\n      \"qualname\": \"main\",\n      \"score\": -7.719,\n      \"symbol\": \"src/relay/cli.py::main\"\n    },\n    {\n      \"file\": \"web/src/main.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"7-30\",\n      \"qualname\": \"mount\",\n      \"score\": -3.813,\n      \"symbol\": \"web/src/main.tsx::mount\"\n    },\n    {\n      \"file\": \"tests/test_experimental.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-21\",\n      \"role\": \"test\",\n      \"rung\": \"files/all-terms\",\n      \"score\": -2.033\n    },\n    {\n      \"file\": \".github/workflows/ci.yml\",\n      \"language\": \"yaml\",\n      \"lines\": \"1-36\",\n      \"role\": \"ci\",\n      \"rung\": \"files/all-terms\",\n      \"score\": -1.933\n    },\n    {\n      \"file\": \"tests/test_audit.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-29\",\n      \"role\": \"test\",\n      \"rung\": \"files/all-terms\",\n      \"score\": -1.924\n    },\n    {\n      \"file\": \"tests/test_report.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-34\",\n      \"role\": \"test\",\n      \"rung\": \"files/all-terms\",\n      \"score\": -1.848\n    },\n    {\n      \"file\": \"pyproject.toml\",\n      \"language\": \"toml\",\n      \"lines\": \"1-20\",\n      \"role\": \"config\",\n      \"rung\": \"files/all-terms\",\n      \"score\": -1.756\n    },\n    {\n      \"file\": \"tests/test_planner.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-37\",\n      \"role\": \"test\",\n      \"rung\": \"files/all-terms\",\n      \"score\": -1.729\n    },\n    {\n      \"file\": \"tests/test_tools.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-48\",\n      \"role\": \"test\",\n      \"rung\": \"files/all-terms\",\n      \"score\": -1.687\n    },\n    {\n      \"file\": \"web/public/index.html\",\n      \"language\": \"html\",\n      \"lines\": \"1-22\",\n      \"role\": \"source\",\n      \"rung\": \"files/all-terms\",\n      \"score\": -1.653\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"TRUNCATED 10 shown; +8 relaxed\"\n}\n",
+  "out": "{\n  \"question\": \"main\",\n  \"results\": [\n    {\n      \"file\": \"src/relay/cli.py\",\n      \"kind\": \"function\",\n      \"lines\": \"118-120\",\n      \"qualname\": \"main\",\n      \"score\": -7.198,\n      \"symbol\": \"src/relay/cli.py::main\"\n    },\n    {\n      \"file\": \".github/workflows/ci.yml\",\n      \"kind\": \"job\",\n      \"lines\": \"29-35\",\n      \"qualname\": \"jobs.release\",\n      \"score\": -5.32,\n      \"symbol\": \".github/workflows/ci.yml::jobs.release\"\n    },\n    {\n      \"file\": \"web/src/main.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"7-30\",\n      \"qualname\": \"mount\",\n      \"score\": -3.539,\n      \"symbol\": \"web/src/main.tsx::mount\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
   "rc": 0
  },
  "search <REPO> render": {
@@ -356,7 +356,7 @@
  },
  "search <REPO> render --json": {
   "err": "",
-  "out": "{\n  \"question\": \"render\",\n  \"results\": [\n    {\n      \"file\": \"src/relay/llm/prompts.py\",\n      \"kind\": \"function\",\n      \"lines\": \"27-28\",\n      \"qualname\": \"render_system_prompt\",\n      \"score\": -5.767,\n      \"symbol\": \"src/relay/llm/prompts.py::render_system_prompt\"\n    },\n    {\n      \"file\": \"src/relay/llm/prompts.py\",\n      \"kind\": \"function\",\n      \"lines\": \"36-38\",\n      \"qualname\": \"render_summary_prompt\",\n      \"score\": -5.479,\n      \"symbol\": \"src/relay/llm/prompts.py::render_summary_prompt\"\n    },\n    {\n      \"file\": \"web/src/main.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"7-30\",\n      \"qualname\": \"mount\",\n      \"score\": -5.364,\n      \"symbol\": \"web/src/main.tsx::mount\"\n    },\n    {\n      \"file\": \"src/relay/llm/prompts.py\",\n      \"kind\": \"function\",\n      \"lines\": \"31-33\",\n      \"qualname\": \"render_step_prompt\",\n      \"score\": -5.188,\n      \"symbol\": \"src/relay/llm/prompts.py::render_step_prompt\"\n    },\n    {\n      \"file\": \"src/relay/llm/client.py\",\n      \"kind\": \"method\",\n      \"lines\": \"67-74\",\n      \"qualname\": \"LLMClient.complete_step\",\n      \"score\": -4.385,\n      \"symbol\": \"src/relay/llm/client.py::LLMClient.complete_step\"\n    },\n    {\n      \"file\": \"web/src/components/RunList.tsx\",\n      \"kind\": \"class\",\n      \"lines\": \"9-43\",\n      \"qualname\": \"RunList\",\n      \"score\": -2.346,\n      \"symbol\": \"web/src/components/RunList.tsx::RunList\"\n    },\n    {\n      \"file\": \"src/relay/llm/client.py\",\n      \"kind\": \"class\",\n      \"lines\": \"57-112\",\n      \"qualname\": \"LLMClient\",\n      \"score\": -2.061,\n      \"symbol\": \"src/relay/llm/client.py::LLMClient\"\n    },\n    {\n      \"file\": \"web/src/components/RunDetail.tsx\",\n      \"kind\": \"class\",\n      \"lines\": \"4-48\",\n      \"qualname\": \"RunDetail\",\n      \"score\": -2.022,\n      \"symbol\": \"web/src/components/RunDetail.tsx::RunDetail\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
+  "out": "{\n  \"question\": \"render\",\n  \"results\": [\n    {\n      \"file\": \"src/relay/llm/prompts.py\",\n      \"kind\": \"function\",\n      \"lines\": \"27-28\",\n      \"qualname\": \"render_system_prompt\",\n      \"score\": -5.804,\n      \"symbol\": \"src/relay/llm/prompts.py::render_system_prompt\"\n    },\n    {\n      \"file\": \"src/relay/llm/prompts.py\",\n      \"kind\": \"function\",\n      \"lines\": \"36-38\",\n      \"qualname\": \"render_summary_prompt\",\n      \"score\": -5.511,\n      \"symbol\": \"src/relay/llm/prompts.py::render_summary_prompt\"\n    },\n    {\n      \"file\": \"web/src/main.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"7-30\",\n      \"qualname\": \"mount\",\n      \"score\": -5.391,\n      \"symbol\": \"web/src/main.tsx::mount\"\n    },\n    {\n      \"file\": \"src/relay/llm/prompts.py\",\n      \"kind\": \"function\",\n      \"lines\": \"31-33\",\n      \"qualname\": \"render_step_prompt\",\n      \"score\": -5.216,\n      \"symbol\": \"src/relay/llm/prompts.py::render_step_prompt\"\n    },\n    {\n      \"file\": \"src/relay/llm/client.py\",\n      \"kind\": \"method\",\n      \"lines\": \"67-74\",\n      \"qualname\": \"LLMClient.complete_step\",\n      \"score\": -4.402,\n      \"symbol\": \"src/relay/llm/client.py::LLMClient.complete_step\"\n    },\n    {\n      \"file\": \"web/src/components/RunList.tsx\",\n      \"kind\": \"class\",\n      \"lines\": \"9-43\",\n      \"qualname\": \"RunList\",\n      \"score\": -2.348,\n      \"symbol\": \"web/src/components/RunList.tsx::RunList\"\n    },\n    {\n      \"file\": \"src/relay/llm/client.py\",\n      \"kind\": \"class\",\n      \"lines\": \"57-112\",\n      \"qualname\": \"LLMClient\",\n      \"score\": -2.06,\n      \"symbol\": \"src/relay/llm/client.py::LLMClient\"\n    },\n    {\n      \"file\": \"web/src/components/RunDetail.tsx\",\n      \"kind\": \"class\",\n      \"lines\": \"4-48\",\n      \"qualname\": \"RunDetail\",\n      \"score\": -2.022,\n      \"symbol\": \"web/src/components/RunDetail.tsx::RunDetail\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
   "rc": 0
  },
  "search <REPO> token": {
@@ -366,22 +366,22 @@
  },
  "search <REPO> token --json": {
   "err": "",
-  "out": "{\n  \"question\": \"token\",\n  \"results\": [\n    {\n      \"file\": \"src/relay/config.py\",\n      \"kind\": \"method\",\n      \"lines\": \"43-52\",\n      \"qualname\": \"Config.describe\",\n      \"score\": -4.66,\n      \"symbol\": \"src/relay/config.py::Config.describe\"\n    },\n    {\n      \"file\": \"src/relay/config.py\",\n      \"kind\": \"function\",\n      \"lines\": \"81-105\",\n      \"qualname\": \"load_config\",\n      \"score\": -4.431,\n      \"symbol\": \"src/relay/config.py::load_config\"\n    },\n    {\n      \"file\": \"src/relay/config.py\",\n      \"kind\": \"class\",\n      \"lines\": \"27-52\",\n      \"qualname\": \"Config\",\n      \"score\": -4.358,\n      \"symbol\": \"src/relay/config.py::Config\"\n    },\n    {\n      \"file\": \"web/src/types.ts\",\n      \"kind\": \"interface\",\n      \"lines\": \"20-28\",\n      \"qualname\": \"ConfigView\",\n      \"score\": -4.281,\n      \"symbol\": \"web/src/types.ts::ConfigView\"\n    },\n    {\n      \"file\": \"src/relay/llm/client.py\",\n      \"kind\": \"method\",\n      \"lines\": \"44-47\",\n      \"qualname\": \"TokenBudget.charge\",\n      \"score\": -4.076,\n      \"symbol\": \"src/relay/llm/client.py::TokenBudget.charge\"\n    },\n    {\n      \"file\": \"src/relay/llm/client.py\",\n      \"kind\": \"method\",\n      \"lines\": \"60-65\",\n      \"qualname\": \"LLMClient.__init__\",\n      \"score\": -3.854,\n      \"symbol\": \"src/relay/llm/client.py::LLMClient.__init__\"\n    },\n    {\n      \"file\": \"src/relay/errors.py\",\n      \"kind\": \"class\",\n      \"lines\": \"41-49\",\n      \"qualname\": \"BudgetExceeded\",\n      \"score\": -3.393,\n      \"symbol\": \"src/relay/errors.py::BudgetExceeded\"\n    },\n    {\n      \"file\": \"src/relay/llm/client.py\",\n      \"kind\": \"class\",\n      \"lines\": \"37-54\",\n      \"qualname\": \"TokenBudget\",\n      \"score\": -2.685,\n      \"symbol\": \"src/relay/llm/client.py::TokenBudget\"\n    },\n    {\n      \"file\": \"src/relay/llm/client.py\",\n      \"kind\": \"class\",\n      \"lines\": \"57-112\",\n      \"qualname\": \"LLMClient\",\n      \"score\": -1.151,\n      \"symbol\": \"src/relay/llm/client.py::LLMClient\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
+  "out": "{\n  \"question\": \"token\",\n  \"results\": [\n    {\n      \"file\": \"src/relay/config.py\",\n      \"kind\": \"method\",\n      \"lines\": \"43-52\",\n      \"qualname\": \"Config.describe\",\n      \"score\": -4.683,\n      \"symbol\": \"src/relay/config.py::Config.describe\"\n    },\n    {\n      \"file\": \"src/relay/config.py\",\n      \"kind\": \"function\",\n      \"lines\": \"81-105\",\n      \"qualname\": \"load_config\",\n      \"score\": -4.448,\n      \"symbol\": \"src/relay/config.py::load_config\"\n    },\n    {\n      \"file\": \"src/relay/config.py\",\n      \"kind\": \"class\",\n      \"lines\": \"27-52\",\n      \"qualname\": \"Config\",\n      \"score\": -4.376,\n      \"symbol\": \"src/relay/config.py::Config\"\n    },\n    {\n      \"file\": \"web/src/types.ts\",\n      \"kind\": \"interface\",\n      \"lines\": \"20-28\",\n      \"qualname\": \"ConfigView\",\n      \"score\": -4.304,\n      \"symbol\": \"web/src/types.ts::ConfigView\"\n    },\n    {\n      \"file\": \"src/relay/llm/client.py\",\n      \"kind\": \"method\",\n      \"lines\": \"44-47\",\n      \"qualname\": \"TokenBudget.charge\",\n      \"score\": -4.096,\n      \"symbol\": \"src/relay/llm/client.py::TokenBudget.charge\"\n    },\n    {\n      \"file\": \"src/relay/llm/client.py\",\n      \"kind\": \"method\",\n      \"lines\": \"60-65\",\n      \"qualname\": \"LLMClient.__init__\",\n      \"score\": -3.871,\n      \"symbol\": \"src/relay/llm/client.py::LLMClient.__init__\"\n    },\n    {\n      \"file\": \"src/relay/errors.py\",\n      \"kind\": \"class\",\n      \"lines\": \"41-49\",\n      \"qualname\": \"BudgetExceeded\",\n      \"score\": -3.404,\n      \"symbol\": \"src/relay/errors.py::BudgetExceeded\"\n    },\n    {\n      \"file\": \"src/relay/llm/client.py\",\n      \"kind\": \"class\",\n      \"lines\": \"37-54\",\n      \"qualname\": \"TokenBudget\",\n      \"score\": -2.69,\n      \"symbol\": \"src/relay/llm/client.py::TokenBudget\"\n    },\n    {\n      \"file\": \"src/relay/llm/client.py\",\n      \"kind\": \"class\",\n      \"lines\": \"57-112\",\n      \"qualname\": \"LLMClient\",\n      \"score\": -1.149,\n      \"symbol\": \"src/relay/llm/client.py::LLMClient\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
   "rc": 0
  },
  "stats <REPO>": {
   "err": "",
-  "out": "files: 63 (bash 4, css 1, dockerfile 1, html 1, json 2, markdown 2, python 38, sql 2, toml 1, typescript 9, yaml 2)\nroles: ci 1, config 4, docs 2, source 48, test 8\nsymbols: 288  entry points: 16\nedges: external 91, resolved 244, unresolved 1\ningested at: <UTC>\n",
+  "out": "files: 63 (bash 4, css 1, dockerfile 1, html 1, json 2, markdown 2, python 38, sql 2, toml 1, typescript 9, yaml 2)\nroles: ci 1, config 4, docs 2, source 48, test 8\nsymbols: 296  entry points: 16\nedges: external 91, resolved 244, unresolved 1\ningested at: <UTC>\n",
   "rc": 0
  },
  "stats <REPO> --json": {
   "err": "",
-  "out": "{\n  \"agent_layer\": {\n    \"files\": 0,\n    \"instruction_dirs\": [],\n    \"instruction_files\": [],\n    \"skills\": []\n  },\n  \"coverage_files\": 0,\n  \"edges_by_kind\": {\n    \"copy\": 40,\n    \"from-import\": 121,\n    \"from-import-sub\": 6,\n    \"import\": 52,\n    \"link\": 16,\n    \"path-ref\": 5,\n    \"pkg-init\": 81,\n    \"script\": 7,\n    \"source\": 2,\n    \"uses\": 6\n  },\n  \"edges_by_status\": {\n    \"external\": 91,\n    \"resolved\": 244,\n    \"unresolved\": 1\n  },\n  \"entry_points\": 16,\n  \"files_by_language\": {\n    \"bash\": 4,\n    \"css\": 1,\n    \"dockerfile\": 1,\n    \"html\": 1,\n    \"json\": 2,\n    \"markdown\": 2,\n    \"python\": 38,\n    \"sql\": 2,\n    \"toml\": 1,\n    \"typescript\": 9,\n    \"yaml\": 2\n  },\n  \"files_by_origin\": {\n    \"project\": 63\n  },\n  \"files_by_role\": {\n    \"ci\": 1,\n    \"config\": 4,\n    \"docs\": 2,\n    \"source\": 48,\n    \"test\": 8\n  },\n  \"ignored\": {},\n  \"ingested_at\": \"<UTC>\",\n  \"parse_errors\": [],\n  \"symbols\": 288\n}\n",
+  "out": "{\n  \"agent_layer\": {\n    \"files\": 0,\n    \"instruction_dirs\": [],\n    \"instruction_files\": [],\n    \"skills\": []\n  },\n  \"coverage_files\": 0,\n  \"edges_by_kind\": {\n    \"copy\": 40,\n    \"from-import\": 121,\n    \"from-import-sub\": 6,\n    \"import\": 52,\n    \"link\": 16,\n    \"path-ref\": 5,\n    \"pkg-init\": 81,\n    \"script\": 7,\n    \"source\": 2,\n    \"uses\": 6\n  },\n  \"edges_by_status\": {\n    \"external\": 91,\n    \"resolved\": 244,\n    \"unresolved\": 1\n  },\n  \"entry_points\": 16,\n  \"files_by_language\": {\n    \"bash\": 4,\n    \"css\": 1,\n    \"dockerfile\": 1,\n    \"html\": 1,\n    \"json\": 2,\n    \"markdown\": 2,\n    \"python\": 38,\n    \"sql\": 2,\n    \"toml\": 1,\n    \"typescript\": 9,\n    \"yaml\": 2\n  },\n  \"files_by_origin\": {\n    \"project\": 63\n  },\n  \"files_by_role\": {\n    \"ci\": 1,\n    \"config\": 4,\n    \"docs\": 2,\n    \"source\": 48,\n    \"test\": 8\n  },\n  \"ignored\": {},\n  \"ingested_at\": \"<UTC>\",\n  \"parse_errors\": [],\n  \"symbols\": 296\n}\n",
   "rc": 0
  },
  "symbols <REPO> .github/workflows/ci.yml --json": {
   "err": "",
-  "out": "[]\n",
+  "out": "[\n  {\n    \"exported\": true,\n    \"kind\": \"job\",\n    \"lines\": \"8-21\",\n    \"qualname\": \"jobs.python\",\n    \"symbol\": \".github/workflows/ci.yml::jobs.python\"\n  },\n  {\n    \"exported\": true,\n    \"kind\": \"job\",\n    \"lines\": \"23-27\",\n    \"qualname\": \"jobs.web\",\n    \"symbol\": \".github/workflows/ci.yml::jobs.web\"\n  },\n  {\n    \"exported\": true,\n    \"kind\": \"job\",\n    \"lines\": \"29-35\",\n    \"qualname\": \"jobs.release\",\n    \"symbol\": \".github/workflows/ci.yml::jobs.release\"\n  }\n]\n",
   "rc": 0
  },
  "symbols <REPO> migrations/002_runs.sql --json": {
@@ -3837,6 +3837,66 @@
   "ignored": [],
   "symbols": [
    [
+    ".github/workflows/ci.yml::jobs.python",
+    ".github/workflows/ci.yml",
+    "job",
+    "python",
+    "jobs.python",
+    8,
+    21,
+    1
+   ],
+   [
+    ".github/workflows/ci.yml::jobs.release",
+    ".github/workflows/ci.yml",
+    "job",
+    "release",
+    "jobs.release",
+    29,
+    35,
+    1
+   ],
+   [
+    ".github/workflows/ci.yml::jobs.web",
+    ".github/workflows/ci.yml",
+    "job",
+    "web",
+    "jobs.web",
+    23,
+    27,
+    1
+   ],
+   [
+    "Dockerfile::stage.0",
+    "Dockerfile",
+    "stage",
+    "stage.0",
+    "stage.0",
+    1,
+    13,
+    1
+   ],
+   [
+    "docker-compose.yml::services.api",
+    "docker-compose.yml",
+    "service",
+    "api",
+    "services.api",
+    2,
+    10,
+    1
+   ],
+   [
+    "docker-compose.yml::services.web",
+    "docker-compose.yml",
+    "service",
+    "web",
+    "services.web",
+    12,
+    17,
+    1
+   ],
+   [
     "migrations/001_init.sql::latest_records",
     "migrations/001_init.sql",
     "view",
@@ -3894,6 +3954,26 @@
     "runs_started",
     11,
     12,
+    1
+   ],
+   [
+    "package.json::scripts.dev",
+    "package.json",
+    "script",
+    "dev",
+    "scripts.dev",
+    6,
+    6,
+    1
+   ],
+   [
+    "package.json::scripts.typecheck",
+    "package.json",
+    "script",
+    "typecheck",
+    "scripts.typecheck",
+    5,
+    5,
     1
    ],
    [

@@ -76,11 +76,12 @@ from pathlib import Path
 
 KG_DIR = ".code-kg"
 DB_NAME = "code-kg.db"
+PREV_DB_NAME = "code-kg-prev.db"   # the checkpoint `diff` compares against
 CONFIG_NAME = "config.json"
 # Bump when a parser or schema change must re-index a repo whose files have
 # not changed. The manifest folds it in, so the next read command re-ingests
 # once instead of answering from tables the old engine never filled.
-INDEX_REV = 2
+INDEX_REV = 3
 
 # Folders that are never source: build output, package caches, third-party deps.
 SKIP_FOLDERS = {
@@ -106,7 +107,10 @@ EXT_LANG = {
     ".cjs": "javascript",
     ".ts": "typescript", ".tsx": "typescript", ".mts": "typescript",
     ".cts": "typescript",
-    ".sh": "bash", ".bash": "bash", ".zsh": "bash",
+    ".sh": "bash", ".bash": "bash", ".zsh": "bash", ".ksh": "bash",
+    # Indexed and searchable, not parsed: their syntax is not bash's.
+    ".fish": "fish", ".csh": "csh", ".tcsh": "csh",
+    ".bat": "batch", ".cmd": "batch",
     ".sql": "sql",
     ".tf": "terraform",
     ".yml": "yaml", ".yaml": "yaml",
@@ -382,11 +386,48 @@ CREATE TABLE IF NOT EXISTS coverage(   -- survives ingest; pruned to live paths
   hits    INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (file_id, line)
 );
+CREATE TABLE IF NOT EXISTS session_reads(  -- read ledger: never wiped by ingest
+  session_id TEXT NOT NULL,
+  unit_id    TEXT NOT NULL,            -- symbol id, or a file id read whole
+  file_id    TEXT NOT NULL,
+  cmd        TEXT NOT NULL,            -- search|query|read
+  at         TEXT NOT NULL,            -- UTC; first touch wins
+  PRIMARY KEY (session_id, unit_id)
+);
+CREATE TABLE IF NOT EXISTS extractions(  -- judgment: never wiped by ingest
+  id          INTEGER PRIMARY KEY,
+  unit_id     TEXT NOT NULL,           -- the symbol or file the quote is in
+  unit_hash   TEXT NOT NULL,           -- that unit's text hash when recorded
+  kind        TEXT NOT NULL DEFAULT 'relation',
+  subject     TEXT NOT NULL,
+  predicate   TEXT NOT NULL,
+  object      TEXT NOT NULL,
+  quote       TEXT NOT NULL,
+  line        INTEGER NOT NULL,        -- file line the quote starts on
+  observed_at TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'hot'  -- hot|cold|retired
+);
+CREATE TABLE IF NOT EXISTS conflicts(    -- judgment: never wiped by ingest
+  seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+  detected_at  TEXT NOT NULL,
+  key          TEXT NOT NULL,          -- subject|predicate
+  kind         TEXT NOT NULL,
+  a_extraction INTEGER NOT NULL,
+  b_extraction INTEGER NOT NULL,
+  resolution   TEXT NOT NULL DEFAULT '',
+  state        TEXT NOT NULL DEFAULT 'hot'
+);
 CREATE TABLE IF NOT EXISTS runs(       -- event log: never wiped by ingest
   id      INTEGER PRIMARY KEY,
   at      TEXT NOT NULL,
   kind    TEXT NOT NULL,               -- coverage-run|coverage-ingest
   detail  TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS other_files(  -- rebuilt by every ingest: files
+  path   TEXT PRIMARY KEY,             -- the walk saw and no parser reads
+  ext    TEXT NOT NULL,                -- lower-case suffix, '' for none
+  size   INTEGER NOT NULL,
+  reason TEXT NOT NULL                 -- no-parser|policy|secret-name
 );
 CREATE TABLE IF NOT EXISTS ignored(
   path TEXT PRIMARY KEY,
@@ -440,8 +481,29 @@ def config_path(repo: Path) -> Path:
     return kg_dir(repo) / CONFIG_NAME
 
 
+def linked_store(root: Path, folder: Path, db: Path) -> str | None:
+    """Why the engine's folder or database must not be used, or None. The
+    tree being indexed is untrusted: a committed symlink at either name, or
+    a folder that resolves outside the tree, would carry every write the
+    engine makes to a place the planter chose. markdown-kg's
+    `linked_store` has the same body; keep the two identical."""
+    for p in (folder, db):
+        if p.is_symlink():
+            return f"{p} is a symbolic link; refusing to write through it"
+    try:
+        if folder.exists() and not folder.resolve().is_relative_to(
+                root.resolve()):
+            return f"{folder} resolves outside {root}; refusing to use it"
+    except (OSError, RuntimeError):
+        return f"{folder} cannot be resolved; refusing to use it"
+    return None
+
+
 def connect(repo: Path, must_exist: bool = False) -> sqlite3.Connection:
     db = db_path(repo)
+    refused = linked_store(repo, kg_dir(repo), db)
+    if refused:
+        sys.exit(f"error: {refused}")
     if must_exist and not db.exists():
         sys.exit(f"error: no database at {db} - run `ingest` on this repo first")
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -450,7 +512,8 @@ def connect(repo: Path, must_exist: bool = False) -> sqlite3.Connection:
         # Seeded on first contact, not only by `init`: the db must never be
         # committable in the target repo however the folder came to exist.
         # `lexists`, because a dangling link here would be written through.
-        gi.write_text(f"{DB_NAME}\ncoverage-tmp.json\n", encoding="utf-8")
+        gi.write_text(f"{DB_NAME}\n{PREV_DB_NAME}\ncoverage-tmp.json\n",
+                      encoding="utf-8")
     con = sqlite3.connect(db)
     con.executescript(SCHEMA)
     try:  # databases built before the origin column existed
@@ -459,6 +522,91 @@ def connect(repo: Path, must_exist: bool = False) -> sqlite3.Connection:
     except sqlite3.OperationalError:
         pass
     return con
+
+
+def prev_db_path(repo: Path) -> Path:
+    """The one-deep checkpoint `ingest --keep-previous` writes and a bare
+    `diff` compares against."""
+    return kg_dir(repo) / PREV_DB_NAME
+
+
+def write_checkpoint(live: Path, prev: Path) -> None:
+    """`live` copied to `prev` through a temp file this call creates and an
+    atomic rename. A planted symlink or hardlink at either name is replaced,
+    never written through, and a crash never leaves half a checkpoint.
+    markdown-kg's `write_checkpoint` has the same body; keep the two
+    identical."""
+    import shutil
+    import tempfile
+    fd, tmp = tempfile.mkstemp(dir=str(prev.parent),
+                               prefix=prev.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as out, live.open("rb") as src:
+            shutil.copyfileobj(src, out)
+        os.replace(tmp, prev)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _ro_connect(path: str) -> sqlite3.Connection:
+    """Open a db read-only, with the path percent-encoded into the URI. Bare
+    concatenation would let a path containing '?' end the URI early and
+    smuggle its own query parameters, `mode=rwc` among them. markdown-kg's
+    `_ro_connect` has the same body."""
+    import urllib.parse
+    quoted = urllib.parse.quote(str(Path(path).resolve()))
+    return sqlite3.connect(f"file:{quoted}?mode=ro", uri=True)
+
+
+def classify_units(old: dict, new: dict) -> dict:
+    """The diff passes both engines run over units keyed by id, each a tuple
+    (id, group, hash, stripped, label): group is the note or file, hash the
+    whole unit's, stripped the hash below its title line (a heading, a
+    `def` line), or None when nothing is left there to pair on. Passes, in
+    order: exact (same id, same hash); ordinal shift (same group, same id
+    without its ~n, same hash), both unchanged; edited (same id); renamed
+    (same group, same stripped hash); moved (same stripped hash). Leftovers
+    are added and removed. Pairs form count-for-count in id order, so
+    duplicates never pair many-to-one. markdown-kg's `classify_units` has
+    the same body; keep the two identical."""
+    unchanged = 0
+    old_left = dict(old)
+    new_left: dict = {}
+    for uid, row in new.items():
+        other = old_left.get(uid)
+        if other is not None and other[2] == row[2]:
+            del old_left[uid]
+            unchanged += 1
+        else:
+            new_left[uid] = row
+
+    def pair(key_of):
+        pairs = []
+        old_by: dict = {}
+        for uid in sorted(old_left):
+            key = key_of(old_left[uid])
+            if key is not None:
+                old_by.setdefault(key, []).append(uid)
+        for uid in sorted(new_left):
+            key = key_of(new_left[uid])
+            cands = old_by.get(key) if key is not None else None
+            if cands:
+                pairs.append((old_left.pop(cands.pop(0)), new_left.pop(uid)))
+        return sorted(pairs, key=lambda p: p[1][0])
+
+    unchanged += len(pair(lambda r: (r[1], re.sub(r"~\d+$", "", r[0]),
+                                     r[2])))
+    edited = pair(lambda r: r[0])
+    renamed = pair(lambda r: None if r[3] is None else (r[1], r[3]))
+    moved = pair(lambda r: r[3])
+    return {"unchanged": unchanged, "edited": edited, "renamed": renamed,
+            "moved": moved,
+            "added": [new_left[u] for u in sorted(new_left)],
+            "removed": [old_left[u] for u in sorted(old_left)]}
 
 
 def emit(args: argparse.Namespace, payload, render) -> int:
@@ -775,7 +923,9 @@ def ignore_rule(rel: str, cfg: dict) -> str | None:
 
 # ---------- repo walking (git parity, symlink refusal) ----------
 SECRETISH_RE = re.compile(
-    r"^\.env(\.|$)|^secrets?\.(ya?ml|json|toml)$|\.tfvars$", re.IGNORECASE)
+    r"^\.env(rc|\.|$)|^\.(netrc|npmrc|pypirc|pgpass|git-credentials)$"
+    r"|^id_(rsa|dsa|ecdsa|ed25519)$|^credentials$"
+    r"|^secrets?\.(ya?ml|json|toml)$|\.tfvars(\.json)?$", re.IGNORECASE)
 
 
 def language_of(rel: str) -> str | None:
@@ -788,7 +938,8 @@ def language_of(rel: str) -> str | None:
         return None
     if name in NAME_LANG:
         return NAME_LANG[name]
-    if name.startswith("Dockerfile") or name.endswith(".dockerfile"):
+    if name.startswith(("Dockerfile", "Containerfile")) \
+            or name.endswith(".dockerfile"):
         return "dockerfile"
     ext = posixpath.splitext(name)[1].lower()
     lang = EXT_LANG.get(ext)
@@ -798,10 +949,55 @@ def language_of(rel: str) -> str | None:
     return lang
 
 
+SHEBANG_LANG = {
+    "sh": "bash", "bash": "bash", "zsh": "bash", "ksh": "bash",
+    "dash": "bash", "ash": "bash", "mksh": "bash", "fish": "fish",
+    "csh": "csh", "tcsh": "csh", "node": "javascript", "nodejs":
+    "javascript", "deno": "javascript", "bun": "javascript",
+    "ts-node": "typescript", "tsx": "typescript", "pwsh": "powershell",
+}
+
+
+def sniff_language(path: Path, rel: str) -> str | None:
+    """The language an extension-less script names on its `#!` line, read
+    from its first bytes only. Never a file whose name marks it secret."""
+    name = posixpath.basename(rel)
+    if "." in name.lstrip(".") or name in SKIP_NAMES \
+            or SECRETISH_RE.search(name):
+        return None
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(256)
+    except OSError:
+        return None
+    if not head.startswith(b"#!"):
+        return None
+    words = head[2:].split(b"\n", 1)[0].decode("ascii", "replace").split()
+    if words and posixpath.basename(words[0].replace("\\", "/")) == "env":
+        words = [w for w in words[1:] if not w.startswith("-")]
+    if not words:
+        return None
+    prog = posixpath.basename(words[0].replace("\\", "/"))
+    if re.fullmatch(r"python[0-9.]{0,8}|pypy[0-9.]{0,8}", prog):
+        return "python"
+    return SHEBANG_LANG.get(prog)
+
+
+def other_reason(rel: str) -> str:
+    """Why a file the walk saw is listed but never read."""
+    name = posixpath.basename(rel)
+    if SECRETISH_RE.search(name):
+        return "secret-name"
+    if name in SKIP_NAMES:
+        return "policy"
+    return "no-parser"
+
+
 def scan_repo(repo: Path) -> tuple[list[Path], list[str]]:
-    """All indexable files, sorted for determinism, plus paths refused for
-    being symlinks or resolving outside the repo. In a git repo, enumerate via
-    `git ls-files`; otherwise a skip-folder walk."""
+    """Every file under the repo, sorted for determinism, plus paths refused
+    for being symlinks or resolving outside the repo. In a git repo,
+    enumerate via `git ls-files`; otherwise a skip-folder walk. Whether a
+    file is parsed or only listed is decided at ingest."""
     files: list[Path] | None = None
     try:
         # `-c core.fsmonitor=` because a repo is untrusted content: a repo
@@ -811,12 +1007,12 @@ def scan_repo(repo: Path) -> tuple[list[Path], list[str]]:
             ["git", "-c", "core.fsmonitor=", "--no-optional-locks",
              "-C", str(repo), "ls-files", "-z",
              "--cached", "--others", "--exclude-standard"],
-            capture_output=True, text=True, timeout=30)
+            capture_output=True, encoding="utf-8", errors="replace",
+            timeout=30)
         if out.returncode == 0:
             cands = [ln for ln in out.stdout.split("\0") if ln]
             if cands:
-                files = [repo / ln for ln in cands
-                         if language_of(ln) is not None]
+                files = [repo / ln for ln in cands]
     except Exception:
         files = None
     if files is None:
@@ -828,8 +1024,7 @@ def scan_repo(repo: Path) -> tuple[list[Path], list[str]]:
                             or d in (".github", ".claude", ".agents",
                                      ".cursor"))
                        and not (Path(root) == repo and d == KG_DIR)]
-            files.extend(Path(root) / n for n in names
-                         if language_of(n) is not None)
+            files.extend(Path(root) / n for n in names)
     result, escapes = [], []
     for p in files:
         # A repo is untrusted content. A symlink named like source pointing at
@@ -870,7 +1065,7 @@ def scan_repo(repo: Path) -> tuple[list[Path], list[str]]:
 
 
 def manifest(repo: Path) -> str:
-    """Cheap fingerprint of the repo's indexable file set: path, size, mtime.
+    """Cheap fingerprint of every file the walk sees: path, size, mtime.
     Read commands compare it to detect drift and re-ingest without being
     asked."""
     parts = []
@@ -1184,9 +1379,21 @@ def extract_bash(rel: str, text: str, ex: Extraction) -> str:
 def extract_dockerfile(rel: str, text: str, ex: Extraction) -> str:
     ex.entries.append(("dockerfile", posixpath.basename(rel)))
     workdir = ""
-    for i, raw in enumerate(text.splitlines(), 1):
+    lines = text.splitlines()
+    stages: list[tuple[int, str]] = []     # (FROM line, alias)
+    cont = False
+    for i, raw in enumerate(lines, 1):
         s = raw.strip()
         up = s.upper()
+        if not cont and up.startswith("FROM "):
+            parts = s.split()
+            alias = parts[-1] if len(parts) >= 4 and parts[-2].upper() == "AS" \
+                else ""
+            stages.append((i, alias))
+        # A comment or blank line inside a continued instruction keeps it
+        # going; a comment line never starts one.
+        if not (cont and (not s or s.startswith("#"))):
+            cont = s.endswith("\\") and not s.startswith("#")
         if up.startswith("WORKDIR "):
             parts = s.split(None, 1)
             workdir = parts[1].strip().rstrip("/") if len(parts) > 1 else ""
@@ -1207,6 +1414,14 @@ def extract_dockerfile(rel: str, text: str, ex: Extraction) -> str:
                         _add_ref(ex, src, "copy", i)
         elif up.startswith(("RUN ", "CMD ", "ENTRYPOINT ")):
             _pathy_candidates(s, i, ex, kind="exec")
+    # Each build stage is a symbol from its FROM line to the next one,
+    # named by its alias, or by its index as `COPY --from=1` names it.
+    for idx, (start, alias) in enumerate(stages):
+        end = stages[idx + 1][0] - 1 if idx + 1 < len(stages) else len(lines)
+        qual = f"stage.{alias or idx}"
+        ex.symbols.append({"kind": "stage", "name": alias or qual,
+                           "qualname": qual, "line_start": start,
+                           "line_end": max(start, end), "exported": 1})
     return ""
 
 
@@ -1215,16 +1430,146 @@ USES_RE = re.compile(r"""^\s*(?:-\s+)?uses:\s*['"]?([^'"#\s]+)""")
 COMPOSE_KEY_RE = re.compile(
     r"""^\s*(?:context|dockerfile|env_file|file):\s*['"]?([^'"#\s]+)""")
 VOLUME_RE = re.compile(r"""^\s*-\s*['"]?(\.{1,2}/[^:'"#\s]+)""")
+YAML_KEY_RE = re.compile(
+    r"""([A-Za-z0-9_.$/@-]{1,200}|"[^"\n]{0,200}"|'[^'\n]{0,200}')[ \t]*:"""
+    r"""(?=[ \t]|$)""")
+YAML_LINE_MAX = 4000    # a longer line is skipped; the repo is untrusted
+YAML_DEPTH_MAX = 64     # deeper content is skipped, so a path stays short
+YAML_BLOCK_RE = re.compile(r"[|>][0-9+-]{0,3}$")
+
+
+def _unquote(v: str) -> str:
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+        return v[1:-1]
+    return v
+
+
+def _yaml_comment(s: str) -> str:
+    """`s` without a trailing comment: `#` after a space, outside a quoted
+    scalar. Linear."""
+    quote = None
+    for i, c in enumerate(s):
+        if quote:
+            if c == quote:
+                quote = None
+        elif c in "'\"" and (i == 0 or s[i - 1] in " \t[{,:"):
+            quote = c
+        elif c == "#" and (i == 0 or s[i - 1] in " \t"):
+            return s[:i].rstrip()
+    return s.rstrip()
+
+
+def _flow_list(v: str) -> list[str]:
+    """`[a, "b"]` or a single scalar, as plain strings."""
+    v = v.strip()
+    if v.startswith("[") and v.endswith("]"):
+        return [x for x in (_unquote(p) for p in v[1:-1].split(",")) if x]
+    return [_unquote(v)] if v else []
+
+
+def yaml_nodes(text: str) -> list[dict]:
+    """The block structure of a YAML file, one row per line that holds
+    content: `path` is the tuple of keys and list indexes leading to it,
+    `kind` is `key` (a mapping key, `value` the rest of its line), `item`
+    (a scalar list entry), `block` (a line of a `|` or `>` scalar) or
+    `text` (a continuation line). A stateful scanner, not a parser: flow
+    collections stay text, anchors and tags are not followed. Linear."""
+    nodes: list[dict] = []
+    stack: list[list] = []      # [indent, name, is_item, items seen]
+    root = [-1, None, False, 0]
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
+        i += 1
+        if len(raw) > YAML_LINE_MAX:
+            continue
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped in ("---", "...") and not raw[0].isspace():
+            stack, root = [], [-1, None, False, 0]
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        rest = raw[indent:]
+        item_value = None
+        while rest == "-" or rest.startswith(("- ", "-\t")):
+            while stack and (stack[-1][0] > indent or (
+                    stack[-1][0] == indent and stack[-1][2])):
+                stack.pop()
+            parent = stack[-1] if stack else root
+            stack.append([indent, parent[3], True, 0])
+            parent[3] += 1
+            after = rest[1:].lstrip(" \t")
+            indent += len(rest) - len(after)
+            rest = after
+            item_value = rest
+        if not rest or len(stack) > YAML_DEPTH_MAX:
+            continue
+        m = YAML_KEY_RE.match(rest)
+        if not m:
+            path = tuple(e[1] for e in stack)
+            nodes.append({"line": i, "path": path, "value": _yaml_comment(
+                rest), "kind": "item" if item_value is not None else "text"})
+            continue
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        stack.append([indent, _unquote(m.group(1)), False, 0])
+        path = tuple(e[1] for e in stack)
+        value = _yaml_comment(rest[m.end():].strip())
+        nodes.append({"line": i, "path": path, "value": value, "kind": "key"})
+        if YAML_BLOCK_RE.match(value):
+            # Block scalar: every following line indented past the key,
+            # verbatim; a `#` in it is text, not a comment.
+            while i < len(lines):
+                nxt = lines[i]
+                if nxt.strip() and len(nxt) - len(nxt.lstrip(" ")) <= indent:
+                    break
+                i += 1
+                if nxt.strip() and len(nxt) <= YAML_LINE_MAX:
+                    nodes.append({"line": i, "path": path,
+                                  "value": nxt.strip(), "kind": "block"})
+    return nodes
+
+
+def _yaml_spans(nodes: list[dict], top: str) -> dict[str, tuple[int, int]]:
+    """First and last line of each entry under a top-level key."""
+    spans: dict[str, tuple[int, int]] = {}
+    for n in nodes:
+        p = n["path"]
+        if len(p) >= 2 and p[0] == top and isinstance(p[1], str):
+            a, b = spans.get(p[1], (n["line"], n["line"]))
+            spans[p[1]] = (min(a, n["line"]), max(b, n["line"]))
+    return spans
+
+
+def yaml_role(rel: str) -> str:
+    name = posixpath.basename(rel)
+    if rel.startswith(".github/workflows/"):
+        return "workflow"
+    if re.match(r"(docker-)?compose[^/]*\.ya?ml$", name):
+        return "compose"
+    if name in ("action.yml", "action.yaml"):
+        return "action"
+    return ""
 
 
 def extract_yaml(rel: str, text: str, ex: Extraction) -> str:
     name = posixpath.basename(rel)
-    is_workflow = rel.startswith(".github/workflows/")
-    is_compose = bool(re.match(r"(docker-)?compose[^/]*\.ya?ml$", name))
+    role = yaml_role(rel)
+    is_workflow, is_compose = role == "workflow", role == "compose"
     if is_workflow:
         ex.entries.append(("workflow", name))
     if is_compose:
         ex.entries.append(("compose", name))
+    if is_workflow or is_compose:
+        top, kind = ("jobs", "job") if is_workflow else ("services",
+                                                         "service")
+        for key, (a, b) in _yaml_spans(yaml_nodes(text), top).items():
+            ex.symbols.append({"kind": kind, "name": key,
+                               "qualname": f"{top}.{key}", "line_start": a,
+                               "line_end": b, "exported": 1})
     for i, raw in enumerate(text.splitlines(), 1):
         if raw.strip().startswith("#"):
             continue
@@ -1350,6 +1695,35 @@ def strip_jsonc(text: str) -> str:
     return re.sub(r",\s*([}\]])", r"\1", "".join(out))
 
 
+JSON_COLON_RE = re.compile(r"[ \t\r\n]{0,200}:")
+PACKAGE_SCRIPTS_MAX = 500   # each costs a search of the file
+
+
+def _package_scripts(text: str, scripts: dict) -> list[dict]:
+    """One `script` symbol per package.json script, on the line of its key.
+    The keys are found in file order after `"scripts"`, each confirmed by
+    the colon that follows it."""
+    out = []
+    pos = text.find('"scripts"')
+    if pos < 0:
+        return out
+    for name, cmd in itertools.islice(scripts.items(), PACKAGE_SCRIPTS_MAX):
+        if not isinstance(cmd, str):
+            continue
+        needle = json.dumps(name, ensure_ascii=False)
+        at = text.find(needle, pos)
+        while at >= 0 and not JSON_COLON_RE.match(text, at + len(needle)):
+            at = text.find(needle, at + 1)
+        if at < 0:
+            continue
+        pos = at + len(needle)
+        line = text.count("\n", 0, at) + 1
+        out.append({"kind": "script", "name": name,
+                    "qualname": f"scripts.{name}", "line_start": line,
+                    "line_end": line, "exported": 1})
+    return out
+
+
 def extract_json(rel: str, text: str, ex: Extraction) -> str:
     name = posixpath.basename(rel)
     if name.startswith(("tsconfig", "jsconfig")):
@@ -1377,6 +1751,7 @@ def extract_json(rel: str, text: str, ex: Extraction) -> str:
             for cmd in scripts.values():
                 if isinstance(cmd, str):
                     _pathy_candidates(cmd, 0, ex, kind="script")
+            ex.symbols.extend(_package_scripts(text, scripts))
         return ""
     count = 0
 
@@ -1765,6 +2140,9 @@ EXTRACTORS = {
     "powershell": extract_powershell,
     "html": extract_html,
     "css": extract_css,
+    "fish": lambda rel, text, ex: "",
+    "csh": lambda rel, text, ex: "",
+    "batch": lambda rel, text, ex: "",
 }
 
 
@@ -3424,6 +3802,8 @@ JS_CALL_RE = re.compile(
 JS_MEMBER_CALL_RE = re.compile(
     r"(?<![\w$.])([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\s*\(")
 JS_JSX_RE = re.compile(r"<([A-Z][\w$]*)(?=[\s/>])")
+JSX_CLASS_RE = re.compile(
+    r"""\bclassName[ \t]{0,20}=[ \t]{0,20}(["'])([^"'\n]{0,500})\1""")
 JS_IDENT_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)(?![\w$])")
 JS_EXTENDS_RE = re.compile(
     r"\bclass\s+([A-Za-z_$][\w$]*)(?![\w$])[^{]{0,200}?\bextends\s+"
@@ -3449,10 +3829,10 @@ BASH_CASE_ARM_RE = re.compile(
     r"(?:;;|\bin)\s{1,64}\(?[^()\n;\s][^()\n;]{0,200}\)\s*"
     r"([A-Za-z_][\w-]*)(?=$|[\s;&|)])",
     re.M)
-BASH_EXPORT_RE = re.compile(r"\bexport\s+([A-Za-z_]\w*)=")
+BASH_EXPORT_RE = re.compile(
+    r"\bexport[ \t]+([A-Za-z_]\w{0,200})(?==|[ \t]*$|[ \t]*[;&|])", re.M)
 BASH_ASSIGN_RE = re.compile(
     r"(?:^|[\s;])(?:local\s+|declare(?:\s+-\w+){0,8}\s+)?([A-Za-z_]\w*)=")
-BASH_READ_RE = re.compile(r"\$\{?([A-Za-z_]\w*)")
 BASH_SOURCE_PATH_RE = re.compile(r"^\s*(?:source|\.)\s+(.*)$")
 SQL_STATEMENT_RE = re.compile(
     r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?(?:MATERIALIZED\s+)?"
@@ -3473,6 +3853,88 @@ CSS_CLASS_RE = re.compile(r"\.(-?[A-Za-z_][\w-]*)")
 CSS_ID_RE = re.compile(r"#(-?[A-Za-z_][\w-]*)")
 CSS_VAR_DEF_RE = re.compile(r"(?<![\w-])--([\w-]+)\s*:")
 CSS_VAR_USE_RE = re.compile(r"var\(\s*--([\w-]+)")
+# Shell text in any file: one piece per escaped newline, separator or word.
+SHELL_PIECE_RE = re.compile(
+    r"(\\\n)|(\$\(|&&|\|\||[;&|()`\n])|([^\s;&|()<>`\\]{1,1000})")
+SHELL_ASSIGN_RE = re.compile(r"[A-Za-z_]\w{0,200}=")
+SHELL_WRAPPERS = frozenset((
+    "sudo", "exec", "time", "nohup", "env", "command", "xargs", "then", "do",
+    "else", "elif", "if", "while", "until", "!", "{", "}"))
+SHELL_RUNNERS = frozenset((
+    "node", "bash", "sh", "zsh", "dash", "ksh", "source", ".", "deno",
+    "ts-node", "tsx", "pwsh", "powershell", "ruby", "perl"))
+SHELL_LAUNCHERS = {"uv": "run", "poetry": "run", "pipenv": "run",
+                   "hatch": "run", "pnpm": "exec", "yarn": "exec",
+                   "npx": "", "bunx": ""}
+PACKAGE_RUNNERS = frozenset(("npm", "yarn", "pnpm", "bun"))
+NPM_SHORTHANDS = frozenset(("test", "start", "stop", "restart"))
+DIR_FLAGS = frozenset(("--prefix", "-C", "--cwd", "--dir", "--directory"))
+SCRIPT_LANGS = frozenset(("python", "bash", "javascript", "typescript",
+                          "powershell"))
+MAKEFILES = ("Makefile", "makefile", "GNUmakefile")
+MAKE_VAR_RE = re.compile(r"\$[({]MAKE[)}]")
+# Folder variables in shell: `HERE="$(cd "$(dirname "$0")" && pwd)"`,
+# `ROOT="$HERE/.."`, `TOP=$(git rev-parse --show-toplevel)`.
+SHELL_DIR_ASSIGN_RE = re.compile(
+    r"^[ \t]{0,40}(?:(?:local|readonly|export)[ \t]{1,10})?"
+    r"([A-Za-z_]\w{0,200})=(\S.{0,500})$")
+SHELL_CD_PWD_RE = re.compile(
+    r"\$\([ \t]{0,10}cd[ \t]{1,10}([^&;]{1,400})(?:&&|;)[ \t]{0,10}pwd"
+    r"(?:[ \t]{1,10}-P)?[ \t]{0,10}\)")
+SHELL_SELF_DIR_RE = re.compile(
+    r"\$\([ \t]{0,10}dirname[ \t]{1,10}\"?\$\{?(?:0|BASH_SOURCE(?:\[0\])?)"
+    r"\}?\"?[ \t]{0,10}\)|\$\{(?:0|BASH_SOURCE(?:\[0\])?)%/\*\}")
+SHELL_VAR_PATH_RE = re.compile(r"\$\{?([A-Za-z_]\w{0,200})\}?")
+GIT_TOP = "$(git rev-parse --show-toplevel)"
+# After `mark_folders`, `$(cd "$__self__/.." && pwd)` is `$__self__/..`.
+SHELL_CD_MARK_RE = re.compile(
+    r"\$\([ \t]{0,10}cd[ \t]{1,10}\"?(\$__(?:self|top)__[^\"&;\s]{0,300})"
+    r"\"?[ \t]{0,10}(?:&&|;)[ \t]{0,10}pwd(?:[ \t]{1,10}-P)?[ \t]{0,10}\)")
+SELF_DIR, TOP_DIR = "__self__", "__top__"
+
+
+def mark_folders(line: str) -> str:
+    """One shell line with the script-folder idioms (`$(dirname "$0")`,
+    `${BASH_SOURCE%/*}`, either wrapped in `$(cd ... && pwd)`) written as
+    `$__self__`, and the repo top as `$__top__`, so a folder written inline
+    and one held in a variable resolve the same way. No newline is added or
+    removed, so line numbers hold."""
+    if len(line) > 1000:
+        return line
+    line = SHELL_SELF_DIR_RE.sub("$" + SELF_DIR, line)
+    line = line.replace(GIT_TOP, "$" + TOP_DIR)
+    return SHELL_CD_MARK_RE.sub(r"\1", line)
+QUOTED_BLANK_RE = re.compile(r'"( {1,500})"')
+SHELL_WORD_RE = re.compile(r"[^\s;&|()<>`\"']{1,500}")
+
+
+def keep_quoted_words(code: str, text: str) -> str:
+    """`code` with each double-quoted single word of `text` put back, so
+    `bash "$HERE/x.sh"` keeps its argument; the offsets stay as they were.
+    The quotes stay too, so `X="$HERE/x.sh"` is still one assignment word.
+    A quoted string with a space or a separator in it stays blank."""
+    out = list(code)
+    for m in QUOTED_BLANK_RE.finditer(code):
+        inner = text[m.start(1):m.end(1)]
+        if SHELL_WORD_RE.fullmatch(inner):
+            out[m.start(1):m.end(1)] = inner
+    return "".join(out)
+ENV_READ_RE = re.compile(r"(?<!\\)\$\{?([A-Za-z_]\w{0,200})")
+COMPOSE_VAR_RE = re.compile(
+    r"(?<!\$)\$(?:\{([A-Za-z_]\w{0,200})|([A-Za-z_]\w{0,200}))")
+GHA_ENV_RE = re.compile(r"\$\{\{[ \t]{0,20}env\.([A-Za-z_]\w{0,200})")
+GHA_EXPR_RE = re.compile(r"\$\{\{[^}\n]{0,500}\}\}")
+DOCKER_ENV_RE = re.compile(r"(?:^|(?<=\s))([A-Za-z_][\w.-]{0,200})=")
+TF_REF_RE = re.compile(
+    r"(?<![\w.-])(?:(var|local|module)\.([A-Za-z_][\w-]{0,200})"
+    r"(?:\.([A-Za-z_][\w-]{0,200}))?"
+    r"|data\.([A-Za-z_][\w-]{0,200})\.([A-Za-z_][\w-]{0,200})"
+    r"|([A-Za-z][A-Za-z0-9]{0,60}_[\w-]{0,200})\.([A-Za-z_][\w-]{0,200}))")
+TF_KEY_RE = re.compile(r"[ \t]{0,200}([A-Za-z_][\w-]{0,200})[ \t]{0,200}=(?!=)")
+TF_DEPENDS_RE = re.compile(r"\bdepends_on[ \t]{0,200}=[ \t]{0,200}\[")
+TF_HOLES = {'"': ("${", "{", "}")}
+TF_META_ARGS = frozenset(("source", "version", "providers", "count",
+                          "for_each", "depends_on", "lifecycle"))
 
 
 JS_HOLES = {"`": ("${", "{", "}")}
@@ -3576,7 +4038,9 @@ def _line_of(starts: list[int], offset: int) -> int:
 
 class LineSymbols:
     """Symbol edges and data rows for the languages without a parser in
-    the standard library: JS/TS, bash, SQL, HTML and CSS."""
+    the standard library: JS/TS, bash, SQL, HTML, CSS, Dockerfiles, YAML
+    (compose, workflows, actions, shell lists), Terraform, Makefiles and
+    package.json scripts."""
 
     def __init__(self, files: list, resolver: "Resolver",
                  all_symbols: list) -> None:
@@ -3648,6 +4112,21 @@ class LineSymbols:
                 elif lang == "css":
                     self.css(fid)
             except (RecursionError, MemoryError, ValueError):
+                continue
+            try:
+                if lang == "dockerfile":
+                    self.dockerfile(fid)
+                elif lang == "yaml":
+                    self.yaml(fid)
+                elif lang == "terraform":
+                    self.terraform(fid)
+                elif lang == "make":
+                    self.make(fid)
+                elif lang == "json" and posixpath.basename(fid) \
+                        == "package.json":
+                    self.package_json(fid)
+            except Exception:  # noqa: BLE001 - one hostile config file
+                # must not take the whole ingest down.
                 continue
         return self.rows, self.data
 
@@ -3789,6 +4268,16 @@ class LineSymbols:
                       else None, f"<{name}>", "call", line,
                       "resolved" if b and b[0] == "sym" else
                       ("external" if name in external else "unresolved"))
+        # JSX `className="a b"` uses CSS classes, as `class=` does in HTML.
+        # The attribute word must be code, not text inside a string.
+        for m in JSX_CLASS_RE.finditer(bare if jsx else ""):
+            if code[m.start()] != "c":
+                continue
+            line = _line_of(starts, m.start(2))
+            for cls in m.group(2).split():
+                if re.fullmatch(r"-?[A-Za-z_][\w-]*", cls):
+                    self.datum(fid, self.owner(fid, line), "use",
+                               "css-class", cls, line)
         # A bound function or class used as a value: passed, stored,
         # returned, or written as a type.
         for m in JS_IDENT_RE.finditer(code):
@@ -3861,20 +4350,768 @@ class LineSymbols:
             seen_at.add(m.start(1))
             self.emit(fid, self.owner(fid, line, ("function",)), funcs[name],
                       name, "call", line, "resolved")
-        assigned = set()
-        for m in BASH_ASSIGN_RE.finditer(vars_text):
-            assigned.add(m.group(1))
-        for m in BASH_EXPORT_RE.finditer(vars_text):
-            line = _line_of(starts, m.start(1))
-            self.datum(fid, self.owner(fid, line, ("function",)), "write",
-                       "env", m.group(1), line, "resolved", "export")
-        for m in BASH_READ_RE.finditer(vars_text):
-            name = m.group(1)
-            if name in assigned or name.isdigit() or not name.isupper():
+        def in_function(line: int) -> str:
+            return self.owner(fid, line, ("function",))
+        marked = [mark_folders(ln) for ln in keep]
+        code = _blank("\n".join(marked), ("#",), None, "'\"", "'\"",
+                      BASH_HOLES, comment_after_space=True)
+        self.shell_calls(fid, keep_quoted_words(code, "\n".join(marked)), 1,
+                         in_function, [posixpath.dirname(fid), ""],
+                         dirs=self.folder_vars(fid, marked))
+        self.shell_env(fid, vars_text, 1, in_function)
+
+    def folder_vars(self, fid: str, lines: list) -> dict:
+        """Shell variables that hold a repo path, in file order: one built
+        on the script's folder or the repo top (written as `$__self__` and
+        `$__top__` by `mark_folders`), or on another such variable, and
+        folded through `$(cd X && pwd)`. Each maps to a repo-relative path,
+        '' for the root; a variable later set to anything else is dropped."""
+        dirs: dict[str, str] = {SELF_DIR: posixpath.dirname(fid),
+                                TOP_DIR: ""}
+        for raw in lines:
+            if len(raw) > 1000:
                 continue
-            line = _line_of(starts, m.start(1))
-            self.datum(fid, self.owner(fid, line, ("function",)), "read",
-                       "env", name, line, "weak", "$")
+            for part in raw.split(";"):
+                m = SHELL_DIR_ASSIGN_RE.match(part)
+                if not m:
+                    continue
+                path = self._shell_path(m.group(2), dirs)
+                if path is None:
+                    dirs.pop(m.group(1), None)
+                else:
+                    dirs[m.group(1)] = path
+        return dirs
+
+    @staticmethod
+    def _shell_path(value: str, dirs: dict) -> str | None:
+        v = value.split(" #", 1)[0].strip()
+        if len(v) >= 2 and v[0] == v[-1] == '"':
+            v = v[1:-1]
+        cd = SHELL_CD_PWD_RE.fullmatch(v)
+        if cd:
+            v = cd.group(1).strip().strip('"')
+        var = SHELL_VAR_PATH_RE.match(v)
+        if not var or var.group(1) not in dirs:
+            return None
+        rest = v[var.end():].strip('"')
+        if rest and (not rest.startswith("/") or "$" in rest):
+            return None
+        path = posixpath.normpath(posixpath.join(dirs[var.group(1)],
+                                                 rest.lstrip("/")))
+        if path == ".." or path.startswith("../"):
+            return None
+        return "" if path == "." else path
+
+    # -- shell text inside any file: scripts, recipes, RUN lines, CI steps
+    def shell_calls(self, fid: str, code: str, line0: int, src_at,
+                    bases: list, workdir: str = "",
+                    dirs: dict | None = None) -> None:
+        """Calls from shell text, comments and quoted strings already
+        blanked, to repo scripts, package.json scripts and make targets.
+        Only a word in command position counts, or the file a runner
+        (`python3`, `node`, `bash`, `uv run`) is handed: `cat x.sh` reads a
+        script and does not run it. `line0` is the line `code` starts on;
+        `bases` are the folders a relative path is tried against, in order;
+        a path under `workdir` (a container's WORKDIR) maps back to the
+        build context; `$NAME/x` resolves when `dirs` maps NAME to a
+        folder."""
+        starts = _line_starts(code)
+        dirs = dirs or {}
+        seg: list[tuple[str, int]] = []
+        segments = [seg]
+        array = 0           # depth inside `NAME=( ... )`: data, not commands
+        for m in SHELL_PIECE_RE.finditer(code):
+            sep = m.group(2)
+            if array:
+                array += (sep == "(") - (sep == ")")
+            elif m.group(3):
+                seg.append((m.group(3), m.start(3)))
+            elif sep == "(" and seg and seg[-1][0].endswith("=") \
+                    and seg[-1][1] + len(seg[-1][0]) == m.start():
+                array = 1
+            elif sep:
+                seg = []
+                segments.append(seg)
+        for toks in segments:
+            i = 0
+            # Assignments, wrappers and their flags, and the closing quote
+            # left by a blanked value (`X="a b" cmd`) come before the
+            # command word.
+            while i < len(toks) and (
+                    SHELL_ASSIGN_RE.match(toks[i][0])
+                    or not toks[i][0].strip("\"'")
+                    or toks[i][0] in SHELL_WRAPPERS
+                    or (i and toks[i - 1][0] in SHELL_WRAPPERS
+                        and toks[i][0].startswith("-"))):
+                i += 1
+            self._command(fid, toks[i:], line0, starts, src_at, bases,
+                          workdir, dirs)
+
+    def _command(self, fid, toks, line0, starts, src_at, bases, workdir,
+                 dirs: dict, hops: int = 0) -> None:
+        if not toks or hops > 3:
+            return
+        word, off = toks[0][0].strip("\"'"), toks[0][1]
+        line = line0 - 1 + _line_of(starts, off)
+        base = posixpath.basename(word)
+        args = [t for t, _ in toks[1:]]
+
+        def call(dst: str | None, target: str) -> None:
+            if dst:
+                self.emit(fid, src_at(line), dst, target, "call", line,
+                          "resolved")
+
+        if "/" in word or word.startswith("$") or word.endswith((
+                ".sh", ".py", ".js", ".mjs", ".ts", ".ps1")):
+            path = self.script_file(word, bases, workdir, dirs)
+            call(path and f"{path}::<module>", word)
+        elif base in SHELL_RUNNERS or re.fullmatch(r"python[0-9.]{0,8}", base):
+            j = 0
+            while j < len(args) and args[j].startswith("-"):
+                if args[j] == "-c":
+                    return            # inline code, not a file
+                if args[j] == "-m" and base.startswith("python") \
+                        and j + 1 < len(args):
+                    call(self.python_module(fid, args[j + 1]), args[j + 1])
+                    return
+                j += 1
+            if j < len(args):
+                path = self.script_file(args[j], bases, workdir, dirs)
+                call(path and f"{path}::<module>", args[j])
+        elif base in SHELL_LAUNCHERS and (
+                not SHELL_LAUNCHERS[base]
+                or (args and args[0] == SHELL_LAUNCHERS[base])):
+            skip = 1 if SHELL_LAUNCHERS[base] else 0
+            rest = toks[1 + skip:]
+            while rest and rest[0][0].startswith("-"):
+                rest = rest[1:]
+            self._command(fid, rest, line0, starts, src_at, bases, workdir,
+                          dirs, hops + 1)
+        elif base in PACKAGE_RUNNERS:
+            dirs, words = self._dir_args(args, bases)
+            if words[:1] in (["run"], ["run-script"]):
+                words = words[1:]
+            elif base == "npm" and words[:1] and words[0] not in \
+                    NPM_SHORTHANDS:
+                return                # npm install, npm ci: not a script
+            if words:
+                call(self.package_script(dirs, words[0]), words[0])
+        elif base in ("make", "gmake"):
+            dirs, words = self._dir_args(args, bases)
+            targets = [w for w in words if "=" not in w]
+            for t in targets or [None]:
+                call(self.make_target(dirs, t), t or "make")
+
+    @staticmethod
+    def _dir_args(args: list, bases: list) -> tuple[list, list]:
+        """The folders a package or make command runs in, and its words
+        that are not flags."""
+        dirs, words, j = list(bases), [], 0
+        while j < len(args):
+            a = args[j]
+            if a in DIR_FLAGS and j + 1 < len(args):
+                dirs = [posixpath.normpath(posixpath.join(b, args[j + 1]))
+                        for b in bases]
+                dirs = ["" if d == "." else d for d in dirs]
+                j += 2
+                continue
+            if not a.startswith("-"):
+                words.append(a.strip("\"'"))
+            j += 1
+        return dirs, words
+
+    def script_file(self, word: str, bases: list, workdir: str = "",
+                    dirs: dict | None = None) -> str | None:
+        tok = word.strip("\"'")
+        var = SHELL_VAR_PATH_RE.match(tok) if dirs else None
+        if var and var.group(1) in dirs and tok[var.end():var.end() + 1] \
+                in ("", "/"):
+            # `$HERE/x.sh`, or `$PARSE` set to a script path: a variable
+            # the script set itself.
+            tok = posixpath.normpath(posixpath.join(
+                dirs[var.group(1)], tok[var.end() + 1:]))
+            bases = [""]
+        if not tok or "$" in tok or "*" in tok or tok.startswith("~"):
+            return None
+        wd = workdir.rstrip("/")
+        if wd and tok.startswith(wd + "/"):
+            tok = tok[len(wd) + 1:]
+        if tok.startswith("/"):
+            return None
+        for b in bases:
+            cand = posixpath.normpath(posixpath.join(b, tok))
+            if self.lang.get(cand) in SCRIPT_LANGS:
+                return cand
+        return None
+
+    def python_module(self, fid: str, mod: str) -> str | None:
+        dst, status = self.resolver.resolve_python(fid, mod)
+        if status != "resolved" or not dst:
+            return None
+        if dst.endswith("/__init__.py"):
+            main = dst[:-len("__init__.py")] + "__main__.py"
+            dst = main if main in self.lang else dst
+        return f"{dst}::<module>"
+
+    def package_script(self, dirs: list, name: str) -> str | None:
+        for d in dirs:
+            sid = self.symbol_in(posixpath.join(d, "package.json")
+                                 if d else "package.json", name, ("script",))
+            if sid:
+                return sid
+        return None
+
+    def make_target(self, dirs: list, target: str | None) -> str | None:
+        for d in dirs:
+            for mf in MAKEFILES:
+                fid = posixpath.join(d, mf) if d else mf
+                if fid not in self.lang:
+                    continue
+                if target:
+                    return self.symbol_in(fid, target, ("target",))
+                # Bare `make` builds the first target not named `.X`.
+                first = sorted((s for s in self.by_file.get(fid, [])
+                                if s["kind"] == "target"
+                                and not s["name"].startswith(".")),
+                               key=lambda s: s["line_start"])
+                return first[0]["id"] if first else None
+        return None
+
+    def shell_env(self, fid: str, text: str, line0: int, src_at,
+                  known: frozenset = frozenset()) -> None:
+        """Environment rows from shell text with comments and single-quoted
+        strings blanked: `export NAME` writes; `$NAME` reads, unless the
+        text assigns NAME itself. A read is `resolved` when the file
+        defines NAME as environment (`known`), else `weak` and only for an
+        upper-case name, since a shell variable is not always environment."""
+        starts = _line_starts(text)
+        assigned = {m.group(1) for m in BASH_ASSIGN_RE.finditer(text)}
+        for m in BASH_EXPORT_RE.finditer(text):
+            line = line0 - 1 + _line_of(starts, m.start(1))
+            self.datum(fid, src_at(line), "write", "env", m.group(1), line,
+                       "resolved", "export")
+        for m in ENV_READ_RE.finditer(text):
+            name = m.group(1)
+            if name in assigned or name.isdigit():
+                continue
+            status = "resolved" if name in known else (
+                "weak" if name.isupper() else None)
+            if status:
+                line = line0 - 1 + _line_of(starts, m.start(1))
+                self.datum(fid, src_at(line), "read", "env", name, line,
+                           status, "$")
+
+    @staticmethod
+    def _snippet(parts: list) -> tuple[int, str]:
+        """Lines of shell text kept at their own line numbers: the first
+        line, and the text with a blank line for each gap."""
+        parts = sorted(parts)
+        line0, out = parts[0][0], []
+        for ln, text in parts:
+            out.extend([""] * (ln - line0 - len(out)))
+            out.append(text)
+        return line0, "\n".join(out)
+
+    def shell(self, fid: str, parts: list, src: str, bases: list,
+              workdir: str = "", known: frozenset = frozenset()) -> None:
+        """Calls and environment rows for shell text held in a config file,
+        given as (line, text) pairs, all owned by `src`."""
+        if not parts:
+            return
+        line0, text = self._snippet(parts)
+        text = GHA_EXPR_RE.sub(lambda m: " " * len(m.group(0)), text)
+        code = _blank(text, ("#",), None, "'\"", "'\"", BASH_HOLES,
+                      comment_after_space=True)
+        self.shell_calls(fid, code, line0, lambda _: src, bases, workdir)
+        self.shell_env(fid, _blank(text, ("#",), None, "'", "'",
+                                   comment_after_space=True),
+                       line0, lambda _: src, known)
+
+    # -- dockerfile: stages, the images and stages they build on, ENV/ARG
+    def docker_stages(self, fid: str) -> dict:
+        """Per stage id: its parent stage, WORKDIR and environment names,
+        each inherited from the stage it is built FROM. Cached: compose
+        reads a service's WORKDIR from here."""
+        cache = self.__dict__.setdefault("_docker", {})
+        if fid in cache:
+            return cache[fid]
+        stages = sorted((s for s in self.by_file.get(fid, [])
+                         if s["kind"] == "stage"),
+                        key=lambda s: s["line_start"])
+        alias: dict[str, dict] = {}
+        info: dict[str, dict] = {}
+        for idx, s in enumerate(stages):
+            info[s["id"]] = {"parent": None, "workdir": "", "env": set(),
+                             "index": idx}
+        for ins in self._docker_instructions(fid):
+            line, kw, args = ins["line"], ins["kw"], ins["args"]
+            sid = self.owner(fid, line, ("stage",))
+            st = info.get(sid)
+            if kw == "FROM" and st is not None:
+                image = next((t for t in args.split()
+                              if not t.startswith("--")), "")
+                parent = alias.get(image.lower())
+                if parent:
+                    st["parent"] = parent["id"]
+                    p = info[parent["id"]]
+                    st["workdir"], st["env"] = p["workdir"], set(p["env"])
+                s = next(x for x in stages if x["id"] == sid)
+                alias[str(st["index"])] = s
+                if s["name"] != s["qualname"]:
+                    alias[s["name"].lower()] = s
+            elif kw == "WORKDIR" and st is not None and args.strip():
+                wd = args.strip().split()[0]
+                st["workdir"] = wd if wd.startswith("/") else \
+                    posixpath.join(st["workdir"] or "/", wd)
+        cache[fid] = {"stages": stages, "alias": alias, "info": info}
+        return cache[fid]
+
+    def _docker_instructions(self, fid: str) -> list[dict]:
+        """Logical instructions: continued lines joined, the line breaks
+        kept so an offset still maps to its line; comment lines inside a
+        continuation dropped, as Docker drops them."""
+        cache = self.__dict__.setdefault("_docker_ins", {})
+        if fid in cache:
+            return cache[fid]
+        lines = self.body[fid].splitlines()
+        out, i = [], 0
+        while i < len(lines):
+            start, parts = i, [lines[i]]
+            while parts[-1].rstrip().endswith("\\") and i + 1 < len(lines):
+                i += 1
+                nxt = lines[i]
+                parts.append("" if nxt.lstrip().startswith("#") else nxt)
+            i += 1
+            first = parts[0].lstrip()
+            if not first or first.startswith("#"):
+                continue
+            kw = first.split(None, 1)[0]
+            head = len(parts[0]) - len(first) + len(kw)
+            text = "\n".join(parts)
+            out.append({"line": start + 1, "kw": kw.upper(),
+                        "args": " " * head + text[head:]})
+        cache[fid] = out
+        return out
+
+    def dockerfile(self, fid: str) -> None:
+        d = self.docker_stages(fid)
+        info, alias = d["info"], d["alias"]
+        base = posixpath.dirname(fid)
+        defined: dict[str, set] = {sid: set() for sid in info}
+        for ins in self._docker_instructions(fid):
+            line0, kw, args = ins["line"], ins["kw"], ins["args"]
+            starts = _line_starts(args)
+
+            def line_at(off: int) -> int:
+                return line0 - 1 + _line_of(starts, off)
+            sid = self.owner(fid, line0, ("stage",))
+            st = info.get(sid, {"parent": None, "workdir": "",
+                                "index": -1})
+            # What this stage can read: its own names so far, and its
+            # parents' names, which a FROM inherits.
+            known, p = set(defined.get(sid, ())), st["parent"]
+            while p:
+                known |= defined.get(p, set())
+                p = info[p]["parent"]
+            exec_form = kw in ("RUN", "CMD", "ENTRYPOINT") \
+                and args.strip().startswith("[")
+            if kw in ("RUN", "CMD", "ENTRYPOINT") and not exec_form:
+                self.shell_env(fid, _blank(args, ("#",), None, "'", "'",
+                                           comment_after_space=True),
+                               line0, lambda _: sid, frozenset(known))
+            elif not exec_form:
+                for m in ENV_READ_RE.finditer(args):
+                    name = m.group(1)
+                    status = "resolved" if name in known else (
+                        "weak" if name.isupper() else None)
+                    if status:
+                        self.datum(fid, sid, "read", "env", name,
+                                   line_at(m.start(1)), status, "$")
+            if kw == "FROM":
+                image = next((t for t in args.split()
+                              if not t.startswith("--")), "")
+                parent = st["parent"]
+                self.emit(fid, sid, parent, image, "extends", line0,
+                          "resolved" if parent else "external")
+            elif kw in ("COPY", "ADD"):
+                m = re.search(r"--from=(\S{1,300})", args)
+                if m:
+                    src_stage = alias.get(m.group(1).lower())
+                    ok = src_stage and src_stage["line_start"] < line0
+                    self.emit(fid, sid, src_stage["id"] if ok else None,
+                              m.group(1), "ref", line0,
+                              "resolved" if ok else "external")
+            elif kw in ("ENV", "ARG"):
+                body = _blank(args, (), None, "'\"")
+                names = [(m.group(1), m.start(1))
+                         for m in DOCKER_ENV_RE.finditer(body)]
+                if not names:     # `ENV NAME value`, `ARG NAME`
+                    m = re.search(r"[A-Za-z_][\w.-]{0,200}", body)
+                    names = [(m.group(0), m.start())] if m else []
+                    if kw == "ENV":
+                        names = names[:1]
+                for name, off in names:
+                    self.datum(fid, sid, "write", "env", name, line_at(off),
+                               "resolved", kw)
+                    defined.setdefault(sid, set()).add(name)
+            elif kw in ("RUN", "CMD", "ENTRYPOINT"):
+                if exec_form:
+                    try:
+                        argv = json.loads(args.strip())
+                    except ValueError:
+                        continue
+                    if not (isinstance(argv, list)
+                            and all(isinstance(a, str) for a in argv)):
+                        continue
+                    code = " ".join(argv)
+                else:
+                    code = _blank(args, ("#",), None, "'\"", "'\"",
+                                  BASH_HOLES, comment_after_space=True)
+                self.shell_calls(fid, code, line0, lambda _: sid,
+                                 [base, ""], st["workdir"])
+
+    # -- yaml: compose services, CI jobs and steps, other shell lists
+    def yaml(self, fid: str) -> None:
+        role = yaml_role(fid)
+        nodes = yaml_nodes(self.body[fid])
+        if role == "compose":
+            self.compose(fid, nodes)
+        elif role in ("workflow", "action"):
+            self.workflow(fid, nodes)
+        else:
+            self.yaml_generic(fid, nodes)
+
+    def compose(self, fid: str, nodes: list) -> None:
+        base = posixpath.dirname(fid)
+        module = f"{fid}::<module>"
+        builds: dict[str, dict] = {}
+        commands: dict[tuple, list] = {}
+        for n in nodes:
+            p, v, line = n["path"], n["value"], n["line"]
+            svc = p[1] if len(p) >= 2 and p[0] == "services" \
+                and isinstance(p[1], str) else None
+            src = (svc and self.symbol_in(fid, svc, ("service",))) or module
+            # Compose fills ${NAME} from the shell or .env; `$$` is a
+            # literal dollar for the container.
+            for m in COMPOSE_VAR_RE.finditer(v):
+                self.datum(fid, src, "read", "env", m.group(1) or m.group(2),
+                           line, "resolved", "compose")
+            if not svc or len(p) < 3:
+                continue
+            rest, keyed = p[2:], n["kind"] == "key"
+            if rest[0] == "depends_on":
+                names = _flow_list(v) if len(rest) == 1 else (
+                    [rest[1]] if keyed and len(rest) == 2
+                    and isinstance(rest[1], str) else
+                    [_unquote(v)] if n["kind"] == "item" and len(rest) == 2
+                    else [])
+                for name in names:
+                    dst = self.symbol_in(fid, name, ("service",))
+                    self.emit(fid, src, dst, name, "depends-on", line,
+                              "resolved" if dst else "unresolved")
+            elif rest[0] == "build":
+                b = builds.setdefault(svc, {"line": line, "src": src})
+                if len(rest) == 1 and v:
+                    b["context"] = _unquote(v)
+                elif len(rest) == 2 and rest[1] in ("context", "dockerfile",
+                                                    "target"):
+                    b[rest[1]] = _unquote(v)
+                    if rest[1] == "target":
+                        b["target_line"] = line
+            elif rest[0] in ("command", "entrypoint"):
+                # A list is one argv, however many lines it spans; a
+                # string or block is shell text, line by line.
+                parts = commands.setdefault((svc, rest[0]), [])
+                if len(rest) == 1 and v.startswith("["):
+                    parts.append((line, " ".join(_flow_list(v)), True))
+                elif len(rest) == 1 and v and not YAML_BLOCK_RE.match(v):
+                    parts.append((line, _unquote(v), False))
+                elif n["kind"] == "item":
+                    parts.append((line, _unquote(v), True))
+                elif n["kind"] in ("block", "text"):
+                    parts.append((line, v, False))
+            elif rest[0] == "environment":
+                names = []
+                if len(rest) == 1 and v.startswith("["):
+                    names = [x.split("=", 1)[0] for x in _flow_list(v)]
+                elif len(rest) == 2 and n["kind"] == "item":
+                    names = [_unquote(v).split("=", 1)[0]]
+                elif len(rest) == 2 and keyed:
+                    names = [str(rest[1])]
+                for name in names:
+                    if re.fullmatch(r"[A-Za-z_][\w.-]{0,200}", name):
+                        self.datum(fid, src, "write", "env", name, line,
+                                   "resolved", "environment")
+        where: dict[str, tuple] = {}
+        for svc, b in builds.items():
+            ctx = posixpath.normpath(posixpath.join(base, b.get("context",
+                                                                ".")))
+            ctx = "" if ctx == "." else ctx
+            df = posixpath.normpath(posixpath.join(
+                ctx, b.get("dockerfile", "Dockerfile")))
+            if self.lang.get(df) != "dockerfile":
+                continue
+            d = self.docker_stages(df)
+            target = b.get("target")
+            stage = next((s for s in d["stages"] if s["name"] == target),
+                         None) if target else (d["stages"][-1]
+                                               if d["stages"] else None)
+            line = b.get("target_line", b["line"]) if target else b["line"]
+            self.emit(fid, b["src"], stage and stage["id"],
+                      target or df, "ref", line,
+                      "resolved" if stage else "unresolved")
+            if stage:
+                where[svc] = (ctx, d["info"][stage["id"]]["workdir"])
+        for (svc, _), parts in commands.items():
+            if not parts:
+                continue
+            ctx, wd = where.get(svc, (base, ""))
+            src = self.symbol_in(fid, svc, ("service",)) or module
+            argv = [(ln, t) for ln, t, is_argv in parts if is_argv]
+            shell = [(ln, t) for ln, t, is_argv in parts if not is_argv]
+            if argv:
+                shell.append((argv[0][0], " ".join(t for _, t in argv)))
+            line0, text = self._snippet(shell)
+            code = _blank(text, ("#",), None, "'\"", "'\"", BASH_HOLES,
+                          comment_after_space=True)
+            self.shell_calls(fid, code, line0, lambda _: src, [ctx, ""], wd)
+
+    def workflow(self, fid: str, nodes: list) -> None:
+        """A GitHub workflow or a composite action. Jobs own their steps;
+        an action's steps belong to the file."""
+        module = f"{fid}::<module>"
+        known = frozenset(
+            str(n["path"][-1]) for n in nodes if n["kind"] == "key"
+            and len(n["path"]) >= 2 and n["path"][-2] == "env")
+        steps: dict[tuple, dict] = {}
+        dirs: dict = {}
+        for n in nodes:
+            p, v, line = n["path"], n["value"], n["line"]
+            job = p[1] if len(p) >= 2 and p[0] == "jobs" \
+                and isinstance(p[1], str) else None
+            src = (job and self.symbol_in(fid, job, ("job",))) or module
+            for m in GHA_ENV_RE.finditer(v):
+                self.datum(fid, src, "read", "env", m.group(1), line,
+                           "resolved", "${{ env }}")
+            if n["kind"] == "key" and len(p) >= 2 and p[-2] == "env":
+                self.datum(fid, src, "write", "env", str(p[-1]), line,
+                           "resolved", "env")
+            rest = p[2:] if job else (p[1:] if p[:1] == ("runs",) else p)
+            if rest[-3:] == ("defaults", "run", "working-directory"):
+                dirs[job] = _unquote(v)
+            if job and rest[:1] == ("needs",):
+                names = _flow_list(v) if len(rest) == 1 else (
+                    [_unquote(v)] if n["kind"] == "item" else [])
+                for name in names:
+                    dst = self.symbol_in(fid, name, ("job",))
+                    self.emit(fid, src, dst, name, "depends-on", line,
+                              "resolved" if dst else "unresolved")
+            if rest[-1:] == ("uses",) and v.startswith(("./", "'./",
+                                                        '"./')):
+                self.local_action(fid, src, _unquote(v), line)
+            if len(rest) >= 3 and rest[0] == "steps" \
+                    and isinstance(rest[1], int):
+                st = steps.setdefault((job, rest[1]), {"run": [], "wd": None,
+                                                       "src": src})
+                if rest[2] == "run" and len(rest) == 3:
+                    if n["kind"] == "block" or (v and not
+                                                YAML_BLOCK_RE.match(v)):
+                        st["run"].append((line, v if n["kind"] == "block"
+                                          else _unquote(v)))
+                elif rest[2] == "working-directory" and len(rest) == 3:
+                    st["wd"] = _unquote(v)
+        for (job, _), st in steps.items():
+            wd = st["wd"] or dirs.get(job) or dirs.get(None) or ""
+            self.shell(fid, st["run"], st["src"], [wd], known=known)
+
+    def local_action(self, fid: str, src: str, target: str,
+                     line: int) -> None:
+        """`uses: ./path`: a composite action folder or a reusable
+        workflow file in the repo."""
+        d = posixpath.normpath(target)
+        for cand in (posixpath.join(d, "action.yml"),
+                     posixpath.join(d, "action.yaml"), d):
+            if cand in self.lang:
+                self.emit(fid, src, f"{cand}::<module>", target, "call",
+                          line, "resolved")
+                return
+        self.emit(fid, src, None, target, "call", line, "unresolved")
+
+    def yaml_generic(self, fid: str, nodes: list) -> None:
+        """Other YAML: shell lists under `commands`, `script`,
+        `before_script` and `after_script` (Amplify, CodeBuild, GitLab
+        CI), and Kubernetes `env` lists of `name`/`value` pairs."""
+        module = f"{fid}::<module>"
+        base = posixpath.dirname(fid)
+        lists: dict[tuple, list] = {}
+        for n in nodes:
+            p, v = n["path"], n["value"]
+            if len(p) >= 2 and isinstance(p[-1], int) and p[-2] in (
+                    "commands", "script", "before_script", "after_script") \
+                    and n["kind"] in ("item", "text"):
+                lists.setdefault(p[:-1], []).append((n["line"], _unquote(v)))
+            elif n["kind"] == "key" and len(p) >= 3 and p[-1] == "name" \
+                    and isinstance(p[-2], int) and p[-3] == "env":
+                name = _unquote(v)
+                if re.fullmatch(r"[A-Za-z_][\w.-]{0,200}", name):
+                    self.datum(fid, module, "write", "env", name, n["line"],
+                               "resolved", "env")
+        for parts in lists.values():
+            for part in parts:
+                self.shell(fid, [part], module, [base, ""])
+
+    # -- terraform: references between blocks, within a module folder
+    def terraform(self, fid: str) -> None:
+        text = self.body[fid]
+        code = _blank(text, ("#", "//"), ("/*", "*/"), '"', "", TF_HOLES)
+        starts = _line_starts(code)
+        here = posixpath.dirname(fid)
+        index = self.tf_index(here)
+        # The `depends_on = [...]` spans, merged and in order, so each
+        # reference is placed by one pointer walk: linear on a hostile file
+        # with thousands of spans. A `]` found once serves every span that
+        # opens before it; with none left, the rest of the file is open.
+        spans: list[list[int]] = []
+        close = 0
+        for m in TF_DEPENDS_RE.finditer(code):
+            if close != -1 and close < m.end():
+                close = code.find("]", m.end())
+            end = close if close != -1 else len(code)
+            if spans and m.end() <= spans[-1][1]:
+                spans[-1][1] = max(spans[-1][1], end)
+            else:
+                spans.append([m.end(), end])
+        at = 0
+        for m in TF_REF_RE.finditer(code):
+            line = _line_of(starts, m.start())
+            src = self.owner(fid, line)
+            while at < len(spans) and spans[at][1] <= m.start():
+                at += 1
+            kind = "depends-on" if at < len(spans) \
+                and spans[at][0] <= m.start() else "ref"
+            found: list = []
+            if m.group(1) == "var":
+                found = [index.get(f"variable.{m.group(2)}")]
+            elif m.group(1) == "local":
+                found = [index.get(f"local:{m.group(2)}")]
+            elif m.group(1) == "module":
+                found = [index.get(f"module.{m.group(2)}")]
+                src_dir = index.get(f"source:{m.group(2)}")
+                if m.group(3) and src_dir is not None:
+                    out = self.tf_index(src_dir).get(f"output.{m.group(3)}")
+                    if out:
+                        found.append(out)
+            elif m.group(4):
+                found = [index.get(f"data.{m.group(4)}.{m.group(5)}")]
+            else:
+                hit = index.get(f"resource.{m.group(6)}.{m.group(7)}")
+                if not hit:
+                    continue      # an attribute path, not a resource
+                found = [hit]
+            target = m.group(0)
+            if not any(found):
+                self.emit(fid, src, None, target, kind, line, "unresolved")
+            for dst in found:
+                if dst and dst != src:
+                    self.emit(fid, src, dst, target, kind, line, "resolved")
+        # A module block's arguments set the variables of its source.
+        for s in self.by_file.get(fid, []):
+            if s["kind"] != "module":
+                continue
+            src_dir = index.get("source:" + s["qualname"].split(".", 1)[1])
+            if src_dir is None:
+                continue
+            inner = self.tf_index(src_dir)
+            for line, key in self.tf_keys(fid, s):
+                dst = inner.get(f"variable.{key}")
+                if dst and key not in TF_META_ARGS:
+                    self.emit(fid, s["id"], dst, key, "ref", line,
+                              "resolved")
+
+    def tf_keys(self, fid: str, s: dict) -> list[tuple[int, str]]:
+        """The `name = ...` lines directly inside one top-level block."""
+        cache = self.__dict__.setdefault("_tf_depth", {})
+        if fid not in cache:
+            code = _blank(self.body[fid], ("#", "//"), ("/*", "*/"), '"')
+            depth, at_start = 0, []
+            for ln in code.split("\n"):
+                at_start.append(depth)
+                depth = max(0, depth + ln.count("{") - ln.count("}"))
+            cache[fid] = (code.split("\n"), at_start)
+        lines, at_start = cache[fid]
+        out = []
+        for ln in range(s["line_start"] + 1, min(s["line_end"],
+                                                 len(lines)) + 1):
+            if at_start[ln - 1] == 1:
+                m = TF_KEY_RE.match(lines[ln - 1])
+                if m:
+                    out.append((ln, m.group(1)))
+        return out
+
+    def tf_index(self, folder: str) -> dict:
+        """Every block in one Terraform module folder by its address, each
+        `locals` key as `local:NAME`, and each module's local source folder
+        as `source:NAME`."""
+        cache = self.__dict__.setdefault("_tf", {})
+        if folder in cache:
+            return cache[folder]
+        index: dict = {}
+        for fid, lang in self.lang.items():
+            if lang != "terraform" or posixpath.dirname(fid) != folder:
+                continue
+            for s in self.by_file.get(fid, []):
+                index.setdefault(s["qualname"], s["id"])
+                if s["kind"] == "locals":
+                    for _, key in self.tf_keys(fid, s):
+                        index.setdefault(f"local:{key}", s["id"])
+                elif s["kind"] == "module":
+                    lines = self.body[fid].splitlines()
+                    for raw in lines[s["line_start"]:s["line_end"]]:
+                        m = TF_SOURCE_RE.match(raw)
+                        if m and m.group(1).startswith("."):
+                            src = posixpath.normpath(posixpath.join(
+                                folder, m.group(1)))
+                            # `../..` up to the repo root normalizes to
+                            # `.`; root files have the folder ''.
+                            index[f"source:{s['qualname'][7:]}"] = \
+                                "" if src == "." else src
+        cache[folder] = index
+        return index
+
+    # -- make: recipe lines run their commands
+    def make(self, fid: str) -> None:
+        base = posixpath.dirname(fid)
+        for i, raw in enumerate(self.body[fid].splitlines(), 1):
+            if not raw.startswith("\t"):
+                continue
+            src = self.owner(fid, i, ("target",))
+            # `$(MAKE) x` is how a recipe runs make again.
+            cmd = MAKE_VAR_RE.sub("make", raw[1:].lstrip("@-+ \t"))
+            code = _blank(cmd, ("#",), None, "'\"", "", BASH_HOLES,
+                          comment_after_space=True)
+            self.shell_calls(fid, code, i, lambda _: src, [base])
+
+    # -- package.json: each script runs a command; npm runs preX and postX
+    def package_json(self, fid: str) -> None:
+        try:
+            scripts = json.loads(self.body[fid]).get("scripts")
+        except (ValueError, AttributeError):
+            return
+        if not isinstance(scripts, dict):
+            return
+        base = posixpath.dirname(fid)
+        mine = {s["name"]: s for s in self.by_file.get(fid, [])
+                if s["kind"] == "script"}
+        for name, s in mine.items():
+            cmd = scripts.get(name)
+            if not isinstance(cmd, str):
+                continue
+            line, sid = s["line_start"], s["id"]
+            for hook in ("pre" + name, "post" + name):
+                if hook in mine:
+                    self.emit(fid, sid, mine[hook]["id"], hook, "call", line,
+                              "resolved")
+            self.shell(fid, [(line, cmd)], sid, [base])
 
     # -- sql
     def sql(self, fid: str) -> None:
@@ -4018,23 +5255,43 @@ class LineSymbols:
                        _line_of(starts, m.start()))
 
 
-def ingest(repo: Path) -> dict:
+def ingest(repo: Path, keep_previous: bool = False) -> dict:
+    checkpoint = None
+    refused = linked_store(repo, kg_dir(repo), db_path(repo))
+    if refused:
+        sys.exit(f"error: {refused}")
+    if keep_previous and db_path(repo).exists():
+        # Before connect(), which runs the schema script: the checkpoint is
+        # the db exactly as the last ingest left it.
+        write_checkpoint(db_path(repo), prev_db_path(repo))
+        checkpoint = str(prev_db_path(repo))
+        gi = kg_dir(repo) / ".gitignore"
+        # A .gitignore seeded before checkpoints existed gains the line.
+        if gi.is_file() and not gi.is_symlink() and PREV_DB_NAME not in \
+                gi.read_text(encoding="utf-8", errors="replace").split():
+            with gi.open("a", encoding="utf-8") as fh:
+                fh.write(f"\n{PREV_DB_NAME}\n")
     cfg = load_config(repo)
     paths, escapes = scan_repo(repo)
     files: list[dict] = []
     ignored: list[tuple[str, str]] = [(e, "symlink-or-escape") for e in escapes]
+    others: list[tuple] = []     # files listed, never read: the inventory
     for p in paths:
         rel = p.relative_to(repo).as_posix()
         rule = ignore_rule(rel, cfg)
+        lang = language_of(rel) or sniff_language(p, rel)
+        if lang is None:
+            if not rule:
+                ext = posixpath.splitext(posixpath.basename(rel))[1]
+                others.append((rel, ext.lower(), p.stat().st_size,
+                               other_reason(rel)))
+            continue
         if rule:
             ignored.append((rel, rule))
             continue
         size = p.stat().st_size
         if size > SIZE_CAP:
             ignored.append((rel, "oversize"))
-            continue
-        lang = language_of(rel)
-        if lang is None:
             continue
         text = p.read_text(encoding="utf-8", errors="replace")
         files.append({"id": rel, "language": lang,
@@ -4241,8 +5498,10 @@ def ingest(repo: Path) -> dict:
     with con:
         for table in ("files", "symbols", "edges", "entry_points", "ignored",
                       "components", "annotations", "symbol_edges",
-                      "data_edges"):
+                      "data_edges", "other_files"):
             con.execute(f"DELETE FROM {table}")
+        con.executemany("INSERT INTO other_files(path, ext, size, reason)"
+                        " VALUES (?,?,?,?)", others)
         sym_rows, data_rows = python_symbol_edges(files, resolver,
                                                   all_symbols)
         more_rows, more_data = LineSymbols(files, resolver,
@@ -4305,6 +5564,7 @@ def ingest(repo: Path) -> dict:
         for path_, rule in sorted(set(ignored) | set(dep_overflow)):
             con.execute("INSERT OR REPLACE INTO ignored(path, rule)"
                         " VALUES (?,?)", (path_, rule))
+        reconcile_extractions(con)
         con.execute("DELETE FROM coverage WHERE file_id NOT IN"
                     " (SELECT id FROM files)")
         con.execute("DELETE FROM observed_lines WHERE file_id NOT IN"
@@ -4333,6 +5593,8 @@ def ingest(repo: Path) -> dict:
         counts["link_warnings"] = link_warnings
     if cfg.get("components"):
         counts["components"] = len({name for name, _ in component_rows})
+    if keep_previous:
+        counts["checkpoint"] = checkpoint
     con.close()
     return counts
 
@@ -4398,8 +5660,51 @@ def search_rungs(phrases: list[str], terms: list[str]) -> list[tuple[str, str]]:
     return rungs
 
 
+def est_tokens(text: str) -> int:
+    """Token estimate for budgeting. Deliberately crude and deliberately high:
+    over-estimating keeps a pack inside its budget."""
+    return max(1, len(text) // 3)
+
+
+def record_reads(repo: Path, session: str | None, units: list,
+                 cmd: str) -> None:
+    """Append the symbol and file ids a command returned to one session's
+    read ledger; first touch wins. A file id stands for the whole file."""
+    if not session or not units:
+        return
+    con = connect(repo, must_exist=True)
+    at = now_utc()
+    con.executemany(
+        "INSERT OR IGNORE INTO session_reads(session_id, unit_id, file_id,"
+        " cmd, at) VALUES (?,?,?,?,?)",
+        [(session, u, u.split("::", 1)[0], cmd, at) for u in units])
+    con.commit()
+    con.close()
+
+
+def _children(con: sqlite3.Connection, unit: str) -> list:
+    """The symbols one level inside a symbol, or a file's top-level
+    symbols: what a budget gives in place of a unit too big for it."""
+    fid, _, _ = unit.partition("::")
+    syms = con.execute("SELECT id, kind, qualname, line_start, line_end"
+                       " FROM symbols WHERE file_id=? ORDER BY line_start,"
+                       " line_end DESC", (fid,)).fetchall()
+    if "::" in unit:
+        own = next((s for s in syms if s[0] == unit), None)
+        if own is None:
+            return []
+        syms = [s for s in syms if s[0] != unit
+                and own[3] <= s[3] and s[4] <= own[4]]
+    out = []
+    for s in syms:
+        if not any(o[3] <= s[3] and s[4] <= o[4] for o in out):
+            out.append(s)
+    return out
+
+
 def search(repo: Path, question: str, limit: int = 10,
-           include_deps: bool = False) -> dict:
+           include_deps: bool = False, per_file: int = 0,
+           budget: int | None = None) -> dict:
     con = open_fresh(repo)
     phrases, terms = tokenize(question)
     if not phrases and not terms:
@@ -4444,6 +5749,16 @@ def search(repo: Path, question: str, limit: int = 10,
                 break
         if len(collected) >= RELAX_MIN:
             break
+    if per_file > 0:
+        # Diversity: at most `per_file` hits from any one file, best first.
+        seen: dict[str, int] = {}
+        kept = []
+        for hit in collected:
+            f = hit[0].split("::", 1)[0]
+            seen[f] = seen.get(f, 0) + 1
+            if seen[f] <= per_file:
+                kept.append(hit)
+        collected = kept
     hits = collected[:limit]
     results = []
     for hid, score, rung_name, hit_scope in hits:
@@ -4467,14 +5782,55 @@ def search(repo: Path, question: str, limit: int = 10,
                 and (rung_name, hit_scope) != (rung_used, scope):
             results[-1]["rung"] = rung_name if hit_scope == scope \
                 else f"{hit_scope}/{rung_name}"
-    con.close()
     relaxed = len([r for r in results if "rung" in r])
     status = "COMPLETE" if len(results) < limit \
         else f"TRUNCATED {limit} shown"
     if relaxed:
         status += f"; +{relaxed} relaxed"
-    return {"question": question, "rung": rung_used, "scope": scope,
-            "results": results, "status": status}
+    out = {"question": question, "rung": rung_used, "scope": scope,
+           "results": results, "status": status}
+    if budget:
+        out.update(_pack(con, results, budget))
+    con.close()
+    return out
+
+
+def _pack(con: sqlite3.Connection, results: list, budget: int) -> dict:
+    """Hits in rank order with their whole text, inside `budget` estimated
+    tokens. A unit that does not fit is given by the units one level inside
+    it that do, never by a cut body: a half-entry reads as a whole one."""
+    bodies: dict[str, list] = {}
+
+    def text(fid: str, a: int, b: int) -> str:
+        if fid not in bodies:
+            row = con.execute("SELECT body FROM files WHERE id=?",
+                              (fid,)).fetchone()
+            bodies[fid] = row[0].splitlines() if row else []
+        return "\n".join(bodies[fid][max(0, a - 1):b])
+
+    packed, spent, done = [], 0, set()
+    for hit in results:
+        unit = hit.get("symbol", hit["file"])
+        if unit in done:
+            continue
+        a, b = map(int, hit["lines"].split("-"))
+        body = text(hit["file"], a, b)
+        if spent + est_tokens(body) <= budget:
+            packed.append({**hit, "text": body})
+            spent += est_tokens(body)
+            done.add(unit)
+            continue
+        for sid, kind, qual, ca, cb in _children(con, unit):
+            cbody = text(hit["file"], ca, cb)
+            if sid in done or spent + est_tokens(cbody) > budget:
+                continue
+            packed.append({"symbol": sid, "file": hit["file"], "kind": kind,
+                           "qualname": qual, "lines": f"{ca}-{cb}",
+                           "score": hit["score"], "text": cbody,
+                           "substituted_for": unit})
+            spent += est_tokens(cbody)
+            done.add(sid)
+    return {"results": packed, "budget": budget, "spent": spent}
 
 
 # ---------- graph ----------
@@ -5145,10 +6501,26 @@ def coverage_ingest(repo: Path, artifact: Path, detail: str) -> dict:
     return {"artifact": str(artifact), "files_matched": matched}
 
 
+def python_cmd() -> str:
+    """The interpreter a detected test command runs: `python3` where that
+    name is on PATH, as on macOS and Linux, else this interpreter's own path
+    (a Windows install names it `python` or `py`)."""
+    import shutil
+    return "python3" if shutil.which("python3") else sys.executable
+
+
+def coverage_wrapped(cmd: list | None) -> bool:
+    """`<python> -m coverage run ...`, whatever the interpreter is called."""
+    return bool(cmd) and len(cmd) >= 4 \
+        and cmd[1:4] == ["-m", "coverage", "run"] \
+        and Path(cmd[0]).name.lower().startswith(("python", "py"))
+
+
 def detect_test_command(repo: Path, cfg: dict) -> list[str] | None:
     if cfg.get("test_command"):
         import shlex
-        return shlex.split(cfg["test_command"])
+        # Windows paths hold backslashes that POSIX rules would eat.
+        return shlex.split(cfg["test_command"], posix=os.name != "nt")
     has_pytest_cfg = (repo / "pytest.ini").exists() \
         or (repo / "setup.cfg").exists()
     pp = repo / "pyproject.toml"
@@ -5158,10 +6530,10 @@ def detect_test_command(repo: Path, cfg: dict) -> list[str] | None:
     if (repo / "manage.py").exists() and not has_pytest_cfg:
         # A Django repo without pytest config uses the Django runner;
         # pytest here would be the wrong harness and the wrong settings.
-        return ["python3", "-m", "coverage", "run", "manage.py", "test"]
+        return [python_cmd(), "-m", "coverage", "run", "manage.py", "test"]
     if has_pytest_cfg or (repo / "pyproject.toml").exists() \
             or (repo / "tests").is_dir():
-        return ["python3", "-m", "coverage", "run", "-m", "pytest", "-q"]
+        return [python_cmd(), "-m", "coverage", "run", "-m", "pytest", "-q"]
     return None
 
 
@@ -5211,23 +6583,25 @@ def coverage_run(repo: Path, yes: bool, timeout: int = 900,
         return trace_run(repo, cmd, source, timeout)
     print(f"coverage run [{source}]: {' '.join(cmd)}", file=sys.stderr)
     env = {**os.environ, "PYTHONSAFEPATH": "1"}
-    if cmd[:4] == ["python3", "-m", "coverage", "run"]:
-        probe = subprocess.run(["python3", "-m", "coverage", "--version"],
+    if coverage_wrapped(cmd):
+        probe = subprocess.run([cmd[0], "-m", "coverage", "--version"],
                                capture_output=True, cwd=repo, env=env)
         if probe.returncode:
             sys.exit("error: coverage.py is not importable here. Install it"
                      " in the repo's environment (`pip install coverage`) or"
                      " use `coverage ingest` on an artifact from CI.")
-    run = subprocess.run(cmd, cwd=repo, capture_output=True, text=True,
+    run = subprocess.run(cmd, cwd=repo, capture_output=True,
+                         encoding="utf-8", errors="replace",
                          timeout=timeout, env=env)
     tail = "\n".join((run.stdout + "\n" + run.stderr).splitlines()[-15:])
     art = kg_dir(repo) / "coverage-tmp.json"
     result: dict = {"command": " ".join(cmd), "exit_code": run.returncode,
                     "output_tail": tail}
-    if cmd[:4] == ["python3", "-m", "coverage", "run"]:
+    if coverage_wrapped(cmd):
         conv = subprocess.run(
-            ["python3", "-m", "coverage", "json", "-o", str(art)],
-            cwd=repo, capture_output=True, text=True, timeout=120, env=env)
+            [cmd[0], "-m", "coverage", "json", "-o", str(art)],
+            cwd=repo, capture_output=True, encoding="utf-8",
+            errors="replace", timeout=120, env=env)
         if conv.returncode == 0 and art.exists():
             result["ingest"] = coverage_ingest(repo, art,
                                                " ".join(cmd))
@@ -5330,8 +6704,8 @@ def _executable_lines(text: str) -> set[int]:
 def traced_command(cmd: list | None) -> list | None:
     """The command `--calls` runs: coverage.py and this tracer both need
     sys.settrace, so a `python3 -m coverage run` wrapper is dropped."""
-    if cmd and cmd[:4] == ["python3", "-m", "coverage", "run"]:
-        return ["python3"] + cmd[4:]
+    if coverage_wrapped(cmd):
+        return [cmd[0]] + cmd[4:]
     return cmd
 
 
@@ -5354,7 +6728,8 @@ def trace_run(repo: Path, cmd: list, source: str, timeout: int) -> dict:
            "CODE_KG_TRACE_ROOT": os.path.realpath(repo),
            "CODE_KG_TRACE_OUT": str(out_dir)}
     try:
-        run = subprocess.run(cmd, cwd=repo, capture_output=True, text=True,
+        run = subprocess.run(cmd, cwd=repo, capture_output=True,
+                             encoding="utf-8", errors="replace",
                              timeout=timeout, env=env)
         tail = "\n".join((run.stdout + "\n" + run.stderr).splitlines()[-15:])
         result = {"command": " ".join(cmd), "exit_code": run.returncode,
@@ -5703,10 +7078,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         cfg_file.write_text(json.dumps(DEFAULT_CONFIG, indent=2,
                                        sort_keys=True) + "\n",
                             encoding="utf-8")
-    gi = kg / ".gitignore"
-    if not gi.exists():
-        gi.write_text(f"{DB_NAME}\ncoverage-tmp.json\n", encoding="utf-8")
-    counts = ingest(repo)
+    counts = ingest(repo)      # connect() seeds .code-kg/.gitignore
     print(f"initialized {kg}")
     print_readout(repo, counts)
     print("ingest:", json.dumps(counts, sort_keys=True))
@@ -5746,9 +7118,12 @@ def print_readout(repo: Path, counts: dict) -> None:
 
 def cmd_ingest(args: argparse.Namespace) -> int:
     repo = repo_dir(args.repo)
-    counts = ingest(repo)
+    counts = ingest(repo, getattr(args, "keep_previous", False))
 
     def render(c):
+        if "checkpoint" in c:
+            print(f"checkpoint: {c['checkpoint']}" if c["checkpoint"]
+                  else "checkpoint: none written (no previous db to keep)")
         print(f"ingested {c['files']} files, {c['symbols']} symbols,"
               f" {c['edges']} edges, {c['entry_points']} entry points"
               f" ({c['ignored']} ignored, {c['parse_errors']} parse errors)")
@@ -5759,19 +7134,30 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
 
 def cmd_search(args: argparse.Namespace) -> int:
-    result = search(repo_dir(args.repo), args.question, limit=args.limit,
-                    include_deps=args.deps)
+    repo = repo_dir(args.repo)
+    result = search(repo, args.question, limit=args.limit,
+                    include_deps=args.deps, per_file=args.per_file,
+                    budget=args.budget)
+    record_reads(repo, args.session, [h.get("symbol", h["file"])
+                                      for h in result["results"]], "search")
 
     def render(r):
         print(f"[{r['scope']}/{r['rung']}] {r['status']}")
         for hit in r["results"]:
             tag = f"  [{hit['rung']}]" if "rung" in hit else ""
+            if "substituted_for" in hit:
+                tag += f"  (part of {hit['substituted_for']})"
             if "symbol" in hit:
                 print(f"  {hit['file']}:{hit['lines']}  {hit['kind']}"
                       f" {hit['qualname']}{tag}")
             else:
                 print(f"  {hit['file']}:{hit['lines']}  ({hit['language']},"
                       f" {hit['role']}){tag}")
+            if "text" in hit:
+                print(hit["text"])
+                print("---")
+        if "budget" in r:
+            print(f"budget {r['spent']}/{r['budget']} tokens")
         return 0
     return emit(args, result, render)
 
@@ -5791,6 +7177,7 @@ def cmd_query(args: argparse.Namespace) -> int:
         sys.exit(f"error: bad FTS5 query: {e}")
     con.close()
     payload = [{"file": fid, "score": round(s, 3)} for fid, s in rows]
+    record_reads(repo, args.session, [r["file"] for r in payload], "query")
     return emit(args, payload, lambda p: [print(f"  {r['file']}") for r in p]
                 and 0 or 0)
 
@@ -5907,10 +7294,20 @@ def cmd_read(args: argparse.Namespace) -> int:
                           (fid,)).fetchone()
         a, b = rng if rng else (1, row[0])
     body = con.execute("SELECT body FROM files WHERE id=?", (fid,)).fetchone()[0]
-    con.close()
     lines = body.splitlines()
     a = max(1, a)
     b = min(len(lines), b)
+    if getattr(args, "session", None):
+        # The ledger holds what was read: the symbol, the whole file, or
+        # the symbols a line range holds whole.
+        units = [target] if "::" in target else [fid] \
+            if (a, b) == (1, len(lines)) else [r[0] for r in con.execute(
+                "SELECT id FROM symbols WHERE file_id=? AND line_start>=?"
+                " AND line_end<=?", (fid, a, b))]
+        con.close()
+        record_reads(repo, args.session, units, "read")
+    else:
+        con.close()
     print(f"# {fid}:{a}-{b}")
     print("\n".join(lines[a - 1:b]))
     return 0
@@ -6941,9 +8338,12 @@ def _cut(rows: list, limit: int) -> tuple[list, str]:
 
 
 def symbol_report(repo: Path, name: str, direction: str, depth: int = 1,
-                  limit: int = SYMBOLS_LIMIT) -> dict:
+                  limit: int = SYMBOLS_LIMIT,
+                  include_inferred: bool = False) -> dict:
     """Callers (`in`) or callees (`out`) of one symbol, every status, best
-    evidence first. Past depth 1, only resolved edges are followed."""
+    evidence first. Past depth 1, only resolved edges are followed. With
+    `include_inferred`, hot recorded relations join at depth 1 as kind
+    `inferred/<predicate>`, and every row says its provenance."""
     con = open_fresh(repo)
     sid = pick_symbol(con, name)
     near, far = ("dst", "src") if direction == "in" else ("src", "dst")
@@ -6969,6 +8369,15 @@ def symbol_report(repo: Path, name: str, direction: str, depth: int = 1,
             f"SELECT {cols} FROM symbol_edges WHERE status IN"
             " ('weak','ambiguous') AND instr(candidates, ?) > 0", (sid,)))
             if sid in r["candidates"]]
+    if include_inferred:
+        for r in rows:
+            r["provenance"] = "extracted"
+        for _, subj, pred, obj, line in _hot_relations(con):
+            if (subj if direction == "out" else obj) == sid:
+                rows.append({"src": subj, "dst": obj, "target": pred,
+                             "kind": f"inferred/{pred}", "line": line,
+                             "status": "resolved", "candidates": [],
+                             "depth": 1, "provenance": "inferred"})
     con.close()
     rows.sort(key=lambda r: (r["depth"], STATUS_RANK.get(r["status"], 9),
                              r["src"], r["line"], r["target"]))
@@ -6981,7 +8390,8 @@ def symbol_report(repo: Path, name: str, direction: str, depth: int = 1,
 def cmd_symbol_edges(args: argparse.Namespace) -> int:
     direction = "in" if args.cmd == "callers" else "out"
     payload = symbol_report(repo_dir(args.repo), args.symbol, direction,
-                            args.depth, args.limit)
+                            args.depth, args.limit,
+                            getattr(args, "include_inferred", False))
 
     def render(p):
         arrow = "<-" if p["direction"] == "in" else "->"
@@ -7243,6 +8653,664 @@ def cmd_docs(args: argparse.Namespace) -> int:
     return emit(args, payload, render)
 
 
+DIFF_PAIR_LINES = 2    # lines below a symbol's first that let it pair as
+#                        renamed or moved; fewer, and `pass` stubs would pair
+
+
+def _diff_units(con: sqlite3.Connection) -> tuple[dict, dict]:
+    """A code-kg db's symbols as `classify_units` rows, and its files by
+    content hash. A symbol's hashes come from the stored file text: the
+    whole unit, and the lines below its first (the `def` or `class` line,
+    which holds the name), indentation ignored so a move into a class
+    still pairs."""
+    cols = {r[1] for r in con.execute("PRAGMA table_info(files)")}
+    where = " WHERE origin='project'" if "origin" in cols else ""
+    files, bodies = {}, {}
+    for fid, digest, body in con.execute(
+            "SELECT id, content_hash, body FROM files" + where):
+        files[fid] = digest
+        bodies[fid] = body.splitlines()
+    units = {}
+    for sid, fid, qual, a, b in con.execute(
+            "SELECT id, file_id, qualname, line_start, line_end FROM"
+            " symbols"):
+        if fid not in bodies:
+            continue
+        text = bodies[fid][max(0, a - 1):b]
+        below = [ln.strip() for ln in text[1:] if ln.strip()]
+        units[sid] = (sid, fid, hashlib.sha256(
+            "\n".join(text).encode()).hexdigest()[:16],
+            hashlib.sha256("\n".join(below).encode()).hexdigest()[:16]
+            if len(below) >= DIFF_PAIR_LINES else None, qual)
+    return units, files
+
+
+def diff_report(repo: Path, against: str | None = None) -> dict:
+    """What changed between the live graph and a checkpoint or another
+    repo's code-kg db, by file and by symbol. Read-only on the against
+    side; complete or erroring, never truncated."""
+    con = open_fresh(repo)
+    if against is None:
+        prev = prev_db_path(repo)
+        if not prev.exists():
+            con.close()
+            sys.exit(f"error: no checkpoint at {prev} - run"
+                     " `ingest <repo> --keep-previous` to create one")
+        against = str(prev)
+    elif not Path(against).is_file():
+        con.close()
+        sys.exit(f"error: --against {against} is not a file")
+    # Never through connect(): that runs the schema script, a write, and
+    # the against side may be another repo's db.
+    old_con = _ro_connect(against)
+    try:
+        have = {r[0] for r in old_con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+            " AND name IN ('files', 'symbols')")}
+    except sqlite3.DatabaseError:
+        have = set()
+    if have != {"files", "symbols"}:
+        old_con.close()
+        con.close()
+        sys.exit(f"error: --against {against} is not a code-kg db"
+                 " (no files/symbols tables)")
+    new, new_files = _diff_units(con)
+    old, old_files = _diff_units(old_con)
+    old_con.close()
+    con.close()
+    c = classify_units(old, new)
+
+    def entry(r):
+        return {"symbol_id": r[0], "qualname": r[4]}
+
+    def pair_entry(pair):
+        o, n = pair
+        return {"from_id": o[0], "to_id": n[0], "from_qualname": o[4],
+                "to_qualname": n[4]}
+
+    return {
+        "against": against,
+        "files": {
+            "added": sorted(set(new_files) - set(old_files)),
+            "removed": sorted(set(old_files) - set(new_files)),
+            "edited": sorted(f for f in set(new_files) & set(old_files)
+                             if new_files[f] != old_files[f])},
+        "added": [entry(r) for r in c["added"]],
+        "removed": [entry(r) for r in c["removed"]],
+        "edited": [pair_entry(p) for p in c["edited"]],
+        "renamed": [pair_entry(p) for p in c["renamed"]],
+        "moved": [pair_entry(p) for p in c["moved"]],
+        "unchanged": c["unchanged"],
+    }
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    payload = diff_report(repo_dir(args.repo), args.against)
+
+    def render(d):
+        for bucket in ("added", "removed"):
+            for e in d[bucket]:
+                print(f"{bucket}: {e['symbol_id']}  ({e['qualname']})")
+        for bucket in ("edited", "renamed", "moved"):
+            for e in d[bucket]:
+                arrow = "" if e["from_id"] == e["to_id"] \
+                    else f" -> {e['to_id']}"
+                print(f"{bucket}: {e['from_id']}{arrow}")
+        f = d["files"]
+        if any(f.values()):
+            names = ", ".join(f["added"] + f["removed"] + f["edited"])
+            print(f"files: {len(f['added'])} added, {len(f['removed'])}"
+                  f" removed, {len(f['edited'])} edited - {names}")
+        print(f"symbols: {len(d['added'])} added, {len(d['removed'])}"
+              f" removed, {len(d['edited'])} edited, {len(d['renamed'])}"
+              f" renamed, {len(d['moved'])} moved, {d['unchanged']}"
+              f" unchanged  (against {d['against']})")
+        return 0
+    return emit(args, payload, render)
+
+
+RELATED_DAMPING = 0.85
+RELATED_MAX_ITER = 100
+RELATED_TOLERANCE = 1e-10
+RELATED_LIMIT = 10
+
+
+def rank_from(graph: dict, seed: str, limit: int) -> dict:
+    """Personalized PageRank from `seed` over an undirected weighted graph
+    ({node: {other: weight}}), on the part of it the seed reaches. A walker
+    starts on the seed, follows edges in proportion to their weight, and at
+    every step returns to the seed with probability 1 - damping; a node's
+    score is the share of time spent on it. Fixed damping, sorted
+    iteration: the same graph always gives the same ranking. `limit` 0 or
+    less returns every node. markdown-kg's `rank_from` has the same body;
+    keep the two identical."""
+    hops = {seed: 0}
+    frontier = [seed]
+    while frontier:
+        nxt = []
+        for node in frontier:
+            for other in sorted(graph.get(node, {})):
+                if other not in hops:
+                    hops[other] = hops[node] + 1
+                    nxt.append(other)
+        frontier = nxt
+    nodes = sorted(hops)
+    out_weight = {n: sum(graph[n].values()) for n in nodes}
+    score = {n: 0.0 for n in nodes}
+    score[seed] = 1.0
+    iterations = 0
+    for iterations in range(1, RELATED_MAX_ITER + 1):
+        nxt_score = {n: 0.0 for n in nodes}
+        for n in nodes:
+            if not score[n]:
+                continue
+            share = RELATED_DAMPING * score[n] / out_weight[n]
+            for other, w in graph[n].items():
+                nxt_score[other] += share * w
+        nxt_score[seed] += 1.0 - RELATED_DAMPING
+        delta = sum(abs(nxt_score[n] - score[n]) for n in nodes)
+        score = nxt_score
+        if delta < RELATED_TOLERANCE:
+            break
+    ranked = sorted(((round(score[n], 6), n) for n in nodes if n != seed),
+                    key=lambda r: (-r[0], r[1]))
+    shown = ranked if limit <= 0 else ranked[:limit]
+    return {"damping": RELATED_DAMPING, "iterations": iterations,
+            "nodes": len(nodes),
+            "status": ("COMPLETE" if len(shown) == len(ranked)
+                       else f"TRUNCATED {len(shown)} of {len(ranked)}"),
+            "related": [{"id": n, "score": s, "hops": hops[n]}
+                        for s, n in shown]}
+
+
+def _weighted(pairs) -> dict:
+    """An undirected weighted graph from (a, b) rows: each row adds 1 to
+    the pair, so two units joined several times weigh more."""
+    graph: dict[str, dict[str, float]] = {}
+    for a, b in pairs:
+        if not a or not b or a == b:
+            continue
+        for x, y in ((a, b), (b, a)):
+            graph.setdefault(x, {})
+            graph[x][y] = graph[x].get(y, 0.0) + 1.0
+    return graph
+
+
+def pick_unit(con: sqlite3.Connection, name: str) -> tuple[str, str]:
+    """A CLI argument naming a file or a symbol, as (id, 'file' or
+    'symbol'): a path any file matches is a file, anything else a symbol."""
+    n = name.strip()
+    if "::" not in n:
+        low = n.strip("/").lower()
+        if any(f.lower() == low or f.lower().endswith("/" + low)
+               or posixpath.basename(f).lower() == low
+               for f, in con.execute("SELECT id FROM files")):
+            return resolve_file_arg(con, n), "file"
+    return pick_symbol(con, n), "symbol"
+
+
+def _hot_relations(con: sqlite3.Connection) -> list:
+    return con.execute(
+        "SELECT id, subject, predicate, object, line FROM extractions"
+        " WHERE kind='relation' AND status='hot' ORDER BY id").fetchall()
+
+
+def related_report(repo: Path, name: str, limit: int = RELATED_LIMIT,
+                   include_inferred: bool = False) -> dict:
+    """Files, or symbols when `name` is one, ranked by personalized PageRank
+    from it: over executable file edges, or over resolved symbol edges
+    (calls, references, imports, decorators, bases), plus hot recorded
+    relations with `include_inferred`. Position in the code graph, not
+    similarity of content."""
+    con = open_fresh(repo)
+    unit, kind = pick_unit(con, name)
+    if kind == "file":
+        pairs = [(s, d) for s, d, k in con.execute(
+            "SELECT src, dst, kind FROM edges WHERE status='resolved'")
+            if k in LIVE_KINDS]
+    else:
+        pairs = con.execute("SELECT src, dst FROM symbol_edges WHERE"
+                            " status='resolved'").fetchall()
+    if include_inferred:
+        for _, subj, _, obj, _ in _hot_relations(con):
+            if kind == "file":
+                pairs.append((subj.split("::")[0], obj.split("::")[0]))
+            elif "::" in subj and "::" in obj:
+                pairs.append((subj, obj))
+    graph = _weighted(pairs)
+    con.close()
+    if not graph.get(unit):
+        return {"unit": unit, "graph": kind, "status": "NO_LINKS",
+                "related": [], "nodes": 1, "iterations": 0,
+                "damping": RELATED_DAMPING}
+    return {"unit": unit, "graph": kind, **rank_from(graph, unit, limit)}
+
+
+def _unit_text(con: sqlite3.Connection, unit: str) -> tuple[int, str] | None:
+    """A file's text, or a symbol's lines, with the line it starts on."""
+    fid, sep, _ = unit.partition("::")
+    row = con.execute("SELECT body FROM files WHERE id=?", (fid,)).fetchone()
+    if row is None:
+        return None
+    if not sep:
+        return 1, row[0]
+    span = con.execute("SELECT line_start, line_end FROM symbols WHERE id=?",
+                       (unit,)).fetchone()
+    if span is None:
+        return None
+    return span[0], "\n".join(row[0].splitlines()[span[0] - 1:span[1]])
+
+
+def _text_hash(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def relate_record(repo: Path, unit: str, predicate: str, target: str,
+                  quote: str) -> dict:
+    """Record one judgment into the never-wiped `extractions` table: the
+    anchoring symbol or file is the subject, the target resolves like any
+    unit argument, and the quote must occur in the anchor's own text, so
+    the evidence is checked when it is written, never trusted. Ingest never
+    calls this."""
+    con = open_fresh(repo)
+    subject, _ = pick_unit(con, unit)
+    predicate = predicate.strip()
+    if not predicate:
+        con.close()
+        sys.exit("error: predicate must be non-empty")
+    obj, _ = pick_unit(con, target)
+    first, text = _unit_text(con, subject)
+    at = text.find(quote) if quote else -1
+    if at < 0:
+        con.close()
+        sys.exit("error: quote not found in the anchoring unit - a recorded"
+                 " relation keeps its evidence, and the evidence must be"
+                 " readable where it is cited")
+    line = first + text.count("\n", 0, at)
+    dup = con.execute(
+        "SELECT id FROM extractions WHERE kind='relation' AND unit_id=?"
+        " AND subject=? AND predicate=? AND object=? AND status='hot'",
+        (subject, subject, predicate, obj)).fetchone()
+    if dup:
+        con.close()
+        return {"id": dup[0], "existing": True, "subject": subject,
+                "predicate": predicate, "object": obj, "conflicts": []}
+    others = [r[0] for r in con.execute(
+        "SELECT id FROM extractions WHERE kind='relation' AND subject=?"
+        " AND predicate=? AND object != ? AND status='hot' ORDER BY id",
+        (subject, predicate, obj))]
+    new_id = con.execute(
+        "INSERT INTO extractions(unit_id, unit_hash, kind, subject,"
+        " predicate, object, quote, line, observed_at, status)"
+        " VALUES (?,?,'relation',?,?,?,?,?,?,'hot')",
+        (subject, _text_hash(text), subject, predicate, obj, quote, line,
+         now_utc())).lastrowid
+    seqs = [con.execute(
+        "INSERT INTO conflicts(detected_at, key, kind, a_extraction,"
+        " b_extraction, state) VALUES (?,?,'relation',?,?,'hot')",
+        (now_utc(), f"{subject}|{predicate}", other, new_id)).lastrowid
+        for other in others]
+    con.commit()
+    con.close()
+    return {"id": new_id, "existing": False, "subject": subject,
+            "predicate": predicate, "object": obj, "conflicts": seqs}
+
+
+def reconcile_extractions(con: sqlite3.Connection) -> None:
+    """Judgments survive a rebuild. One whose anchor changed or is gone goes
+    cold with its evidence intact; one whose anchor came back unchanged goes
+    hot again; `retired` is sticky. Nothing is deleted."""
+    for eid, unit, digest in con.execute(
+            "SELECT id, unit_id, unit_hash FROM extractions"
+            " WHERE status != 'retired'").fetchall():
+        got = _unit_text(con, unit)
+        status = "hot" if got and _text_hash(got[1]) == digest else "cold"
+        con.execute("UPDATE extractions SET status=? WHERE id=?",
+                    (status, eid))
+    con.execute("UPDATE conflicts SET state='cold' WHERE a_extraction IN"
+                " (SELECT id FROM extractions WHERE status != 'hot')"
+                " OR b_extraction IN"
+                " (SELECT id FROM extractions WHERE status != 'hot')")
+
+
+def relations_report(repo: Path, unit: str | None = None,
+                     include_cold: bool = False,
+                     conflicts: bool = False) -> dict:
+    con = open_fresh(repo)
+    q = ("SELECT id, unit_id, subject, predicate, object, quote, line,"
+         " observed_at, status FROM extractions WHERE kind='relation'")
+    params: tuple = ()
+    if not include_cold:
+        q += " AND status='hot'"
+    if unit:
+        uid, _ = pick_unit(con, unit)
+        q += " AND (subject=? OR object=?)"
+        params = (uid, uid)
+    keys = ("id", "unit_id", "subject", "predicate", "object", "quote",
+            "line", "observed_at", "status")
+    out: dict = {"relations": [dict(zip(keys, r)) for r in con.execute(
+        q + " ORDER BY id", params)]}
+    if conflicts:
+        out["conflicts"] = [
+            {"seq": s, "key": k, "a": a, "b": b, "state": st,
+             "resolution": res} for s, k, a, b, st, res in con.execute(
+                "SELECT seq, key, a_extraction, b_extraction, state,"
+                " resolution FROM conflicts ORDER BY seq")]
+    con.close()
+    return out
+
+
+def retire_relation(repo: Path, rid: int) -> dict:
+    """The exit for a wrong judgment: the row keeps its evidence as
+    `retired`, sticky across ingests, leaves traversal and listings, and
+    its conflicts close."""
+    con = open_fresh(repo)
+    row = con.execute("SELECT status FROM extractions WHERE id=? AND"
+                      " kind='relation'", (rid,)).fetchone()
+    if row is None:
+        con.close()
+        sys.exit(f"error: no recorded relation #{rid}")
+    con.execute("UPDATE extractions SET status='retired' WHERE id=?", (rid,))
+    con.execute("UPDATE conflicts SET state='cold' WHERE kind='relation'"
+                " AND (a_extraction=? OR b_extraction=?)", (rid, rid))
+    con.commit()
+    con.close()
+    return {"id": rid, "was": row[0], "status": "retired"}
+
+
+def resolve_conflict(repo: Path, seq: int, resolution: str) -> dict:
+    con = open_fresh(repo)
+    if con.execute("SELECT 1 FROM conflicts WHERE seq=?",
+                   (seq,)).fetchone() is None:
+        con.close()
+        sys.exit(f"error: no conflict #{seq}")
+    con.execute("UPDATE conflicts SET resolution=?, state='cold' WHERE"
+                " seq=?", (resolution, seq))
+    con.commit()
+    con.close()
+    return {"seq": seq, "state": "cold", "resolution": resolution}
+
+
+def cmd_relate(args: argparse.Namespace) -> int:
+    payload = relate_record(repo_dir(args.repo), args.unit, args.predicate,
+                            args.target, args.quote)
+
+    def render(p):
+        print(f"{'already recorded' if p['existing'] else 'recorded'}"
+              f" #{p['id']}: {p['subject']} -[{p['predicate']}]->"
+              f" {p['object']}")
+        for seq in p["conflicts"]:
+            print(f"conflict #{seq}: same subject and predicate already"
+                  " points elsewhere - see `relations --conflicts`")
+        return 0
+    return emit(args, payload, render)
+
+
+def cmd_relations(args: argparse.Namespace) -> int:
+    repo = repo_dir(args.repo)
+    if args.retire is not None:
+        return emit(args, retire_relation(repo, args.retire),
+                    lambda p: print(f"#{p['id']} retired (was {p['was']})")
+                    and 0 or 0)
+    if args.resolve:
+        payload = resolve_conflict(repo, int(args.resolve[0]),
+                                   args.resolve[1])
+        return emit(args, payload,
+                    lambda p: print(f"conflict #{p['seq']} closed:"
+                                    f" {p['resolution']}") and 0 or 0)
+    payload = relations_report(repo, args.unit, args.include_cold,
+                               args.conflicts)
+
+    def render(p):
+        for r in p["relations"]:
+            state = "" if r["status"] == "hot" else f"  [{r['status']}]"
+            print(f"#{r['id']}  {r['subject']} -[{r['predicate']}]->"
+                  f" {r['object']}{state}  (line {r['line']})")
+        print(f"{len(p['relations'])} recorded relation(s)")
+        for c in p.get("conflicts", []):
+            res = f"  resolution: {c['resolution']}" if c["resolution"] \
+                else ""
+            print(f"conflict #{c['seq']} [{c['state']}]  {c['key']}"
+                  f"  #{c['a']} vs #{c['b']}{res}")
+        return 0
+    return emit(args, payload, render)
+
+
+def cmd_related(args: argparse.Namespace) -> int:
+    payload = related_report(repo_dir(args.repo), args.unit, args.limit,
+                             args.include_inferred)
+
+    def render(p):
+        if p["status"] == "NO_LINKS":
+            print(f"{p['unit']} has no resolved {p['graph']} edges to rank"
+                  " from")
+            return 0
+        print(f"Ranked by {p['graph']}-graph proximity to {p['unit']}, not"
+              " by content: read the code before treating it as relevant.")
+        for r in p["related"]:
+            print(f"  {r['score']:.4f}  {r['hops']} hop"
+                  f"{'' if r['hops'] == 1 else 's'}  {r['id']}")
+        if p["status"] != "COMPLETE":
+            print(f"{p['status']}; --limit 0 for all")
+        return 0
+    return emit(args, payload, render)
+
+
+READS_LIMIT = 20       # untouched entries `reads` lists unless told
+
+
+def reads_report(repo: Path, session: str, scope: str | None = None,
+                 limit: int = READS_LIMIT) -> dict:
+    """What one session has read, out of what there is. A file read whole
+    covers every symbol in it; a symbol covers the symbols inside its
+    lines; a symbol inside another never covers the outer one. The
+    untouched list names whole files nobody read, and in a partly read
+    file each top-level symbol with something unread under it, largest
+    first."""
+    con = open_fresh(repo)
+    files = {fid: body.splitlines() for fid, body in con.execute(
+        "SELECT id, body FROM files WHERE origin='project'")}
+    syms: dict[str, list] = {}
+    for sid, fid, a, b in con.execute(
+            "SELECT id, file_id, line_start, line_end FROM symbols"):
+        if fid in files:
+            syms.setdefault(fid, []).append((sid, a, b))
+    ledger = {r[0] for r in con.execute(
+        "SELECT unit_id FROM session_reads WHERE session_id=?", (session,))}
+    con.close()
+    live = set(files) | {s[0] for v in syms.values() for s in v}
+    stale = len(ledger - live)
+    if scope:
+        files = {f: v for f, v in files.items() if glob_match(f, scope)}
+    totals = {"symbols": [0, 0], "lines": [0, 0], "files": [0, 0]}
+    untouched = []
+    for fid in sorted(files):
+        mine = sorted(syms.get(fid, []), key=lambda s: (s[1], -s[2]))
+        n = len(files[fid])
+        if fid in ledger:
+            covered = set(range(1, n + 1))
+            done = {s[0] for s in mine}
+        else:
+            spans = [(a, b) for sid, a, b in mine if sid in ledger]
+            covered = {ln for a, b in spans for ln in range(a, b + 1)}
+            done = {sid for sid, a, b in mine
+                    if any(x <= a and b <= y for x, y in spans)}
+        totals["symbols"][0] += len(done)
+        totals["symbols"][1] += len(mine)
+        totals["lines"][0] += len(covered & set(range(1, n + 1)))
+        totals["lines"][1] += n
+        totals["files"][0] += bool(done or covered)
+        totals["files"][1] += 1
+        if not (done or covered):
+            untouched.append({"kind": "file", "file_id": fid,
+                              "symbols": len(mine), "lines": n})
+            continue
+        tops = [s for s in mine if not any(
+            o[0] != s[0] and o[1] <= s[1] and s[2] <= o[2] for o in mine)]
+        for sid, a, b in tops:
+            under = [s for s in mine if a <= s[1] and s[2] <= b]
+            left = [s for s in under if s[0] not in done]
+            if left:
+                untouched.append({
+                    "kind": "symbol", "file_id": fid, "symbol_id": sid,
+                    "symbols": len(left),
+                    "lines": len(set(range(a, b + 1)) - covered)})
+    untouched.sort(key=lambda u: (-u["lines"], u["file_id"],
+                                  u.get("symbol_id", "")))
+    shown, status = _cut(untouched, limit)
+
+    def part(k):
+        t, total = totals[k]
+        return {"touched": t, "total": total,
+                "percent": round(100 * t / total, 1) if total else 0.0}
+    return {"session": session, "scope": scope, "symbols": part("symbols"),
+            "lines": part("lines"), "files": part("files"), "stale": stale,
+            "untouched": shown, "status": status}
+
+
+def cmd_reads(args: argparse.Namespace) -> int:
+    repo = repo_dir(args.repo)
+    if args.session and args.forget:
+        sys.exit("error: pass --session to report or --forget to delete,"
+                 " not both")
+    if not args.session and not args.forget:
+        sys.exit("error: reads needs --session ID (or --forget ID)")
+    if args.forget:
+        con = connect(repo, must_exist=True)
+        n = con.execute("DELETE FROM session_reads WHERE session_id=?",
+                        (args.forget,)).rowcount
+        con.commit()
+        con.close()
+        return emit(args, {"forgot": args.forget, "rows": n},
+                    lambda p: print(f"forgot session {p['forgot']!r}:"
+                                    f" {p['rows']} ledger row(s) deleted")
+                    and 0 or 0)
+    payload = reads_report(repo, args.session, args.scope, args.limit)
+
+    def render(p):
+        s, ln, f = p["symbols"], p["lines"], p["files"]
+        scope = f"  [scope {p['scope']}]" if p["scope"] else ""
+        print(f"reads: {s['touched']}/{s['total']} symbols ({s['percent']}%),"
+              f" {ln['touched']}/{ln['total']} lines ({ln['percent']}%),"
+              f" {f['touched']}/{f['total']} files{scope};"
+              f" {p['stale']} stale ledger row(s)")
+        if p["untouched"]:
+            print("untouched:")
+        for u in p["untouched"]:
+            what = u.get("symbol_id", u["file_id"])
+            print(f"  {u['kind']:6} {what}  {u['symbols']} symbol(s)"
+                  f"  {u['lines']} lines")
+        if p["status"] != "COMPLETE":
+            print(f"{p['status']}; --limit 0 for all")
+        return 0
+    return emit(args, payload, render)
+
+
+TREE_LIMIT = 200       # folders, and files, `tree` prints unless told
+
+
+def tree_payload(rows: list, root: Path, folder: str, depth: int,
+                 files: bool, absolute: bool, limit: int) -> dict:
+    """`tree` from file rows ({path, language, ext, ...}; language None for
+    a file no parser reads): direct and recursive counts by folder, with
+    languages and the extensions of unread files. `depth` 1 is the folder
+    alone, 0 every level; `limit` 0 or less shows all. markdown-kg's
+    `tree_payload` has the same body; keep the two identical."""
+    def key(path: str) -> tuple:
+        return tuple(path.split("/")) if path else ()
+
+    def cut(items: list) -> tuple:
+        if limit > 0 and len(items) > limit:
+            return items[:limit], f"TRUNCATED {limit} of {len(items)}"
+        return items, "COMPLETE"
+
+    folder = posixpath.normpath(folder.replace("\\", "/")).strip("/")
+    folder = "" if folder == "." else folder
+    rows = [r for r in rows if not folder
+            or r["path"].startswith(folder + "/")]
+    if folder and not rows:
+        sys.exit(f"error: no files under {folder!r} - `tree` with no folder"
+                 " lists them all")
+    base = len(key(folder))
+    tally: dict = {}
+    for r in rows:
+        chain = [posixpath.dirname(r["path"])]
+        while len(key(chain[-1])) > base:
+            chain.append(posixpath.dirname(chain[-1]))
+        for i, f in enumerate(chain):
+            t = tally.setdefault(f, {"path": f, "files": 0, "total": 0,
+                                     "languages": {}, "other": {}})
+            t["files"] += i == 0
+            t["total"] += 1
+            group, name = ("languages", r["language"]) if r["language"] \
+                else ("other", r["ext"] or "(none)")
+            t[group][name] = t[group].get(name, 0) + 1
+    shown = [t for t in sorted(tally.values(), key=lambda t: key(t["path"]))
+             if depth <= 0 or len(key(t["path"])) - base < depth]
+    folders, status = cut(shown)
+    payload = {"root": str(root.resolve()), "folder": folder,
+               "folders": folders, "status": status}
+    if files:
+        keep = {t["path"] for t in shown}
+        listed = sorted((dict(r) for r in rows
+                         if posixpath.dirname(r["path"]) in keep),
+                        key=lambda r: key(r["path"]))
+        for r in listed if absolute else ():
+            r["absolute"] = str(root.resolve().joinpath(
+                *r["path"].split("/")))
+        payload["files"], payload["files_status"] = cut(listed)
+    return payload
+
+
+def render_tree(p: dict) -> int:
+    """Text for `tree`. markdown-kg's `render_tree` has the same body."""
+    def counts(d: dict) -> str:
+        return ", ".join(f"{k} {v}" for k, v in sorted(d.items()))
+
+    def depth(path: str) -> int:
+        return len(path.split("/")) if path else 0
+
+    print(p["root"])
+    by_folder: dict = {}
+    for r in p.get("files", []):
+        by_folder.setdefault(posixpath.dirname(r["path"]), []).append(r)
+    for t in p["folders"]:
+        pad = "  " * (depth(t["path"]) - depth(p["folder"]))
+        parts = [counts(t["languages"])] if t["languages"] else []
+        if t["other"]:
+            parts.append(f"other {sum(t['other'].values())}"
+                         f" ({counts(t['other'])})")
+        print(f"{pad}{t['path'] + '/' if t['path'] else './'}"
+              f"  {t['total']} files: {', '.join(parts)}")
+        for r in by_folder.get(t["path"], []):
+            what = (f"{r['language']}, {r['lines']} lines"
+                    if r["language"] else f"({r['reason']})")
+            print(f"{pad}  {r.get('absolute', r['path'])}  {what}")
+    for k in ("status", "files_status"):
+        if p.get(k, "COMPLETE") != "COMPLETE":
+            print(f"{k.replace('_', ' ')}: {p[k]}; --limit 0 for all")
+    return 0
+
+
+def cmd_tree(args: argparse.Namespace) -> int:
+    repo = repo_dir(args.repo)
+    con = open_fresh(repo)
+    rows = [{"path": p, "language": lang, "role": role, "lines": lines,
+             "size": size, "ext": posixpath.splitext(
+                 posixpath.basename(p))[1].lower()}
+            for p, lang, role, lines, size in con.execute(
+                "SELECT id, language, role, lines, size FROM files"
+                " WHERE origin='project'")]
+    rows += [{"path": p, "language": None, "ext": ext, "size": size,
+              "reason": reason}
+             for p, ext, size, reason in con.execute(
+                 "SELECT path, ext, size, reason FROM other_files")]
+    con.close()
+    payload = tree_payload(rows, repo, args.folder or "", args.depth,
+                           args.files, args.absolute, args.limit)
+    return emit(args, payload, render_tree)
+
+
 # ---------- CLI ----------
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="code_kg.py", description=__doc__,
@@ -7257,23 +9325,88 @@ def main(argv: list[str] | None = None) -> int:
         return p
 
     add("init", cmd_init)
-    add("ingest", cmd_ingest)
+    p = add("ingest", cmd_ingest)
+    p.add_argument("--keep-previous", action="store_true",
+                   help=f"checkpoint the current db to {PREV_DB_NAME} first"
+                        " (what a bare `diff` compares against)")
+    p = add("diff", cmd_diff,
+            help="what changed, by file and by symbol, against the"
+                 " checkpoint or another code-kg db")
+    p.add_argument("--against", metavar="DB",
+                   help=f"a code-kg db to compare with (default:"
+                        f" {PREV_DB_NAME} from `ingest --keep-previous`)")
+    session_help = ("append what this command returns to this session's"
+                    " read ledger (report with `reads`)")
     p = add("search", cmd_search)
     p.add_argument("question")
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--deps", action="store_true",
                    help="include indexed dependency code in results")
+    p.add_argument("--per-file", type=int, default=0, metavar="N",
+                   help="at most N hits from any one file; default 0, no"
+                        " cap")
+    p.add_argument("--budget", type=int, default=None, metavar="TOKENS",
+                   help="return each hit's whole text, inside this many"
+                        " estimated tokens; a unit too big gives the units"
+                        " inside it that fit")
+    p.add_argument("--session", metavar="ID", help=session_help)
     p = add("query", cmd_query)
     p.add_argument("fts")
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--deps", action="store_true",
                    help="include indexed dependency code in results")
+    p.add_argument("--session", metavar="ID", help=session_help)
+    p = add("related", cmd_related,
+            help="files, or symbols, ranked by graph proximity to one:"
+                 " personalized PageRank, not content similarity")
+    p.add_argument("unit", help="a file path, or a symbol id or name")
+    p.add_argument("--limit", type=int, default=RELATED_LIMIT,
+                   help=f"rows, default {RELATED_LIMIT}; 0 for all")
+    inferred_help = ("also follow hot relations recorded with `relate`;"
+                     " by default only edges read from the code")
+    p.add_argument("--include-inferred", action="store_true",
+                   help=inferred_help)
+    p = add("relate", cmd_relate,
+            help="record a judgment about the code, anchored to a quote"
+                 " that must occur in the anchoring symbol or file")
+    p.add_argument("unit", help="the anchoring symbol or file: the subject")
+    p.add_argument("predicate")
+    p.add_argument("target", help="the object: a symbol or file")
+    p.add_argument("--quote", required=True,
+                   help="evidence text; must occur in the anchoring unit")
+    p = add("relations", cmd_relations,
+            help="recorded relations, their conflicts, and the exits:"
+                 " --retire and --resolve")
+    p.add_argument("--unit", help="only relations with this subject or"
+                                  " object")
+    p.add_argument("--include-cold", action="store_true",
+                   help="also cold and retired rows")
+    p.add_argument("--conflicts", action="store_true",
+                   help="also list conflicts")
+    p.add_argument("--retire", type=int, metavar="ID",
+                   help="mark one relation retired, keeping its evidence")
+    p.add_argument("--resolve", nargs=2, metavar=("SEQ", "TEXT"),
+                   help="close one conflict with a ruling")
+    p = add("reads", cmd_reads,
+            help="what a session has read out of what there is, by"
+                 " symbol, line and file, with the largest unread parts")
+    p.add_argument("--session", metavar="ID")
+    p.add_argument("--forget", metavar="ID",
+                   help="delete one session's ledger rows instead of"
+                        " reporting")
+    p.add_argument("--scope", metavar="GLOB",
+                   help="restrict totals and the untouched list to files"
+                        " matching this glob")
+    p.add_argument("--limit", type=int, default=READS_LIMIT,
+                   help=f"untouched entries listed, default {READS_LIMIT};"
+                        " 0 for all")
     p = add("file", cmd_file)
     p.add_argument("path")
     p = add("symbols", cmd_symbols)
     p.add_argument("name")
     p = add("read", cmd_read)
     p.add_argument("target")
+    p.add_argument("--session", metavar="ID", help=session_help)
     p = add("imports", cmd_imports)
     p.add_argument("path")
     p = add("importers", cmd_importers)
@@ -7322,6 +9455,23 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int, default=SYMBOLS_LIMIT,
                    help=f"rows, default {SYMBOLS_LIMIT}; 0 for all")
     add("stats", cmd_stats)
+    p = add("tree", cmd_tree,
+            help="every file by folder: direct and recursive counts,"
+                 " languages, and the extensions of files no parser reads")
+    p.add_argument("folder", nargs="?",
+                   help="a repo-relative folder; default the whole repo")
+    p.add_argument("--depth", type=int, default=0,
+                   help="levels shown, 1 for the folder alone; default 0,"
+                        " every level")
+    p.add_argument("--files", action="store_true",
+                   help="also list each file with its language, or why it"
+                        " is not read")
+    p.add_argument("--absolute", action="store_true",
+                   help="with --files, give each file's absolute path in"
+                        " this system's form")
+    p.add_argument("--limit", type=int, default=TREE_LIMIT,
+                   help=f"folders, and files, shown; default {TREE_LIMIT},"
+                        " 0 for all")
     p = add("data", cmd_data)
     p.add_argument("--inspect", metavar="STORE",
                    help="open one detected SQLite store read-only"
@@ -7370,6 +9520,9 @@ def main(argv: list[str] | None = None) -> int:
                        help=f"rows, default {SYMBOLS_LIMIT}; 0 for all."
                             " Resolved rows rank first; a cut sets"
                             " `status` to TRUNCATED N of M")
+        p.add_argument("--include-inferred", action="store_true",
+                       help=inferred_help + "; every row then carries"
+                            " `provenance`")
     p = add("extends", cmd_extends, help="a class's bases and subclasses")
     p.add_argument("symbol")
     p = add("flow", cmd_flow, help="the globals, tables, files, environment"

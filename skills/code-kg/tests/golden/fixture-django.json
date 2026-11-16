@@ -226,12 +226,12 @@
  },
  "ingest <REPO> --json": {
   "err": "",
-  "out": "{\n  \"alias_notes\": [],\n  \"dep_files\": 0,\n  \"edges\": 224,\n  \"entry_points\": 22,\n  \"entry_warnings\": [],\n  \"files\": 59,\n  \"ignored\": 0,\n  \"parse_errors\": 0,\n  \"profiles\": [\n    \"django\"\n  ],\n  \"symbols\": 206\n}\n",
+  "out": "{\n  \"alias_notes\": [],\n  \"dep_files\": 0,\n  \"edges\": 224,\n  \"entry_points\": 22,\n  \"entry_warnings\": [],\n  \"files\": 59,\n  \"ignored\": 0,\n  \"parse_errors\": 0,\n  \"profiles\": [\n    \"django\"\n  ],\n  \"symbols\": 210\n}\n",
   "rc": 0
  },
  "init <REPO>": {
   "err": "",
-  "out": "initialized <REPO>/.code-kg\n  profile: django\n  data stores: postgres, redis (details: `data`)\ningest: {\"alias_notes\": [], \"dep_files\": 0, \"edges\": 224, \"entry_points\": 22, \"entry_warnings\": [], \"files\": 59, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [\"django\"], \"symbols\": 206}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
+  "out": "initialized <REPO>/.code-kg\n  profile: django\n  data stores: postgres, redis (details: `data`)\ningest: {\"alias_notes\": [], \"dep_files\": 0, \"edges\": 224, \"entry_points\": 22, \"entry_warnings\": [], \"files\": 59, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [\"django\"], \"symbols\": 210}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
   "rc": 0
  },
  "neighbors <REPO> AGENTS.md --depth 2 --json": {
@@ -326,7 +326,7 @@
  },
  "search <REPO> invoice --json": {
   "err": "",
-  "out": "{\n  \"question\": \"invoice\",\n  \"results\": [\n    {\n      \"file\": \"core/services/notifications.py\",\n      \"kind\": \"function\",\n      \"lines\": \"10-18\",\n      \"qualname\": \"notify_invoice_sent\",\n      \"score\": -0.423,\n      \"symbol\": \"core/services/notifications.py::notify_invoice_sent\"\n    },\n    {\n      \"file\": \"core/services/billing.py\",\n      \"kind\": \"function\",\n      \"lines\": \"36-44\",\n      \"qualname\": \"send_invoice\",\n      \"score\": -0.422,\n      \"symbol\": \"core/services/billing.py::send_invoice\"\n    },\n    {\n      \"file\": \"core/services/billing.py\",\n      \"kind\": \"function\",\n      \"lines\": \"63-71\",\n      \"qualname\": \"void_invoice\",\n      \"score\": -0.419,\n      \"symbol\": \"core/services/billing.py::void_invoice\"\n    },\n    {\n      \"file\": \"core/tests/test_models.py\",\n      \"kind\": \"class\",\n      \"lines\": \"51-67\",\n      \"qualname\": \"QuerySetTests\",\n      \"score\": -0.407,\n      \"symbol\": \"core/tests/test_models.py::QuerySetTests\"\n    },\n    {\n      \"file\": \"core/tests/test_billing.py\",\n      \"kind\": \"method\",\n      \"lines\": \"75-79\",\n      \"qualname\": \"PaymentTests.test_void_paid_invoice_rejected\",\n      \"score\": -0.405,\n      \"symbol\": \"core/tests/test_billing.py::PaymentTests.test_void_paid_invoice_rejected\"\n    },\n    {\n      \"file\": \"core/tests/test_billing.py\",\n      \"kind\": \"class\",\n      \"lines\": \"41-86\",\n      \"qualname\": \"PaymentTests\",\n      \"score\": -0.401,\n      \"symbol\": \"core/tests/test_billing.py::PaymentTests\"\n    },\n    {\n      \"file\": \"core/tests/factories.py\",\n      \"kind\": \"function\",\n      \"lines\": \"21-29\",\n      \"qualname\": \"make_invoice\",\n      \"score\": -0.399,\n      \"symbol\": \"core/tests/factories.py::make_invoice\"\n    },\n    {\n      \"file\": \"core/tasks.py\",\n      \"kind\": \"function\",\n      \"lines\": \"9-16\",\n      \"qualname\": \"dispatch_pending_invoices\",\n      \"score\": -0.396,\n      \"symbol\": \"core/tasks.py::dispatch_pending_invoices\"\n    },\n    {\n      \"file\": \"core/tests/test_selectors.py\",\n      \"kind\": \"method\",\n      \"lines\": \"29-34\",\n      \"qualname\": \"SelectorTests.test_outstanding_excludes_paid\",\n      \"score\": -0.395,\n      \"symbol\": \"core/tests/test_selectors.py::SelectorTests.test_outstanding_excludes_paid\"\n    },\n    {\n      \"file\": \"core/tests/test_models.py\",\n      \"kind\": \"method\",\n      \"lines\": \"58-62\",\n      \"qualname\": \"QuerySetTests.test_open_excludes_paid\",\n      \"score\": -0.392,\n      \"symbol\": \"core/tests/test_models.py::QuerySetTests.test_open_excludes_paid\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"TRUNCATED 10 shown\"\n}\n",
+  "out": "{\n  \"question\": \"invoice\",\n  \"results\": [\n    {\n      \"file\": \"core/services/notifications.py\",\n      \"kind\": \"function\",\n      \"lines\": \"10-18\",\n      \"qualname\": \"notify_invoice_sent\",\n      \"score\": -0.49,\n      \"symbol\": \"core/services/notifications.py::notify_invoice_sent\"\n    },\n    {\n      \"file\": \"core/services/billing.py\",\n      \"kind\": \"function\",\n      \"lines\": \"36-44\",\n      \"qualname\": \"send_invoice\",\n      \"score\": -0.49,\n      \"symbol\": \"core/services/billing.py::send_invoice\"\n    },\n    {\n      \"file\": \"core/services/billing.py\",\n      \"kind\": \"function\",\n      \"lines\": \"63-71\",\n      \"qualname\": \"void_invoice\",\n      \"score\": -0.486,\n      \"symbol\": \"core/services/billing.py::void_invoice\"\n    },\n    {\n      \"file\": \"core/tests/test_models.py\",\n      \"kind\": \"class\",\n      \"lines\": \"51-67\",\n      \"qualname\": \"QuerySetTests\",\n      \"score\": -0.472,\n      \"symbol\": \"core/tests/test_models.py::QuerySetTests\"\n    },\n    {\n      \"file\": \"core/tests/test_billing.py\",\n      \"kind\": \"method\",\n      \"lines\": \"75-79\",\n      \"qualname\": \"PaymentTests.test_void_paid_invoice_rejected\",\n      \"score\": -0.47,\n      \"symbol\": \"core/tests/test_billing.py::PaymentTests.test_void_paid_invoice_rejected\"\n    },\n    {\n      \"file\": \"core/tests/test_billing.py\",\n      \"kind\": \"class\",\n      \"lines\": \"41-86\",\n      \"qualname\": \"PaymentTests\",\n      \"score\": -0.465,\n      \"symbol\": \"core/tests/test_billing.py::PaymentTests\"\n    },\n    {\n      \"file\": \"core/tests/factories.py\",\n      \"kind\": \"function\",\n      \"lines\": \"21-29\",\n      \"qualname\": \"make_invoice\",\n      \"score\": -0.463,\n      \"symbol\": \"core/tests/factories.py::make_invoice\"\n    },\n    {\n      \"file\": \"core/tasks.py\",\n      \"kind\": \"function\",\n      \"lines\": \"9-16\",\n      \"qualname\": \"dispatch_pending_invoices\",\n      \"score\": -0.46,\n      \"symbol\": \"core/tasks.py::dispatch_pending_invoices\"\n    },\n    {\n      \"file\": \"core/tests/test_selectors.py\",\n      \"kind\": \"method\",\n      \"lines\": \"29-34\",\n      \"qualname\": \"SelectorTests.test_outstanding_excludes_paid\",\n      \"score\": -0.458,\n      \"symbol\": \"core/tests/test_selectors.py::SelectorTests.test_outstanding_excludes_paid\"\n    },\n    {\n      \"file\": \"core/tests/test_models.py\",\n      \"kind\": \"method\",\n      \"lines\": \"58-62\",\n      \"qualname\": \"QuerySetTests.test_open_excludes_paid\",\n      \"score\": -0.455,\n      \"symbol\": \"core/tests/test_models.py::QuerySetTests.test_open_excludes_paid\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"TRUNCATED 10 shown\"\n}\n",
   "rc": 0
  },
  "search <REPO> load config": {
@@ -336,7 +336,7 @@
  },
  "search <REPO> load config --json": {
   "err": "",
-  "out": "{\n  \"question\": \"load config\",\n  \"results\": [\n    {\n      \"file\": \"manage.py\",\n      \"kind\": \"function\",\n      \"lines\": \"7-10\",\n      \"qualname\": \"main\",\n      \"score\": -5.622,\n      \"symbol\": \"manage.py::main\"\n    },\n    {\n      \"file\": \"CLAUDE.md\",\n      \"language\": \"markdown\",\n      \"lines\": \"1-5\",\n      \"role\": \"agent\",\n      \"rung\": \"files/all-terms\",\n      \"score\": -7.525\n    },\n    {\n      \"file\": \"config/asgi.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-9\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -2.703\n    },\n    {\n      \"file\": \"config/wsgi.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-9\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -2.703\n    },\n    {\n      \"file\": \"config/__init__.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-1\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -2.576\n    },\n    {\n      \"file\": \"config/settings.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-65\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -2.318\n    },\n    {\n      \"file\": \"core/apps.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-11\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -2.203\n    },\n    {\n      \"file\": \"manage.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-15\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -2.074\n    },\n    {\n      \"file\": \"config/urls.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-13\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -2.044\n    },\n    {\n      \"file\": \"README.md\",\n      \"language\": \"markdown\",\n      \"lines\": \"1-26\",\n      \"role\": \"docs\",\n      \"rung\": \"files/any-term\",\n      \"score\": -1.477\n    }\n  ],\n  \"rung\": \"any-term\",\n  \"scope\": \"symbols\",\n  \"status\": \"TRUNCATED 10 shown; +9 relaxed\"\n}\n",
+  "out": "{\n  \"question\": \"load config\",\n  \"results\": [\n    {\n      \"file\": \"manage.py\",\n      \"kind\": \"function\",\n      \"lines\": \"7-10\",\n      \"qualname\": \"main\",\n      \"score\": -5.627,\n      \"symbol\": \"manage.py::main\"\n    },\n    {\n      \"file\": \"CLAUDE.md\",\n      \"language\": \"markdown\",\n      \"lines\": \"1-5\",\n      \"role\": \"agent\",\n      \"rung\": \"files/all-terms\",\n      \"score\": -7.525\n    },\n    {\n      \"file\": \"config/asgi.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-9\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -2.703\n    },\n    {\n      \"file\": \"config/wsgi.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-9\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -2.703\n    },\n    {\n      \"file\": \"config/__init__.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-1\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -2.576\n    },\n    {\n      \"file\": \"config/settings.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-65\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -2.318\n    },\n    {\n      \"file\": \"core/apps.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-11\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -2.203\n    },\n    {\n      \"file\": \"manage.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-15\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -2.074\n    },\n    {\n      \"file\": \"config/urls.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-13\",\n      \"role\": \"source\",\n      \"rung\": \"files/any-term\",\n      \"score\": -2.044\n    },\n    {\n      \"file\": \"README.md\",\n      \"language\": \"markdown\",\n      \"lines\": \"1-26\",\n      \"role\": \"docs\",\n      \"rung\": \"files/any-term\",\n      \"score\": -1.477\n    }\n  ],\n  \"rung\": \"any-term\",\n  \"scope\": \"symbols\",\n  \"status\": \"TRUNCATED 10 shown; +9 relaxed\"\n}\n",
   "rc": 0
  },
  "search <REPO> main": {
@@ -346,7 +346,7 @@
  },
  "search <REPO> main --json": {
   "err": "",
-  "out": "{\n  \"question\": \"main\",\n  \"results\": [\n    {\n      \"file\": \"manage.py\",\n      \"kind\": \"function\",\n      \"lines\": \"7-10\",\n      \"qualname\": \"main\",\n      \"score\": -7.4,\n      \"symbol\": \"manage.py::main\"\n    },\n    {\n      \"file\": \"manage.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-15\",\n      \"role\": \"source\",\n      \"rung\": \"files/all-terms\",\n      \"score\": -6.634\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE; +1 relaxed\"\n}\n",
+  "out": "{\n  \"question\": \"main\",\n  \"results\": [\n    {\n      \"file\": \"manage.py\",\n      \"kind\": \"function\",\n      \"lines\": \"7-10\",\n      \"qualname\": \"main\",\n      \"score\": -7.415,\n      \"symbol\": \"manage.py::main\"\n    },\n    {\n      \"file\": \"manage.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-15\",\n      \"role\": \"source\",\n      \"rung\": \"files/all-terms\",\n      \"score\": -6.634\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE; +1 relaxed\"\n}\n",
   "rc": 0
  },
  "search <REPO> render": {
@@ -356,7 +356,7 @@
  },
  "search <REPO> render --json": {
   "err": "",
-  "out": "{\n  \"question\": \"render\",\n  \"results\": [\n    {\n      \"file\": \"core/services/pdf.py\",\n      \"kind\": \"function\",\n      \"lines\": \"8-17\",\n      \"qualname\": \"render_invoice_pdf\",\n      \"score\": -4.932,\n      \"symbol\": \"core/services/pdf.py::render_invoice_pdf\"\n    },\n    {\n      \"file\": \"core/services/notifications.py\",\n      \"kind\": \"function\",\n      \"lines\": \"10-18\",\n      \"qualname\": \"notify_invoice_sent\",\n      \"score\": -4.927,\n      \"symbol\": \"core/services/notifications.py::notify_invoice_sent\"\n    },\n    {\n      \"file\": \"core/views.py\",\n      \"kind\": \"function\",\n      \"lines\": \"7-8\",\n      \"qualname\": \"welcome\",\n      \"score\": -4.654,\n      \"symbol\": \"core/views.py::welcome\"\n    },\n    {\n      \"file\": \"core/views.py\",\n      \"kind\": \"function\",\n      \"lines\": \"11-12\",\n      \"qualname\": \"org_list\",\n      \"score\": -4.594,\n      \"symbol\": \"core/views.py::org_list\"\n    },\n    {\n      \"file\": \"core/services/notifications.py\",\n      \"kind\": \"function\",\n      \"lines\": \"21-31\",\n      \"qualname\": \"notify_payment_received\",\n      \"score\": -3.505,\n      \"symbol\": \"core/services/notifications.py::notify_payment_received\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
+  "out": "{\n  \"question\": \"render\",\n  \"results\": [\n    {\n      \"file\": \"core/services/pdf.py\",\n      \"kind\": \"function\",\n      \"lines\": \"8-17\",\n      \"qualname\": \"render_invoice_pdf\",\n      \"score\": -4.945,\n      \"symbol\": \"core/services/pdf.py::render_invoice_pdf\"\n    },\n    {\n      \"file\": \"core/services/notifications.py\",\n      \"kind\": \"function\",\n      \"lines\": \"10-18\",\n      \"qualname\": \"notify_invoice_sent\",\n      \"score\": -4.941,\n      \"symbol\": \"core/services/notifications.py::notify_invoice_sent\"\n    },\n    {\n      \"file\": \"core/views.py\",\n      \"kind\": \"function\",\n      \"lines\": \"7-8\",\n      \"qualname\": \"welcome\",\n      \"score\": -4.67,\n      \"symbol\": \"core/views.py::welcome\"\n    },\n    {\n      \"file\": \"core/views.py\",\n      \"kind\": \"function\",\n      \"lines\": \"11-12\",\n      \"qualname\": \"org_list\",\n      \"score\": -4.609,\n      \"symbol\": \"core/views.py::org_list\"\n    },\n    {\n      \"file\": \"core/services/notifications.py\",\n      \"kind\": \"function\",\n      \"lines\": \"21-31\",\n      \"qualname\": \"notify_payment_received\",\n      \"score\": -3.51,\n      \"symbol\": \"core/services/notifications.py::notify_payment_received\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
   "rc": 0
  },
  "search <REPO> token": {
@@ -371,12 +371,12 @@
  },
  "stats <REPO>": {
   "err": "",
-  "out": "files: 59 (bash 1, dockerfile 1, html 4, make 1, markdown 4, python 47, yaml 1)\nroles: agent 3, config 1, docs 1, source 45, test 9\nsymbols: 206  entry points: 22\nedges: excluded 1, external 69, resolved 136\nagent layer: 3 files, instructions in ., core; 0 skills\ningested at: <UTC>\n",
+  "out": "files: 59 (bash 1, dockerfile 1, html 4, make 1, markdown 4, python 47, yaml 1)\nroles: agent 3, config 1, docs 1, source 45, test 9\nsymbols: 210  entry points: 22\nedges: excluded 1, external 69, resolved 136\nagent layer: 3 files, instructions in ., core; 0 skills\ningested at: <UTC>\n",
   "rc": 0
  },
  "stats <REPO> --json": {
   "err": "",
-  "out": "{\n  \"agent_layer\": {\n    \"files\": 3,\n    \"instruction_dirs\": [\n      \".\",\n      \"core\"\n    ],\n    \"instruction_files\": [\n      \"AGENTS.md\",\n      \"CLAUDE.md\",\n      \"core/CLAUDE.md\"\n    ],\n    \"skills\": []\n  },\n  \"coverage_files\": 0,\n  \"edges_by_kind\": {\n    \"copy\": 1,\n    \"exec\": 8,\n    \"from-import\": 112,\n    \"from-import-sub\": 1,\n    \"import\": 8,\n    \"path-ref\": 7,\n    \"pkg-init\": 53,\n    \"string-ref\": 15,\n    \"uses\": 1\n  },\n  \"edges_by_status\": {\n    \"excluded\": 1,\n    \"external\": 69,\n    \"resolved\": 136\n  },\n  \"entry_points\": 22,\n  \"files_by_language\": {\n    \"bash\": 1,\n    \"dockerfile\": 1,\n    \"html\": 4,\n    \"make\": 1,\n    \"markdown\": 4,\n    \"python\": 47,\n    \"yaml\": 1\n  },\n  \"files_by_origin\": {\n    \"project\": 59\n  },\n  \"files_by_role\": {\n    \"agent\": 3,\n    \"config\": 1,\n    \"docs\": 1,\n    \"source\": 45,\n    \"test\": 9\n  },\n  \"ignored\": {},\n  \"ingested_at\": \"<UTC>\",\n  \"parse_errors\": [],\n  \"symbols\": 206\n}\n",
+  "out": "{\n  \"agent_layer\": {\n    \"files\": 3,\n    \"instruction_dirs\": [\n      \".\",\n      \"core\"\n    ],\n    \"instruction_files\": [\n      \"AGENTS.md\",\n      \"CLAUDE.md\",\n      \"core/CLAUDE.md\"\n    ],\n    \"skills\": []\n  },\n  \"coverage_files\": 0,\n  \"edges_by_kind\": {\n    \"copy\": 1,\n    \"exec\": 8,\n    \"from-import\": 112,\n    \"from-import-sub\": 1,\n    \"import\": 8,\n    \"path-ref\": 7,\n    \"pkg-init\": 53,\n    \"string-ref\": 15,\n    \"uses\": 1\n  },\n  \"edges_by_status\": {\n    \"excluded\": 1,\n    \"external\": 69,\n    \"resolved\": 136\n  },\n  \"entry_points\": 22,\n  \"files_by_language\": {\n    \"bash\": 1,\n    \"dockerfile\": 1,\n    \"html\": 4,\n    \"make\": 1,\n    \"markdown\": 4,\n    \"python\": 47,\n    \"yaml\": 1\n  },\n  \"files_by_origin\": {\n    \"project\": 59\n  },\n  \"files_by_role\": {\n    \"agent\": 3,\n    \"config\": 1,\n    \"docs\": 1,\n    \"source\": 45,\n    \"test\": 9\n  },\n  \"ignored\": {},\n  \"ingested_at\": \"<UTC>\",\n  \"parse_errors\": [],\n  \"symbols\": 210\n}\n",
   "rc": 0
  },
  "symbols <REPO> AGENTS.md --json": {
@@ -2787,6 +2787,16 @@
   "ignored": [],
   "symbols": [
    [
+    "Dockerfile::stage.0",
+    "Dockerfile",
+    "stage",
+    "stage.0",
+    "stage.0",
+    1,
+    11,
+    1
+   ],
+   [
     "Makefile::.PHONY",
     "Makefile",
     "target",
@@ -4834,6 +4844,36 @@
     "welcome",
     7,
     8,
+    1
+   ],
+   [
+    "docker-compose.yml::services.app",
+    "docker-compose.yml",
+    "service",
+    "app",
+    "services.app",
+    2,
+    11,
+    1
+   ],
+   [
+    "docker-compose.yml::services.cache",
+    "docker-compose.yml",
+    "service",
+    "cache",
+    "services.cache",
+    20,
+    21,
+    1
+   ],
+   [
+    "docker-compose.yml::services.db",
+    "docker-compose.yml",
+    "service",
+    "db",
+    "services.db",
+    13,
+    18,
     1
    ],
    [

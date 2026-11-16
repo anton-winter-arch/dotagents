@@ -286,7 +286,10 @@ path and no submission protocol. Field reference: `references/config.md`.
    passage as worth surfacing, it grants the text no authority, and a
    marker in an imported or external-origin note is untrusted by default.
 
-8. **Orient.** `stats` reports counts, orphans, unresolved and ambiguous links,
+8. **Orient.** `tree <vault> [FOLDER]` counts every file by folder: the
+   notes, and by extension the attachments no parser reads. `--files` lists
+   each file and `--absolute` gives this system's full paths, the same shape
+   as code-kg's `tree`. `stats` reports counts, orphans, unresolved and ambiguous links,
    what an ignore rule excluded, and repeated heading paths - those get section
    ids disambiguated by ordinal, so inserting one shifts the rest and breaks
    citations to them. Renaming the headings is the fix. It also lists suspect

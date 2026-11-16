@@ -80,7 +80,6 @@ import math
 import os
 import posixpath
 import re
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -119,7 +118,7 @@ HEADING_MAX = 120
 # Bump when a parser or schema change must re-index a vault whose files have
 # not changed. The manifest folds it in, so the next read command re-ingests
 # once instead of serving sections the old parser cut.
-INDEX_REV = 5
+INDEX_REV = 6
 
 PROFILES = {"log-dated", "reference", "dimension", "list", "generated", "hub",
             "freeform"}
@@ -390,6 +389,12 @@ CREATE TABLE IF NOT EXISTS mentions(
   count      INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (canonical, section_id)
 );
+CREATE TABLE IF NOT EXISTS other_files(   -- files in the vault that are not
+  path   TEXT PRIMARY KEY,                -- notes: attachments and the rest,
+  ext    TEXT NOT NULL,                   -- listed by `tree`, never read
+  size   INTEGER NOT NULL,
+  reason TEXT NOT NULL                    -- no-parser
+);
 CREATE TABLE IF NOT EXISTS ignored(       -- what an ingest excluded, and why
   path TEXT PRIMARY KEY,
   rule TEXT NOT NULL
@@ -522,8 +527,29 @@ def config_path(vault: Path) -> Path:
     return _kg_file(vault, CONFIG_NAME)
 
 
+def linked_store(root: Path, folder: Path, db: Path) -> str | None:
+    """Why the engine's folder or database must not be used, or None. The
+    tree being indexed is untrusted: a committed symlink at either name, or
+    a folder that resolves outside the tree, would carry every write the
+    engine makes to a place the planter chose. code-kg's `linked_store`
+    has the same body; keep the two identical."""
+    for p in (folder, db):
+        if p.is_symlink():
+            return f"{p} is a symbolic link; refusing to write through it"
+    try:
+        if folder.exists() and not folder.resolve().is_relative_to(
+                root.resolve()):
+            return f"{folder} resolves outside {root}; refusing to use it"
+    except (OSError, RuntimeError):
+        return f"{folder} cannot be resolved; refusing to use it"
+    return None
+
+
 def connect(vault: Path, must_exist: bool = False) -> sqlite3.Connection:
     db = db_path(vault)
+    refused = linked_store(vault, kg_dir(vault), db)
+    if refused:
+        sys.exit(f"error: {refused}")
     if must_exist and not db.exists():
         sys.exit(f"error: no database at {db} - run `ingest` on this vault first")
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -2062,8 +2088,10 @@ def _add_members(sections: list[dict], text: str, row: dict) -> None:
 
 
 # ---------- vault walking (dot folders excluded) ----------
-def scan_vault(vault: Path) -> tuple[list[Path], list[str]]:
-    """All vault .md files, sorted for determinism, plus the paths that were
+def scan_vault(vault: Path, every: bool = False) \
+        -> tuple[list[Path], list[str]]:
+    """All vault .md files (with `every`, all files: the inventory `tree`
+    tallies), sorted for determinism, plus the paths that were
     refused for pointing outside the vault. Enumeration is a filesystem walk:
     graph membership is presence in the vault minus the engine's own ignore
     rules (.kgignore, config, frontmatter), never git's. Git ignore rules
@@ -2076,7 +2104,8 @@ def scan_vault(vault: Path) -> tuple[list[Path], list[str]]:
         dirs[:] = [d for d in dirs
                    if d not in SKIP_FOLDERS and not d.startswith(".")
                    and not (Path(root) == vault and d in KG_DIRS)]
-        files.extend(Path(root) / n for n in names if n.endswith(".md"))
+        files.extend(Path(root) / n for n in names
+                     if every or n.endswith(".md"))
     result = []
     escapes = []
     for p in files:
@@ -2129,7 +2158,8 @@ def manifest(vault: Path) -> str:
     """Cheap fingerprint of the vault's file set: path, size, mtime. Read
     commands compare it to detect drift and re-ingest without being asked."""
     parts = []
-    for p in walk_vault(vault):
+    # Every file, not only notes: `tree` counts attachments too.
+    for p in scan_vault(vault, every=True)[0]:
         st = p.stat()
         parts.append(f"{p.relative_to(vault).as_posix()}|{st.st_size}|"
                      f"{int(st.st_mtime_ns)}")
@@ -2181,21 +2211,18 @@ def learn_note(text: str, row: dict) -> dict:
 
 def ingest(vault: Path, keep_previous: bool = False) -> dict:
     checkpoint = None
+    refused = linked_store(vault, kg_dir(vault), db_path(vault))
+    if refused:
+        sys.exit(f"error: {refused}")
     if keep_previous:
         # Copy before connect(): connect runs the schema script, and the
         # checkpoint must be the db exactly as the last ingest left it.
         live = db_path(vault)
         if live.exists():
-            prev = prev_db_path(vault)
-            # Copy to a sibling temp and replace: a synced or cloned vault can
-            # carry a planted symlink or hardlink at the checkpoint name, and a
-            # direct copy2 would write through it to a target the planter
-            # chose. os.replace swaps the name itself, atomically, so the
-            # plant is discarded and a crash never leaves a half checkpoint.
-            tmp = prev.with_name(prev.name + ".tmp")
-            shutil.copy2(live, tmp)
-            os.replace(tmp, prev)
-            checkpoint = str(prev)
+            # A synced or cloned vault can carry a planted link at the
+            # checkpoint name or at a predictable temp name beside it.
+            write_checkpoint(live, prev_db_path(vault))
+            checkpoint = str(prev_db_path(vault))
     con = connect(vault)
     cfg = load_config(vault)
     kgignore = load_kgignore(vault)
@@ -2241,8 +2268,14 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
                   "members", "entities", "entity_aliases", "mentions",
                   "ignored", "annotations", "annotation_candidates", "meta",
                   "anchors", "link_fields", "inline_tags", "entity_skips",
-                  "file_links", "code_spans"):
+                  "file_links", "code_spans", "other_files"):
         con.execute(f"DELETE FROM {table}")
+    con.executemany(
+        "INSERT INTO other_files(path, ext, size, reason) VALUES (?,?,?,?)",
+        [(rel, posixpath.splitext(posixpath.basename(rel))[1].lower(),
+          p.stat().st_size, "no-parser")
+         for p in scan_vault(vault, every=True)[0]
+         if not (rel := p.relative_to(vault).as_posix()).endswith(".md")])
     con.execute("INSERT INTO sections_fts(sections_fts) VALUES ('delete-all')")
 
     for rel, rule in sorted(ignored):
@@ -3244,19 +3277,83 @@ def _stripped_hash(body: str, heading: str) -> str:
     return hashlib.sha256(body.strip().encode()).hexdigest()[:16]
 
 
-def _base_id(sid: str) -> str:
-    """A section id minus the ~n ordinal that repeated heading paths get, so an
-    insertion that shifts its later siblings' ordinals can still pair them."""
-    return re.sub(r"~\d+$", "", sid)
+def write_checkpoint(live: Path, prev: Path) -> None:
+    """`live` copied to `prev` through a temp file this call creates and an
+    atomic rename. A planted symlink or hardlink at either name is replaced,
+    never written through, and a crash never leaves half a checkpoint.
+    code-kg's `write_checkpoint` has the same body; keep the two
+    identical."""
+    import shutil
+    import tempfile
+    fd, tmp = tempfile.mkstemp(dir=str(prev.parent),
+                               prefix=prev.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as out, live.open("rb") as src:
+            shutil.copyfileobj(src, out)
+        os.replace(tmp, prev)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _ro_connect(path: str) -> sqlite3.Connection:
     """Open a db read-only, with the path percent-encoded into the URI. Bare
-    concatenation would let a path containing '?' terminate the URI early and
-    smuggle its own query parameters - `mode=rwc` among them - so the encoding
-    is what makes the mode=ro claim true."""
+    concatenation would let a path containing '?' end the URI early and
+    smuggle its own query parameters, `mode=rwc` among them. code-kg's
+    `_ro_connect` has the same body."""
+    import urllib.parse
     quoted = urllib.parse.quote(str(Path(path).resolve()))
     return sqlite3.connect(f"file:{quoted}?mode=ro", uri=True)
+
+
+def classify_units(old: dict, new: dict) -> dict:
+    """The diff passes both engines run over units keyed by id, each a tuple
+    (id, group, hash, stripped, label): group is the note or file, hash the
+    whole unit's, stripped the hash below its title line (a heading, a
+    `def` line), or None when nothing is left there to pair on. Passes, in
+    order: exact (same id, same hash); ordinal shift (same group, same id
+    without its ~n, same hash), both unchanged; edited (same id); renamed
+    (same group, same stripped hash); moved (same stripped hash). Leftovers
+    are added and removed. Pairs form count-for-count in id order, so
+    duplicates never pair many-to-one. code-kg's `classify_units` has the
+    same body; keep the two identical."""
+    unchanged = 0
+    old_left = dict(old)
+    new_left: dict = {}
+    for uid, row in new.items():
+        other = old_left.get(uid)
+        if other is not None and other[2] == row[2]:
+            del old_left[uid]
+            unchanged += 1
+        else:
+            new_left[uid] = row
+
+    def pair(key_of):
+        pairs = []
+        old_by: dict = {}
+        for uid in sorted(old_left):
+            key = key_of(old_left[uid])
+            if key is not None:
+                old_by.setdefault(key, []).append(uid)
+        for uid in sorted(new_left):
+            key = key_of(new_left[uid])
+            cands = old_by.get(key) if key is not None else None
+            if cands:
+                pairs.append((old_left.pop(cands.pop(0)), new_left.pop(uid)))
+        return sorted(pairs, key=lambda p: p[1][0])
+
+    unchanged += len(pair(lambda r: (r[1], re.sub(r"~\d+$", "", r[0]),
+                                     r[2])))
+    edited = pair(lambda r: r[0])
+    renamed = pair(lambda r: None if r[3] is None else (r[1], r[3]))
+    moved = pair(lambda r: r[3])
+    return {"unchanged": unchanged, "edited": edited, "renamed": renamed,
+            "moved": moved,
+            "added": [new_left[u] for u in sorted(new_left)],
+            "removed": [old_left[u] for u in sorted(old_left)]}
 
 
 # What prose output never passes through as-is, as codepoint ranges: C0 and C1
@@ -3381,54 +3478,21 @@ def diff(vault: Path, against: str | None = None) -> dict:
     old_con.close()
     con.close()
 
-    # Pass 1 - exact: same id, same stored hash. Everything else, including
-    # same-id-different-hash, stays in the pools: an id match is not yet an
-    # edit, because an insertion in a run of repeated heading paths shifts
-    # every later sibling's ~n ordinal and parks different sections under the
-    # same id on the two sides.
-    unchanged = 0
-    old_left = dict(old)
-    new_left: dict[str, tuple] = {}
-    for sid, row in new.items():
-        other = old_left.get(sid)
-        if other is not None and other[4] == row[4]:
-            del old_left[sid]
-            unchanged += 1
-        else:
-            new_left[sid] = row
-
-    def pair(key_of):
-        """Pair leftovers count-for-count in deterministic id order, so
-        duplicate bodies never pair many-to-one."""
-        pairs = []
-        old_by: dict = {}
-        for sid in sorted(old_left):
-            old_by.setdefault(key_of(old_left[sid]), []).append(sid)
-        for sid in sorted(new_left):
-            cands = old_by.get(key_of(new_left[sid]))
-            if not cands:
-                continue
-            osid = cands.pop(0)
-            pairs.append((old_left.pop(osid), new_left.pop(sid)))
-        return pairs
-
-    # Pass 2 - ordinal shift: same note, same base id, same full stored hash.
-    # The ~n suffix moved and nothing else did; counted as unchanged.
-    unchanged += len(pair(lambda r: (r[1], _base_id(r[0]), r[4])))
-    # Pass 3 - edited: what still shares an exact id changed content.
-    edited = pair(lambda r: r[0])
-    # Pass 4 - renamed: same note, same content below a different heading.
-    renamed = pair(lambda r: (r[1], _stripped_hash(r[5], r[3])))
-    # Pass 5 - moved: same content in a different note.
-    moved = pair(lambda r: _stripped_hash(r[5], r[3]))
+    # An id match alone is not an edit: an insertion in a run of repeated
+    # heading paths shifts every later sibling's ~n ordinal, which the
+    # ordinal-shift pass in `classify_units` pairs back as unchanged.
+    def units(rows: dict) -> dict:
+        return {sid: (sid, r[1], r[4], _stripped_hash(r[5], r[3]),
+                      r[2] or "(top)") for sid, r in rows.items()}
+    c = classify_units(units(old), units(new))
 
     def entry(r):
-        return {"section_id": r[0], "heading_path": r[2] or "(top)"}
+        return {"section_id": r[0], "heading_path": r[4]}
 
-    def pair_entry(o, n):
+    def pair_entry(p):
+        o, n = p
         return {"from_id": o[0], "to_id": n[0],
-                "from_heading_path": o[2] or "(top)",
-                "to_heading_path": n[2] or "(top)"}
+                "from_heading_path": o[4], "to_heading_path": n[4]}
 
     # Note level, from content_hash where both sides have the notes table.
     def note_hashes(path):
@@ -3449,15 +3513,12 @@ def diff(vault: Path, against: str | None = None) -> dict:
     return {
         "against": against,
         "notes": notes,
-        "added": [entry(new_left[s]) for s in sorted(new_left)],
-        "removed": [entry(old_left[s]) for s in sorted(old_left)],
-        "edited": [pair_entry(o, n)
-                   for o, n in sorted(edited, key=lambda p: p[1][0])],
-        "renamed": [pair_entry(o, n)
-                    for o, n in sorted(renamed, key=lambda p: p[1][0])],
-        "moved": [pair_entry(o, n)
-                  for o, n in sorted(moved, key=lambda p: p[1][0])],
-        "unchanged": unchanged,
+        "added": [entry(r) for r in c["added"]],
+        "removed": [entry(r) for r in c["removed"]],
+        "edited": [pair_entry(p) for p in c["edited"]],
+        "renamed": [pair_entry(p) for p in c["renamed"]],
+        "moved": [pair_entry(p) for p in c["moved"]],
+        "unchanged": c["unchanged"],
     }
 
 
@@ -5161,12 +5222,24 @@ def related(vault: Path, name: str, limit: int = 10,
     if not graph.get(nid):
         return {"note": nid, "status": "NO_LINKS", "related": [],
                 "nodes": 1, "iterations": 0, "damping": RELATED_DAMPING}
-    hops = {nid: 0}
-    frontier = [nid]
+    return {"note": nid, **rank_from(graph, nid, limit)}
+
+
+def rank_from(graph: dict, seed: str, limit: int) -> dict:
+    """Personalized PageRank from `seed` over an undirected weighted graph
+    ({node: {other: weight}}), on the part of it the seed reaches. A walker
+    starts on the seed, follows edges in proportion to their weight, and at
+    every step returns to the seed with probability 1 - damping; a node's
+    score is the share of time spent on it. Fixed damping, sorted
+    iteration: the same graph always gives the same ranking. `limit` 0 or
+    less returns every node. code-kg's `rank_from` has the same body; keep
+    the two identical."""
+    hops = {seed: 0}
+    frontier = [seed]
     while frontier:
         nxt = []
         for node in frontier:
-            for other in graph[node]:
+            for other in sorted(graph.get(node, {})):
                 if other not in hops:
                     hops[other] = hops[node] + 1
                     nxt.append(other)
@@ -5174,7 +5247,7 @@ def related(vault: Path, name: str, limit: int = 10,
     nodes = sorted(hops)
     out_weight = {n: sum(graph[n].values()) for n in nodes}
     score = {n: 0.0 for n in nodes}
-    score[nid] = 1.0
+    score[seed] = 1.0
     iterations = 0
     for iterations in range(1, RELATED_MAX_ITER + 1):
         nxt_score = {n: 0.0 for n in nodes}
@@ -5184,21 +5257,20 @@ def related(vault: Path, name: str, limit: int = 10,
             share = RELATED_DAMPING * score[n] / out_weight[n]
             for other, w in graph[n].items():
                 nxt_score[other] += share * w
-        nxt_score[nid] += 1.0 - RELATED_DAMPING
+        nxt_score[seed] += 1.0 - RELATED_DAMPING
         delta = sum(abs(nxt_score[n] - score[n]) for n in nodes)
         score = nxt_score
         if delta < RELATED_TOLERANCE:
             break
-    ranked = sorted(((round(score[n], 6), n) for n in nodes if n != nid),
+    ranked = sorted(((round(score[n], 6), n) for n in nodes if n != seed),
                     key=lambda r: (-r[0], r[1]))
-    shown = ranked if limit < 0 else ranked[:limit]
-    return {
-        "note": nid, "damping": RELATED_DAMPING, "iterations": iterations,
-        "nodes": len(nodes),
-        "status": ("COMPLETE" if len(shown) == len(ranked)
-                   else f"TRUNCATED {len(shown)} of {len(ranked)}"),
-        "related": [{"id": n, "score": s, "hops": hops[n]}
-                    for s, n in shown]}
+    shown = ranked if limit <= 0 else ranked[:limit]
+    return {"damping": RELATED_DAMPING, "iterations": iterations,
+            "nodes": len(nodes),
+            "status": ("COMPLETE" if len(shown) == len(ranked)
+                       else f"TRUNCATED {len(shown)} of {len(ranked)}"),
+            "related": [{"id": n, "score": s, "hops": hops[n]}
+                        for s, n in shown]}
 
 
 def cmd_related(args: argparse.Namespace) -> int:
@@ -5809,6 +5881,109 @@ def cmd_coverage(args: argparse.Namespace) -> int:
     return emit(args, payload, render)
 
 
+TREE_LIMIT = 200       # folders, and files, `tree` prints unless told
+
+
+def tree_payload(rows: list, root: Path, folder: str, depth: int,
+                 files: bool, absolute: bool, limit: int) -> dict:
+    """`tree` from file rows ({path, language, ext, ...}; language None for
+    a file no parser reads): direct and recursive counts by folder, with
+    languages and the extensions of unread files. `depth` 1 is the folder
+    alone, 0 every level; `limit` 0 or less shows all. code-kg's
+    `tree_payload` has the same body; keep the two identical."""
+    def key(path: str) -> tuple:
+        return tuple(path.split("/")) if path else ()
+
+    def cut(items: list) -> tuple:
+        if limit > 0 and len(items) > limit:
+            return items[:limit], f"TRUNCATED {limit} of {len(items)}"
+        return items, "COMPLETE"
+
+    folder = posixpath.normpath(folder.replace("\\", "/")).strip("/")
+    folder = "" if folder == "." else folder
+    rows = [r for r in rows if not folder
+            or r["path"].startswith(folder + "/")]
+    if folder and not rows:
+        sys.exit(f"error: no files under {folder!r} - `tree` with no folder"
+                 " lists them all")
+    base = len(key(folder))
+    tally: dict = {}
+    for r in rows:
+        chain = [posixpath.dirname(r["path"])]
+        while len(key(chain[-1])) > base:
+            chain.append(posixpath.dirname(chain[-1]))
+        for i, f in enumerate(chain):
+            t = tally.setdefault(f, {"path": f, "files": 0, "total": 0,
+                                     "languages": {}, "other": {}})
+            t["files"] += i == 0
+            t["total"] += 1
+            group, name = ("languages", r["language"]) if r["language"] \
+                else ("other", r["ext"] or "(none)")
+            t[group][name] = t[group].get(name, 0) + 1
+    shown = [t for t in sorted(tally.values(), key=lambda t: key(t["path"]))
+             if depth <= 0 or len(key(t["path"])) - base < depth]
+    folders, status = cut(shown)
+    payload = {"root": str(root.resolve()), "folder": folder,
+               "folders": folders, "status": status}
+    if files:
+        keep = {t["path"] for t in shown}
+        listed = sorted((dict(r) for r in rows
+                         if posixpath.dirname(r["path"]) in keep),
+                        key=lambda r: key(r["path"]))
+        for r in listed if absolute else ():
+            r["absolute"] = str(root.resolve().joinpath(
+                *r["path"].split("/")))
+        payload["files"], payload["files_status"] = cut(listed)
+    return payload
+
+
+def render_tree(p: dict) -> int:
+    """Text for `tree`. code-kg's `render_tree` has the same body."""
+    def counts(d: dict) -> str:
+        return ", ".join(f"{k} {v}" for k, v in sorted(d.items()))
+
+    def depth(path: str) -> int:
+        return len(path.split("/")) if path else 0
+
+    print(p["root"])
+    by_folder: dict = {}
+    for r in p.get("files", []):
+        by_folder.setdefault(posixpath.dirname(r["path"]), []).append(r)
+    for t in p["folders"]:
+        pad = "  " * (depth(t["path"]) - depth(p["folder"]))
+        parts = [counts(t["languages"])] if t["languages"] else []
+        if t["other"]:
+            parts.append(f"other {sum(t['other'].values())}"
+                         f" ({counts(t['other'])})")
+        print(f"{pad}{t['path'] + '/' if t['path'] else './'}"
+              f"  {t['total']} files: {', '.join(parts)}")
+        for r in by_folder.get(t["path"], []):
+            what = (f"{r['language']}, {r['lines']} lines"
+                    if r["language"] else f"({r['reason']})")
+            print(f"{pad}  {r.get('absolute', r['path'])}  {what}")
+    for k in ("status", "files_status"):
+        if p.get(k, "COMPLETE") != "COMPLETE":
+            print(f"{k.replace('_', ' ')}: {p[k]}; --limit 0 for all")
+    return 0
+
+
+def cmd_tree(args: argparse.Namespace) -> int:
+    vault = vault_dir(args.vault)
+    con = open_fresh(vault)
+    rows = [{"path": p, "language": "markdown", "ext": ".md",
+             "lines": body.count("\n") + (not body.endswith("\n")),
+             "size": len(body.encode("utf-8"))}
+            for p, body in con.execute("SELECT path, body FROM notes")]
+    rows += [{"path": p, "language": None, "ext": ext, "size": size,
+              "reason": reason}
+             for p, ext, size, reason in con.execute(
+                 "SELECT path, ext, size, reason FROM other_files")]
+    con.close()
+    payload = tree_payload(rows, vault, args.folder or "", args.depth,
+                           args.files, args.absolute, args.limit)
+    return emit(args, payload, render_tree)
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     vault = vault_dir(args.vault)
     con = open_fresh(vault)
@@ -6134,7 +6309,8 @@ def main(argv: list[str] | None = None) -> int:
     p = add("related", cmd_related,
             "notes ranked by link-graph proximity to one note")
     p.add_argument("note")
-    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--limit", type=int, default=10,
+                   help="rows, default 10; 0 or less for all")
     p.add_argument("--include-inferred", action="store_true",
                    help=inferred_help)
 
@@ -6217,6 +6393,23 @@ def main(argv: list[str] | None = None) -> int:
                         " reporting")
 
     add("stats", cmd_stats, "counts, orphans, unresolved/ambiguous")
+    p = add("tree", cmd_tree,
+            "every file by folder: direct and recursive counts, notes, and"
+            " the extensions of files that are not notes")
+    p.add_argument("folder", nargs="?",
+                   help="a vault-relative folder; default the whole vault")
+    p.add_argument("--depth", type=int, default=0,
+                   help="levels shown, 1 for the folder alone; default 0,"
+                        " every level")
+    p.add_argument("--files", action="store_true",
+                   help="also list each file: a note with its line count,"
+                        " any other file with why it is not read")
+    p.add_argument("--absolute", action="store_true",
+                   help="with --files, give each file's absolute path in"
+                        " this system's form")
+    p.add_argument("--limit", type=int, default=TREE_LIMIT,
+                   help=f"folders, and files, shown; default {TREE_LIMIT},"
+                        " 0 for all")
 
     args = ap.parse_args(argv)
     out, err = sys.stdout, sys.stderr

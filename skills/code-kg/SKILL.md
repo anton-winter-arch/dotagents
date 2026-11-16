@@ -11,9 +11,12 @@ never reimplement its parsing inline. Storage is `<repo>/.code-kg/`
 (config.json + a rebuildable, gitignored db). Every read command re-ingests
 on drift, so answers track the live tree without you managing freshness.
 
-Languages parsed: python (AST-exact), javascript/typescript, bash, go, rust,
+The parsers cover python (AST-exact), javascript/typescript, bash, go, rust,
 c/c++, java, c#/msbuild, powershell, sql, terraform, dockerfile, compose,
-github actions, make, html, css, json, toml, markdown.
+github actions, make, html, css, json, toml and markdown. Fish, csh and
+Windows batch files are indexed for search but not parsed, and a script with
+no extension takes the language its `#!` line names. Every other file is
+listed by `tree` and never opened.
 
 ## Commands
 
@@ -26,10 +29,15 @@ machine-readable.
 | Command | Gives you |
 |---|---|
 | `init <repo>` | scaffold `.code-kg/` + first ingest (once per repo) |
-| `ingest <repo>` | full rebuild (rarely needed - reads auto-refresh) |
-| `search <repo> "question"` | ranked hits, symbols first, each with `file:start-end` |
+| `ingest <repo>` | full rebuild, rarely needed because reads auto-refresh; `--keep-previous` first saves the current db as the checkpoint `diff` compares against |
+| `diff <repo> [--against DB]` | what changed since the checkpoint, or against another repo's db: files added, removed and edited; symbols added, removed, edited, renamed (same file, same body) and moved (same body, another file), and the unchanged count |
+| `search <repo> "question"` | ranked hits, symbols first, each with `file:start-end`. `--per-file N` caps hits per file (default off); `--budget TOKENS` returns each hit's whole text within that many estimated tokens, and a class or file too large to fit whole comes back as its methods or symbols |
 | `query <repo> 'fts5 AND terms'` | raw FTS5 over file text |
 | `read <repo> <target>` | whole unit: `path`, `path:A-B`, or `path::Qual.name` |
+| `tree <repo> [FOLDER]` | every file by folder, with direct and recursive counts by language and the extensions of unread files; `--files` lists each file, `--absolute` gives this system's full paths, and the command also takes `--depth N` and `--limit` (default 200, 0 for all) |
+| `reads <repo> --session ID` | what one session has read, by symbol, line and file, with the largest unread parts; `--session ID` on `search`, `query` and `read` records their results into that session; `--forget ID` deletes a session |
+| `related <repo> <file-or-symbol>` | files or symbols ranked by personalized PageRank seeded from the one given, which measures position in the code graph rather than content |
+| `relate <repo> <unit> <predicate> <target> --quote TEXT` | record a judgment whose quote is checked against the anchoring symbol or file; `relations` lists them and closes them (`--retire`, `--resolve`); `--include-inferred` on `related`, `callers` and `callees` follows them |
 | `file <repo> <path>` | one file: role, symbols, edge counts, entry points |
 | `symbols <repo> <path-or-name>` | outline of a file, or find a symbol by name |
 | `imports <repo> <path>` | outbound edges with kind and status |
@@ -178,6 +186,16 @@ watches lockfiles, so re-`ingest` after installing packages.
   `css-class`, `css-id` and `css-var` data nodes (`define` in stylesheets
   and `<style>`, `use` in markup and `var()`), and an inline `on*=`
   handler is a `weak` call to a script function of that name.
+- **Infra and config at code depth.** Dockerfile stages, compose
+  services, workflow jobs, package.json scripts and Terraform blocks are
+  symbols. `FROM` a stage is `extends`; `COPY --from`, a compose `build`
+  and a Terraform reference are `ref`; `depends_on` and `needs` are
+  `depends-on`. A command that runs a repo script, a package.json script
+  or a make target is a `call` to it. These calls are found in
+  Dockerfiles, compose, workflow steps, package.json, Makefiles and bash,
+  including paths built on folder variables such as `"$HERE/x.sh"`. Each
+  environment variable is one `env` node across all of these formats and
+  Python, so `touches env:NAME` shows every definition and read.
 - **Observed edges add use, never remove it.** Only `line_ran_not_called`
   is evidence against a static edge, and only for that run's inputs.
   Before trusting a result that shows no use, read `entries` and the lines

@@ -226,12 +226,12 @@
  },
  "ingest <REPO> --json": {
   "err": "",
-  "out": "{\n  \"alias_notes\": [\n    \"1 aliases loaded from tsconfig.base.json\",\n    \"2 aliases loaded from tsconfig.json\",\n    \"1 aliases loaded from package.json imports\"\n  ],\n  \"dep_files\": 0,\n  \"edges\": 153,\n  \"entry_points\": 19,\n  \"entry_warnings\": [],\n  \"files\": 70,\n  \"ignored\": 0,\n  \"parse_errors\": 0,\n  \"profiles\": [\n    \"nextjs\"\n  ],\n  \"symbols\": 134\n}\n",
+  "out": "{\n  \"alias_notes\": [\n    \"1 aliases loaded from tsconfig.base.json\",\n    \"2 aliases loaded from tsconfig.json\",\n    \"1 aliases loaded from package.json imports\"\n  ],\n  \"dep_files\": 0,\n  \"edges\": 153,\n  \"entry_points\": 19,\n  \"entry_warnings\": [],\n  \"files\": 70,\n  \"ignored\": 0,\n  \"parse_errors\": 0,\n  \"profiles\": [\n    \"nextjs\"\n  ],\n  \"symbols\": 139\n}\n",
   "rc": 0
  },
  "init <REPO>": {
   "err": "",
-  "out": "initialized <REPO>/.code-kg\n  profile: nextjs\n  1 aliases loaded from tsconfig.base.json\n  2 aliases loaded from tsconfig.json\n  1 aliases loaded from package.json imports\n  data stores: sqlite (details: `data`)\ningest: {\"alias_notes\": [\"1 aliases loaded from tsconfig.base.json\", \"2 aliases loaded from tsconfig.json\", \"1 aliases loaded from package.json imports\"], \"dep_files\": 0, \"edges\": 153, \"entry_points\": 19, \"entry_warnings\": [], \"files\": 70, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [\"nextjs\"], \"symbols\": 134}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
+  "out": "initialized <REPO>/.code-kg\n  profile: nextjs\n  1 aliases loaded from tsconfig.base.json\n  2 aliases loaded from tsconfig.json\n  1 aliases loaded from package.json imports\n  data stores: sqlite (details: `data`)\ningest: {\"alias_notes\": [\"1 aliases loaded from tsconfig.base.json\", \"2 aliases loaded from tsconfig.json\", \"1 aliases loaded from package.json imports\"], \"dep_files\": 0, \"edges\": 153, \"entry_points\": 19, \"entry_warnings\": [], \"files\": 70, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [\"nextjs\"], \"symbols\": 139}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
   "rc": 0
  },
  "neighbors <REPO> CLAUDE.md --depth 2 --json": {
@@ -326,7 +326,7 @@
  },
  "search <REPO> invoice --json": {
   "err": "",
-  "out": "{\n  \"question\": \"invoice\",\n  \"results\": [\n    {\n      \"file\": \"src/shared/types.ts\",\n      \"kind\": \"interface\",\n      \"lines\": \"1-6\",\n      \"qualname\": \"Invoice\",\n      \"score\": -3.972,\n      \"symbol\": \"src/shared/types.ts::Invoice\"\n    },\n    {\n      \"file\": \"src/lib/repository.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"5-8\",\n      \"qualname\": \"allInvoices\",\n      \"score\": -3.787,\n      \"symbol\": \"src/lib/repository.ts::allInvoices\"\n    },\n    {\n      \"file\": \"src/app/api/invoices/[id]/route.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"3-9\",\n      \"qualname\": \"GET\",\n      \"score\": -3.709,\n      \"symbol\": \"src/app/api/invoices/[id]/route.ts::GET\"\n    },\n    {\n      \"file\": \"src/services/api.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"17-21\",\n      \"qualname\": \"listInvoices\",\n      \"score\": -3.659,\n      \"symbol\": \"src/services/api.ts::listInvoices\"\n    },\n    {\n      \"file\": \"src/shared/types.ts\",\n      \"kind\": \"interface\",\n      \"lines\": \"36-41\",\n      \"qualname\": \"CustomerDetail\",\n      \"score\": -3.054,\n      \"symbol\": \"src/shared/types.ts::CustomerDetail\"\n    },\n    {\n      \"file\": \"src/services/api.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"11-16\",\n      \"qualname\": \"fetchInvoices\",\n      \"score\": -2.699,\n      \"symbol\": \"src/services/api.ts::fetchInvoices\"\n    },\n    {\n      \"file\": \"src/app/invoices/page.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"10-16\",\n      \"qualname\": \"InvoicesPage\",\n      \"score\": -2.161,\n      \"symbol\": \"src/app/invoices/page.tsx::InvoicesPage\"\n    },\n    {\n      \"file\": \"src/app/dashboard/page.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"16-24\",\n      \"qualname\": \"buildStats\",\n      \"score\": -2.078,\n      \"symbol\": \"src/app/dashboard/page.tsx::buildStats\"\n    },\n    {\n      \"file\": \"src/app/dashboard/page.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"25-51\",\n      \"qualname\": \"DashboardPage\",\n      \"score\": -1.341,\n      \"symbol\": \"src/app/dashboard/page.tsx::DashboardPage\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
+  "out": "{\n  \"question\": \"invoice\",\n  \"results\": [\n    {\n      \"file\": \"src/shared/types.ts\",\n      \"kind\": \"interface\",\n      \"lines\": \"1-6\",\n      \"qualname\": \"Invoice\",\n      \"score\": -4.012,\n      \"symbol\": \"src/shared/types.ts::Invoice\"\n    },\n    {\n      \"file\": \"src/lib/repository.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"5-8\",\n      \"qualname\": \"allInvoices\",\n      \"score\": -3.822,\n      \"symbol\": \"src/lib/repository.ts::allInvoices\"\n    },\n    {\n      \"file\": \"src/app/api/invoices/[id]/route.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"3-9\",\n      \"qualname\": \"GET\",\n      \"score\": -3.738,\n      \"symbol\": \"src/app/api/invoices/[id]/route.ts::GET\"\n    },\n    {\n      \"file\": \"src/services/api.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"17-21\",\n      \"qualname\": \"listInvoices\",\n      \"score\": -3.69,\n      \"symbol\": \"src/services/api.ts::listInvoices\"\n    },\n    {\n      \"file\": \"src/shared/types.ts\",\n      \"kind\": \"interface\",\n      \"lines\": \"36-41\",\n      \"qualname\": \"CustomerDetail\",\n      \"score\": -3.077,\n      \"symbol\": \"src/shared/types.ts::CustomerDetail\"\n    },\n    {\n      \"file\": \"src/services/api.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"11-16\",\n      \"qualname\": \"fetchInvoices\",\n      \"score\": -2.714,\n      \"symbol\": \"src/services/api.ts::fetchInvoices\"\n    },\n    {\n      \"file\": \"src/app/invoices/page.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"10-16\",\n      \"qualname\": \"InvoicesPage\",\n      \"score\": -2.166,\n      \"symbol\": \"src/app/invoices/page.tsx::InvoicesPage\"\n    },\n    {\n      \"file\": \"src/app/dashboard/page.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"16-24\",\n      \"qualname\": \"buildStats\",\n      \"score\": -2.082,\n      \"symbol\": \"src/app/dashboard/page.tsx::buildStats\"\n    },\n    {\n      \"file\": \"src/app/dashboard/page.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"25-51\",\n      \"qualname\": \"DashboardPage\",\n      \"score\": -1.337,\n      \"symbol\": \"src/app/dashboard/page.tsx::DashboardPage\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
   "rc": 0
  },
  "search <REPO> load config": {
@@ -346,7 +346,7 @@
  },
  "search <REPO> main --json": {
   "err": "",
-  "out": "{\n  \"question\": \"main\",\n  \"results\": [\n    {\n      \"file\": \"src/app/not-found.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"1-8\",\n      \"qualname\": \"NotFound\",\n      \"score\": -4.332,\n      \"symbol\": \"src/app/not-found.tsx::NotFound\"\n    },\n    {\n      \"file\": \"src/app/error.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"5-19\",\n      \"qualname\": \"GlobalError\",\n      \"score\": -3.907,\n      \"symbol\": \"src/app/error.tsx::GlobalError\"\n    },\n    {\n      \"file\": \"src/app/page.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"4-22\",\n      \"qualname\": \"HomePage\",\n      \"score\": -3.526,\n      \"symbol\": \"src/app/page.tsx::HomePage\"\n    },\n    {\n      \"file\": \"src/app/dashboard/page.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"25-51\",\n      \"qualname\": \"DashboardPage\",\n      \"score\": -2.655,\n      \"symbol\": \"src/app/dashboard/page.tsx::DashboardPage\"\n    },\n    {\n      \"file\": \"src/app/customers/page.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"11-70\",\n      \"qualname\": \"CustomersPage\",\n      \"score\": -1.81,\n      \"symbol\": \"src/app/customers/page.tsx::CustomersPage\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
+  "out": "{\n  \"question\": \"main\",\n  \"results\": [\n    {\n      \"file\": \"src/app/not-found.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"1-8\",\n      \"qualname\": \"NotFound\",\n      \"score\": -4.352,\n      \"symbol\": \"src/app/not-found.tsx::NotFound\"\n    },\n    {\n      \"file\": \"src/app/error.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"5-19\",\n      \"qualname\": \"GlobalError\",\n      \"score\": -3.918,\n      \"symbol\": \"src/app/error.tsx::GlobalError\"\n    },\n    {\n      \"file\": \"src/app/page.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"4-22\",\n      \"qualname\": \"HomePage\",\n      \"score\": -3.53,\n      \"symbol\": \"src/app/page.tsx::HomePage\"\n    },\n    {\n      \"file\": \"src/app/dashboard/page.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"25-51\",\n      \"qualname\": \"DashboardPage\",\n      \"score\": -2.649,\n      \"symbol\": \"src/app/dashboard/page.tsx::DashboardPage\"\n    },\n    {\n      \"file\": \"src/app/customers/page.tsx\",\n      \"kind\": \"function\",\n      \"lines\": \"11-70\",\n      \"qualname\": \"CustomersPage\",\n      \"score\": -1.799,\n      \"symbol\": \"src/app/customers/page.tsx::CustomersPage\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
   "rc": 0
  },
  "search <REPO> render": {
@@ -366,17 +366,17 @@
  },
  "search <REPO> token --json": {
   "err": "",
-  "out": "{\n  \"question\": \"token\",\n  \"results\": [\n    {\n      \"file\": \"src/services/csrf.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"5-8\",\n      \"qualname\": \"checkToken\",\n      \"score\": -4.922,\n      \"symbol\": \"src/services/csrf.ts::checkToken\"\n    },\n    {\n      \"file\": \"src/shared/types.ts\",\n      \"kind\": \"interface\",\n      \"lines\": \"49-54\",\n      \"qualname\": \"Session\",\n      \"score\": -3.884,\n      \"symbol\": \"src/shared/types.ts::Session\"\n    },\n    {\n      \"file\": \"src/app/api/auth/login/route.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"4-14\",\n      \"qualname\": \"POST\",\n      \"score\": -3.162,\n      \"symbol\": \"src/app/api/auth/login/route.ts::POST\"\n    },\n    {\n      \"file\": \"src/services/csrf.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"9-19\",\n      \"qualname\": \"readToken\",\n      \"score\": -2.874,\n      \"symbol\": \"src/services/csrf.ts::readToken\"\n    },\n    {\n      \"file\": \"src/app/api/invoices/route.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"10-17\",\n      \"qualname\": \"POST\",\n      \"score\": -2.42,\n      \"symbol\": \"src/app/api/invoices/route.ts::POST\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
+  "out": "{\n  \"question\": \"token\",\n  \"results\": [\n    {\n      \"file\": \"src/services/csrf.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"5-8\",\n      \"qualname\": \"checkToken\",\n      \"score\": -4.957,\n      \"symbol\": \"src/services/csrf.ts::checkToken\"\n    },\n    {\n      \"file\": \"src/shared/types.ts\",\n      \"kind\": \"interface\",\n      \"lines\": \"49-54\",\n      \"qualname\": \"Session\",\n      \"score\": -3.904,\n      \"symbol\": \"src/shared/types.ts::Session\"\n    },\n    {\n      \"file\": \"src/app/api/auth/login/route.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"4-14\",\n      \"qualname\": \"POST\",\n      \"score\": -3.161,\n      \"symbol\": \"src/app/api/auth/login/route.ts::POST\"\n    },\n    {\n      \"file\": \"src/services/csrf.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"9-19\",\n      \"qualname\": \"readToken\",\n      \"score\": -2.874,\n      \"symbol\": \"src/services/csrf.ts::readToken\"\n    },\n    {\n      \"file\": \"src/app/api/invoices/route.ts\",\n      \"kind\": \"function\",\n      \"lines\": \"10-17\",\n      \"qualname\": \"POST\",\n      \"score\": -2.415,\n      \"symbol\": \"src/app/api/invoices/route.ts::POST\"\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE\"\n}\n",
   "rc": 0
  },
  "stats <REPO>": {
   "err": "",
-  "out": "files: 70 (css 3, json 3, markdown 4, typescript 60)\nroles: agent 2, config 3, docs 2, source 58, test 5\nsymbols: 134  entry points: 19\nedges: external 23, resolved 129, unresolved 1\nagent layer: 2 files, instructions in ., src/app; 0 skills\ningested at: <UTC>\n",
+  "out": "files: 70 (css 3, json 3, markdown 4, typescript 60)\nroles: agent 2, config 3, docs 2, source 58, test 5\nsymbols: 139  entry points: 19\nedges: external 23, resolved 129, unresolved 1\nagent layer: 2 files, instructions in ., src/app; 0 skills\ningested at: <UTC>\n",
   "rc": 0
  },
  "stats <REPO> --json": {
   "err": "",
-  "out": "{\n  \"agent_layer\": {\n    \"files\": 2,\n    \"instruction_dirs\": [\n      \".\",\n      \"src/app\"\n    ],\n    \"instruction_files\": [\n      \"CLAUDE.md\",\n      \"src/app/CLAUDE.md\"\n    ],\n    \"skills\": []\n  },\n  \"coverage_files\": 0,\n  \"edges_by_kind\": {\n    \"import\": 110,\n    \"import-type\": 23,\n    \"path-ref\": 4,\n    \"reexport\": 15,\n    \"script\": 1\n  },\n  \"edges_by_status\": {\n    \"external\": 23,\n    \"resolved\": 129,\n    \"unresolved\": 1\n  },\n  \"entry_points\": 19,\n  \"files_by_language\": {\n    \"css\": 3,\n    \"json\": 3,\n    \"markdown\": 4,\n    \"typescript\": 60\n  },\n  \"files_by_origin\": {\n    \"project\": 70\n  },\n  \"files_by_role\": {\n    \"agent\": 2,\n    \"config\": 3,\n    \"docs\": 2,\n    \"source\": 58,\n    \"test\": 5\n  },\n  \"ignored\": {},\n  \"ingested_at\": \"<UTC>\",\n  \"parse_errors\": [],\n  \"symbols\": 134\n}\n",
+  "out": "{\n  \"agent_layer\": {\n    \"files\": 2,\n    \"instruction_dirs\": [\n      \".\",\n      \"src/app\"\n    ],\n    \"instruction_files\": [\n      \"CLAUDE.md\",\n      \"src/app/CLAUDE.md\"\n    ],\n    \"skills\": []\n  },\n  \"coverage_files\": 0,\n  \"edges_by_kind\": {\n    \"import\": 110,\n    \"import-type\": 23,\n    \"path-ref\": 4,\n    \"reexport\": 15,\n    \"script\": 1\n  },\n  \"edges_by_status\": {\n    \"external\": 23,\n    \"resolved\": 129,\n    \"unresolved\": 1\n  },\n  \"entry_points\": 19,\n  \"files_by_language\": {\n    \"css\": 3,\n    \"json\": 3,\n    \"markdown\": 4,\n    \"typescript\": 60\n  },\n  \"files_by_origin\": {\n    \"project\": 70\n  },\n  \"files_by_role\": {\n    \"agent\": 2,\n    \"config\": 3,\n    \"docs\": 2,\n    \"source\": 58,\n    \"test\": 5\n  },\n  \"ignored\": {},\n  \"ingested_at\": \"<UTC>\",\n  \"parse_errors\": [],\n  \"symbols\": 139\n}\n",
   "rc": 0
  },
  "symbols <REPO> CLAUDE.md --json": {
@@ -2457,6 +2457,56 @@
   ],
   "ignored": [],
   "symbols": [
+   [
+    "package.json::scripts.build",
+    "package.json",
+    "script",
+    "build",
+    "scripts.build",
+    7,
+    7,
+    1
+   ],
+   [
+    "package.json::scripts.dev",
+    "package.json",
+    "script",
+    "dev",
+    "scripts.dev",
+    6,
+    6,
+    1
+   ],
+   [
+    "package.json::scripts.observe",
+    "package.json",
+    "script",
+    "observe",
+    "scripts.observe",
+    10,
+    10,
+    1
+   ],
+   [
+    "package.json::scripts.start",
+    "package.json",
+    "script",
+    "start",
+    "scripts.start",
+    8,
+    8,
+    1
+   ],
+   [
+    "package.json::scripts.test",
+    "package.json",
+    "script",
+    "test",
+    "scripts.test",
+    9,
+    9,
+    1
+   ],
    [
     "src/app/api/auth/login/route.ts::POST",
     "src/app/api/auth/login/route.ts",

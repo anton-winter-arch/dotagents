@@ -1,8 +1,12 @@
 # code-kg database schema
 
-SQLite + FTS5 at `<repo>/.code-kg/code-kg.db`. Rebuilt whole by every ingest
-except `coverage` and `runs`, which survive so execution evidence outlives a
-re-parse. All paths are repo-relative posix.
+SQLite + FTS5 at `<repo>/.code-kg/code-kg.db`. Every ingest rebuilds the db
+whole except for two groups of tables. `coverage`, `runs` and the
+`observed_*` tables survive so execution evidence outlives a re-parse, and
+`session_reads`, `extractions` and `conflicts` survive because they hold
+what sessions read and judged. `ingest --keep-previous` first copies the db
+to `code-kg-prev.db`, the checkpoint `diff` compares against. All paths are
+repo-relative posix.
 
 ## Tables
 
@@ -10,7 +14,7 @@ re-parse. All paths are repo-relative posix.
 | column | meaning |
 |---|---|
 | `id` | repo-relative path (the primary key everything joins on) |
-| `language` | python, javascript, typescript, bash, dockerfile, yaml, terraform, sql, markdown, json, toml, make |
+| `language` | python, javascript, typescript, bash, dockerfile, yaml, terraform, sql, markdown, json, toml, make, html, css, go, rust, c, java, csharp, msbuild, powershell; `fish`, `csh` and `batch` are indexed for search but not parsed. A file with no extension takes the language its `#!` line names |
 | `role` | `source`, `test`, `config`, `docs`, `ci` |
 | `size`, `lines` | bytes, line count |
 | `content_hash` | sha256 of the text |
@@ -22,8 +26,8 @@ re-parse. All paths are repo-relative posix.
 | column | meaning |
 |---|---|
 | `id` | `<file>::<qualname>` (duplicates disambiguated `~2`, `~3`...) |
-| `kind` | function, class, method, interface, type, enum, target, table, view, resource, module... |
-| `line_start`, `line_end` | 1-indexed inclusive. Exact for python (AST); for regex-scanned languages the end is the line before the next symbol, which is approximate |
+| `kind` | function, class, method, interface, type, enum, target, table, view, resource, module...; `stage` (a Dockerfile `FROM`, qualname `stage.<alias>` or `stage.<index>`), `service` (compose, `services.<name>`), `job` (GitHub workflow, `jobs.<name>`), `script` (package.json, `scripts.<name>`) |
+| `line_start`, `line_end` | 1-indexed inclusive. Exact for python (AST), Dockerfile stages, compose services, workflow jobs and package.json scripts; for regex-scanned languages the end is approximate: the line before the next symbol, or the return to the symbol's own indentation if that comes first |
 | `exported` | 1 unless underscore-private (python) or unexported (js) |
 
 ### edges
@@ -32,7 +36,7 @@ re-parse. All paths are repo-relative posix.
 | `src`, `dst` | file ids; `dst` NULL unless status is `resolved` |
 | `target` | the reference as written in the source |
 | `kind` | see below |
-| `status` | `resolved`, `external`, `unresolved`, `ambiguous` |
+| `status` | `resolved`, `external`, `dep`, `unresolved`, `excluded`, `ambiguous` |
 
 Edge kinds, strongest first:
 
@@ -61,17 +65,18 @@ means it looks local and does not exist (a worklist item); `ambiguous`
 means two candidates matched and none was chosen.
 
 ### symbol_edges
-Rebuilt by every ingest. Python is read with `ast`; JS/TS, bash, SQL and
-HTML are read with stdlib scanners that blank comments and strings first.
-SKILL.md, under Interpreting output, lists what each language records.
+Rebuilt by every ingest. Python is read with `ast`; JS/TS, bash, SQL,
+HTML, Dockerfiles, YAML, package.json, Makefiles and Terraform are read
+with stdlib scanners that blank comments and strings first. SKILL.md, under
+Interpreting output, lists what each language records.
 
 | column | meaning |
 |---|---|
 | `src_file` | the file the row was read from |
 | `src` | symbol id, or `<file>::<module>` for a file's top-level code |
-| `dst` | symbol id; NULL unless status is `resolved` |
+| `dst` | symbol id, or `<file>::<module>` for a script a command runs; NULL unless status is `resolved` |
 | `target` | the callee or name as written, capped at 120 characters |
-| `kind` | `call`, `ref` (a function or class used as a value), `import`, `decorated-by`, `extends` |
+| `kind` | `call`, `ref` (a function or class used as a value; a Terraform reference; a COPY `--from` or a compose `build`), `import`, `decorated-by`, `extends` (also a Dockerfile `FROM`), `depends-on` (compose `depends_on`, workflow `needs`, Terraform `depends_on`). With `--include-inferred`, `callers` and `callees` add `inferred/<predicate>` rows from `relate` at query time |
 | `status` | `resolved`, `weak`, `ambiguous`, `external`, `unresolved` |
 | `provenance` | `extracted` |
 | `candidates` | for `weak` and `ambiguous`, the method ids of that name, newline-joined, at most 20 |
@@ -80,9 +85,13 @@ A def nested inside a function is not a symbol: its calls are filed under
 the enclosing symbol.
 
 ### data_edges
-Rebuilt by every ingest from Python, bash (`env`), SQL (`table`), HTML and
-CSS (`css-*`). Only literal names are recorded: a table, file or variable
-name built at run time is not guessed.
+Rebuilt by every ingest from Python, SQL (`table`), HTML, CSS and JSX
+`className` (`css-*`). `env` rows come from every place a setting is
+defined or read: Python, shell text (bash files, Dockerfile `RUN`, workflow
+`run`, package.json scripts), Dockerfile `ENV`/`ARG`, compose `environment`
+and `${NAME}` interpolation, workflow `env:` and `${{ env.NAME }}`, and
+Kubernetes `env` lists. Only literal names are recorded; a table, file or
+variable name built at run time is not guessed.
 
 | column | meaning |
 |---|---|
@@ -90,7 +99,7 @@ name built at run time is not guessed.
 | `kind` | `read`, `write`, `open` (a database file), `define` and `use` (CSS names), `passes` (an argument of a resolved call), `param` (one row per parameter, numbered as callers pass them) |
 | `node_kind` | `global`, `table`, `file`, `env`, `config`, `css-class`, `css-id`, `css-var`, `literal`, `param` |
 | `node` | the name; `param:<name>` when the caller's parameter names it; a global is `file::NAME` |
-| `status` | `resolved` (named in the source), `param` (named by a parameter), `weak` (config keys found by receiver name, and bash `$NAME` reads that may be shell variables) |
+| `status` | `resolved` (named in the source), `param` (named by a parameter), `weak` (a config key found by receiver name, or a shell `$NAME` read of a name the file does not define as environment, which may be a shell variable) |
 | `provenance` | `extracted`; `flow` reports a row it reached through a call as `inferred`, at query time |
 | `via` | the call that touches the node, or `callee#arg` for `passes` |
 
@@ -126,6 +135,27 @@ Both survive re-ingest; coverage rows for deleted files are pruned.
 What an ingest excluded and why: `config:<glob>`, `oversize`,
 `symlink-or-escape`.
 
+### other_files
+`(path, ext, size, reason)`: one row per file the walk saw that no parser
+reads, listed by `tree` and never opened. `reason` is `no-parser`, `policy`
+(lockfiles) or `secret-name` (`.env*`, `secrets.*`, `*.tfvars`). Rebuilt by
+every ingest.
+
+### session_reads
+`(session_id, unit_id, file_id, cmd, at)`: what `search`, `query` and
+`read` returned under `--session`, with only the first touch kept.
+`unit_id` is a symbol id, or a file id when the whole file was returned.
+`reads` reports this table.
+
+### extractions / conflicts
+These tables hold the judgments `relate` records. In `extractions(id,
+unit_id, unit_hash, kind, subject, predicate, object, quote, line,
+observed_at, status)`, `unit_id` anchors the quote and `status` is `hot`,
+`cold` (the anchor changed or is gone) or `retired` (sticky).
+`conflicts(seq, detected_at, key, kind, a_extraction, b_extraction,
+resolution, state)` records two hot relations with one subject and
+predicate and different objects. Every ingest re-checks each anchor's hash.
+
 ### components
 `(name, file_id)`: one row per file a config `components` row matched. A file
 in two components has two rows. Names, aliases and descriptions stay in the
@@ -138,8 +168,8 @@ innermost symbol containing the line or `''`. Capped at 20000 rows per ingest;
 `meta.annotations_seen` holds the uncapped count.
 
 ### meta
-`manifest` is the fingerprint read commands compare before answering: the
-indexable file set, the config, lockfiles and the engine's `INDEX_REV`, so a
+`manifest` is the fingerprint read commands compare before answering: every
+file the walk sees, the config, lockfiles and the engine's `INDEX_REV`, so a
 parser or schema change re-ingests an unchanged repo once.
 
 ### FTS
