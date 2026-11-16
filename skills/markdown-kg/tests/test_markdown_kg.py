@@ -357,6 +357,19 @@ class KbFixtureTests(VaultCase):
 
 
 class IngestTests(VaultCase):
+    def test_ingest_seeds_a_gitignore_that_covers_the_whole_folder(self):
+        # `*` keeps the folder, its config and every database out of the repo.
+        markdown_kg.ingest(self.vault)
+        gi = markdown_kg.kg_dir(self.vault) / ".gitignore"
+        self.assertEqual([ln for ln in gi.read_text().splitlines() if not ln.startswith("#")], ["*"])
+
+    def test_an_existing_gitignore_is_never_rewritten(self):
+        gi = markdown_kg.kg_dir(self.vault) / ".gitignore"
+        gi.parent.mkdir(parents=True, exist_ok=True)
+        gi.write_text("markdown-kg.db\n", encoding="utf-8")
+        markdown_kg.ingest(self.vault)
+        self.assertEqual(gi.read_text(encoding="utf-8"), "markdown-kg.db\n")
+
     def test_first_ingest_counts(self):
         report = markdown_kg.ingest(self.vault)
         self.assertEqual(report["notes"], 8)  # .trash/Ghost.md excluded

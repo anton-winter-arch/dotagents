@@ -23,13 +23,15 @@ import socket
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import procguard  # noqa: E402  - the house spawn wrapper, a byte-identical copy beside this file
 
 EXIT_OK = 0
 EXIT_ARGS = 2
@@ -50,6 +52,7 @@ KEEP_ALIVE = "1m"   # the longest a model outlives a run that died before it cou
 MAX_KEEP_ALIVE = 600   # --keep-alive ceiling: a worker's sequence of calls skips the reload, and the daemon still unloads
 COLLECT_MAX_MATCHES = 3200     # the grep collects this many before the spread across files picks what is sent; a fixed
 COLLECT_MAX_BYTES = 512 * 1024  # bound, not a multiple of the cap, so a small cap never hides the later files
+SEARCH_GRACE = 1.0              # seconds between SIGTERM and SIGKILL when the grep's group is stopped
 SEARCH_MAX_MATCHES = 120        # the list the model judges: 120 lines is about 6K tokens, which a 4B model ranks in
 SEARCH_MAX_BYTES = 24 * 1024    # tens of seconds; 400 ran two minutes and came back "absent"
 RUN_MAX_OUTPUT = 2048
@@ -446,10 +449,10 @@ def request_json(method: str, url: str, body: dict | None, headers: dict, timeou
             detail = ""
         raise TaskError(redact(f"backend returned HTTP {e.code}: {detail or e.reason}", secret), EXIT_BACKEND)
     except urllib.error.URLError as e:
-        if isinstance(e.reason, TimeoutError):
+        if isinstance(e.reason, (TimeoutError, socket.timeout)):
             raise TaskError(f"backend did not answer within {timeout} s", EXIT_TIMEOUT)
         raise TaskError(redact(f"cannot reach backend: {e.reason}", secret), EXIT_BACKEND)
-    except TimeoutError:
+    except (TimeoutError, socket.timeout):  # distinct classes before Python 3.10
         raise TaskError(f"backend did not answer within {timeout} s", EXIT_TIMEOUT)
     except ValueError:
         # http.client rejects a malformed header with the header value in the message; never echo it
@@ -871,27 +874,15 @@ def collect_matches(patterns: list[str], root: Path, max_matches: int, max_bytes
     # fills the budget with whichever file sorts first and never shows the model the others.
     raw, size, overscanned = [], 0, False
     raw_matches, raw_bytes = max(COLLECT_MAX_MATCHES, max_matches), max(COLLECT_MAX_BYTES, max_bytes)
-    deadline = time.monotonic() + timeout
-    # stderr goes to a file, not a pipe, so a grep that complains about every unreadable file cannot block on it;
-    # a timer kills a grep that produces nothing, since a blocked readline would never see the deadline
-    timed_out = threading.Event()
+    started = time.monotonic()
+    deadline = started + timeout
+    # stderr goes to a file, not a pipe, so a grep that complains about every unreadable file cannot block on it
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as errf:
-        # its own session, so the kill reaches a child that holds the pipe open (a wrapper script around the grep)
-        proc = subprocess.Popen(argv, cwd=root, stdout=subprocess.PIPE, stderr=errf, text=True, errors="replace",
-                                start_new_session=True)
-
-        def kill():
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                proc.kill()
-
-        def expire():
-            timed_out.set()
-            kill()
-
-        timer = threading.Timer(timeout, expire)
-        timer.start()
+        # its own process group under a watchdog, which stops the whole group (a wrapper script around the grep
+        # included) at the deadline, so a grep that produces nothing cannot hold a blocked readline past it, and
+        # when this process dies, even by SIGKILL. A search has nothing to clean up, so the grace is short.
+        proc = procguard.popen(argv, timeout=timeout, grace=SEARCH_GRACE, cwd=root, stdout=subprocess.PIPE,
+                               stderr=errf, text=True, errors="replace")
         try:
             for line in proc.stdout:
                 m = parse_match(line)
@@ -903,13 +894,15 @@ def collect_matches(patterns: list[str], root: Path, max_matches: int, max_bytes
                 raw.append(m)
                 size += len(line)
         finally:
-            timer.cancel()
             if proc.poll() is None:
-                kill()
+                procguard.stop(proc.pid, SEARCH_GRACE)
             proc.wait()
+            proc.stdout.close()
+            procguard.release(proc)  # reaped here, so the exit handlers must not signal its group id later
         errf.seek(0)
         stderr = errf.read().strip()
-    if timed_out.is_set():
+    # the watchdog exits 124 when its time limit stopped the group; the elapsed time tells that from the grep's own 124
+    if proc.returncode == procguard.EXIT_TIMEOUT and time.monotonic() - started >= timeout:
         raise TaskError(f"the search under {root} timed out after {timeout} s before the model was called", EXIT_TIMEOUT)
     # both engines exit 1 for "no matches" and 2 for an error such as a bad pattern; an error with nothing
     # collected is an error, not an empty result
@@ -1177,6 +1170,8 @@ def _interrupt(signum, frame):
 
 
 if __name__ == "__main__":
-    # A Bash-tool timeout sends SIGTERM; turn it into an exception so the unload in settle() still runs.
+    # A Bash-tool timeout sends SIGTERM and a closed terminal sends SIGHUP; turn both into an exception so the
+    # unload in settle() still runs.
     signal.signal(signal.SIGTERM, _interrupt)
+    signal.signal(signal.SIGHUP, _interrupt)
     sys.exit(main())

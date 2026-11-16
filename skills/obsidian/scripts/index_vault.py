@@ -122,7 +122,7 @@ def list_markdown_files(vault: Path):
     try:
         out = subprocess.run(
             ['git', '-C', str(vault), 'ls-files', '--cached', '--others', '--exclude-standard'],
-            capture_output=True, text=True)
+            capture_output=True, text=True, timeout=120)
         if out.returncode == 0:
             files = [vault / ln for ln in out.stdout.splitlines() if ln.endswith('.md')]
     except Exception:

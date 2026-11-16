@@ -768,6 +768,14 @@ class TestConfigCommand(RepoCase):
 
 
 class TestGitignoreSeed(RepoCase):
+    def test_an_existing_gitignore_is_never_rewritten(self):
+        gi = code_kg.kg_dir(self.repo) / ".gitignore"
+        gi.parent.mkdir(parents=True, exist_ok=True)
+        gi.write_text("code-kg.db\n", encoding="utf-8")
+        rc, _, err = run("ingest", str(self.repo))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(gi.read_text(encoding="utf-8"), "code-kg.db\n")
+
     def test_a_dangling_link_at_the_seed_path_is_not_written_through(self):
         planted = self.tmp / "planted"
         gi = code_kg.kg_dir(self.repo) / ".gitignore"

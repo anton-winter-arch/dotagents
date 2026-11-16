@@ -47,6 +47,8 @@ HARNESSES = {
 TRYOUT = SKILL_DIR / "tryout" / "scripts" / "harness_bench.py"
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 EXIT_USAGE = 2
+# One harness's clean removes worktrees and run folders; every git call in it has its own cap.
+CLEAN_TIMEOUT_S = 600
 
 
 class UsageError(Exception):
@@ -222,7 +224,12 @@ def clean_all(args: list[str]) -> int:
     worst = 0
     for harness in HARNESSES:
         print(f"== {harness}", flush=True)
-        rc = subprocess.run([sys.executable, str(script(harness)), "clean", *args]).returncode
+        try:
+            rc = subprocess.run([sys.executable, str(script(harness)), "clean", *args],
+                                timeout=CLEAN_TIMEOUT_S).returncode
+        except subprocess.TimeoutExpired:
+            print(f"task: {harness} clean did not finish in {CLEAN_TIMEOUT_S} s; stopped it", file=sys.stderr)
+            rc = 1
         worst = max(worst, rc)
     return worst
 

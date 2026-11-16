@@ -101,7 +101,8 @@ task.py clean [<harness>] [--run <id> | --all | --older-than-days 7]
 
 `clean` removes run folders and their worktrees.
 With no harness named, it cleans every harness in turn, and `--run` goes to the harness
-that owns the run. Each `run` also prunes runs older than seven days.
+that owns the run.
+Each `run` also prunes runs older than seven days, and runs cut off before their report once they are a day old.
 
 ### 5. tryout
 

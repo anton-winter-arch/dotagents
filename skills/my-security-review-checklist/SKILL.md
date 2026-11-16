@@ -64,6 +64,7 @@ or destructive file ops as Critical until proven otherwise.
 - [ ] No hook interpolates untrusted prompt/file/tool content into a shell command
 - [ ] Hooks have sane `timeout` values and fail closed, not open
 - [ ] New hooks are the minimum scope needed (specific matcher, not catch-all) and are reviewed like production code
+- [ ] Anything that starts processes or loads models meets skill-authoring's `references/process-lifecycle.md`, and `check_spawns.py` exits 0 over the change. A leaked child is a denial of service on the user's own machine.
 
 ### 4. Untrusted input: agent / LLM / web / MCP / files
 

@@ -39,9 +39,17 @@ with open(os.environ["FAKE_LOG"], "a") as log:
                           "skill_md": (link / "SKILL.md").exists(),
                           "scripts": (link / "scripts" / "tool.py").exists(),
                           "workers": a.num_workers, "model": a.model}) + "\n")
+if os.environ.get("FAKE_FAIL_NEW") and "NEW" in a.description:
+    import time
+    while not os.path.exists(os.environ["FAKE_PIDS"]):   # fail once the old variant is running
+        time.sleep(0.1)
+    sys.exit(5)
 if os.environ.get("FAKE_SLEEP"):
     with open(os.environ["FAKE_PIDS"], "a") as pids:
         pids.write(f"{os.getpid()}\n")
+    if os.environ.get("FAKE_TOKEN"):   # a probe-like grandchild the cap must reach too
+        import subprocess
+        subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)", os.environ["FAKE_TOKEN"]])
     import time
     time.sleep(float(os.environ["FAKE_SLEEP"]))
 new = "NEW" in a.description
@@ -231,6 +239,48 @@ class TriggerABTest(unittest.TestCase):
         for pid in map(int, pids.read_text().split()):
             with self.assertRaises(ProcessLookupError):
                 os.kill(pid, 0)
+
+    def run_hung(self, *args: str, **fake: str) -> subprocess.CompletedProcess:
+        """Run with a fake whose variants hang and start a tokened grandchild; assert the
+        link is back and nothing tokened survives, then return the result."""
+        import signal
+        import time
+        import uuid
+        self.change_description()
+        original = os.readlink(self.links / "demo")
+        token = f"trigger-ab-test-{uuid.uuid4().hex}"
+        env = dict(self.env, FAKE_SLEEP="120", FAKE_PIDS=str(self.tmp / "pids"), FAKE_TOKEN=token, **fake)
+
+        def tokened():
+            out = subprocess.run(["ps", "-A", "-o", "pid=,command="], capture_output=True, text=True,
+                                 timeout=10).stdout
+            return [int(line.split()[0]) for line in out.splitlines() if token in line]
+        started = time.monotonic()
+        try:
+            r = subprocess.run([sys.executable, str(SCRIPT), "demo", "--root", str(self.repo),
+                                "--skill-creator", str(self.creator), *args],
+                               env=env, capture_output=True, text=True, timeout=90)
+            self.assertLess(time.monotonic() - started, 45, "the run waited out a hung variant")
+            self.assertEqual(os.readlink(self.links / "demo"), original)
+            time.sleep(0.5)
+            self.assertEqual(tokened(), [], "a tokened probe outlived the run")
+            for pid in map(int, (self.tmp / "pids").read_text().split()):
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+            return r
+        finally:
+            for pid in tokened():   # only this test's own tokened processes
+                os.kill(pid, signal.SIGKILL)
+
+    def test_a_hung_variant_stops_at_its_cap_with_no_survivor(self):
+        r = self.run_hung("--variant-timeout", "2")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("passed the 2 s variant limit", r.stderr)
+
+    def test_a_failed_variant_stops_the_hung_one_instead_of_waiting_for_its_cap(self):
+        r = self.run_hung(FAKE_FAIL_NEW="1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("run_eval exited 5", r.stderr)
 
     def test_a_real_folder_at_the_station_path_is_refused(self):
         self.change_description()

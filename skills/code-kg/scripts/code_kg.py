@@ -499,6 +499,23 @@ def linked_store(root: Path, folder: Path, db: Path) -> str | None:
     return None
 
 
+def seed_gitignore(folder: Path) -> None:
+    """Give the engine's folder a .gitignore of `*` when it has none, so the
+    folder, its config and every database in it stay out of the repo. A
+    .gitignore already there is the repo's own choice and is never rewritten;
+    a config someone wants shared is added with `git add -f`. O_EXCL and
+    O_NOFOLLOW in one open: a link planted at the path, dangling or not, is
+    never written through, with no gap between a check and the write."""
+    gi = folder / ".gitignore"
+    try:
+        fd = os.open(gi, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    except OSError:
+        return
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write("# Local and rebuildable: the database, its checkpoint and this"
+                 " folder's config.\n*\n")
+
+
 def connect(repo: Path, must_exist: bool = False) -> sqlite3.Connection:
     db = db_path(repo)
     refused = linked_store(repo, kg_dir(repo), db)
@@ -507,13 +524,9 @@ def connect(repo: Path, must_exist: bool = False) -> sqlite3.Connection:
     if must_exist and not db.exists():
         sys.exit(f"error: no database at {db} - run `ingest` on this repo first")
     db.parent.mkdir(parents=True, exist_ok=True)
-    gi = db.parent / ".gitignore"
-    if not os.path.lexists(gi):
-        # Seeded on first contact, not only by `init`: the db must never be
-        # committable in the target repo however the folder came to exist.
-        # `lexists`, because a dangling link here would be written through.
-        gi.write_text(f"{DB_NAME}\n{PREV_DB_NAME}\ncoverage-tmp.json\n",
-                      encoding="utf-8")
+    # Seeded on first contact, not only by `init`: the db must never be
+    # committable in the target repo however the folder came to exist.
+    seed_gitignore(db.parent)
     con = sqlite3.connect(db)
     con.executescript(SCHEMA)
     try:  # databases built before the origin column existed
@@ -5267,8 +5280,9 @@ def ingest(repo: Path, keep_previous: bool = False) -> dict:
         checkpoint = str(prev_db_path(repo))
         gi = kg_dir(repo) / ".gitignore"
         # A .gitignore seeded before checkpoints existed gains the line.
-        if gi.is_file() and not gi.is_symlink() and PREV_DB_NAME not in \
-                gi.read_text(encoding="utf-8", errors="replace").split():
+        lines = gi.read_text(encoding="utf-8", errors="replace").split() \
+            if gi.is_file() and not gi.is_symlink() else []
+        if lines and "*" not in lines and PREV_DB_NAME not in lines:
             with gi.open("a", encoding="utf-8") as fh:
                 fh.write(f"\n{PREV_DB_NAME}\n")
     cfg = load_config(repo)
@@ -6585,7 +6599,7 @@ def coverage_run(repo: Path, yes: bool, timeout: int = 900,
     env = {**os.environ, "PYTHONSAFEPATH": "1"}
     if coverage_wrapped(cmd):
         probe = subprocess.run([cmd[0], "-m", "coverage", "--version"],
-                               capture_output=True, cwd=repo, env=env)
+                               capture_output=True, cwd=repo, env=env, timeout=60)
         if probe.returncode:
             sys.exit("error: coverage.py is not importable here. Install it"
                      " in the repo's environment (`pip install coverage`) or"

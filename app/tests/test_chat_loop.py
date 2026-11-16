@@ -48,7 +48,7 @@ def fake_spawn(monkeypatch, lines, returncode=0, stderr=b""):
     each spawn received rides on spawn_cwds (same indexes as commands)."""
     commands = []
 
-    async def spawn(cmd, cwd=None, seat=None):
+    async def spawn(cmd, cwd=None, seat=None, timeout=None):
         commands.append(cmd)
         fake_spawn.spawn_cwds.append(cwd)
         return FakeProcess(lines, returncode, stderr)

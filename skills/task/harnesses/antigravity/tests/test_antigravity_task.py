@@ -5,16 +5,24 @@ Stdlib unittest, synthetic fixture repo, a fake `agy` binary and a fake
 `sandbox-exec` that records the profile and runs the command unconfined. One test
 runs the generated profile under the real sandbox-exec when the host has it.
 Run: python3 -m unittest discover -s skills/task/harnesses/antigravity/tests -v
+
+Each test's temp folder name and brief carry a fresh random token, so every process a
+run starts carries it in its argv (the script through --repo, the watchdog through the
+profile path, the fake through the prompt, the fake's children through the tag it gives
+them). Process assertions look only at processes with that token, and tearDown kills
+only those.
 """
 
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+import uuid
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -25,12 +33,34 @@ REAL_SB = Path("/usr/bin/sandbox-exec")
 
 
 def git(args, cwd):
-    return subprocess.run(["git", *args], cwd=str(cwd), text=True, capture_output=True, check=True)
+    return subprocess.run(["git", *args], cwd=str(cwd), text=True, capture_output=True, check=True, timeout=60)
+
+
+def tagged(token):
+    """(pid, command) of every live process whose argv carries `token`."""
+    out = subprocess.run(["ps", "-ww", "-A", "-o", "pid=,stat=,command="], capture_output=True, text=True,
+                         timeout=10).stdout
+    found = []
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and token in parts[2] and not parts[1].startswith("Z"):
+            found.append((int(parts[0]), parts[2]))
+    return found
+
+
+def wait_for(cond, limit=20.0):
+    end = time.monotonic() + limit
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.1)
+    return cond()
 
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="agy-task-test-"))
+        self.token = f"agy-task-test-{uuid.uuid4().hex}"
+        self.tmp = Path(tempfile.mkdtemp(prefix=f"{self.token}-"))
         self.repo = self.tmp / "repo"
         (self.repo / "src").mkdir(parents=True)
         (self.repo / "src" / "allowed.py").write_text("def f():\n    return 1\n")
@@ -43,7 +73,7 @@ class Base(unittest.TestCase):
         # writes to, so the fixture puts it under ~/.cache and removes it in tearDown.
         self.state = Path.home() / ".cache" / f"agy-task-test-{self.tmp.name}"
         self.brief = self.tmp / "brief.md"
-        self.brief.write_text("Make f return 2.\n")
+        self.brief.write_text(f"Make f return 2.\n\nRun tag: {self.token}\n")  # the prompt rides on agy's argv
         self.agent_home = self.tmp / "dot-gemini"
         (self.agent_home / "antigravity-cli").mkdir(parents=True)
         (self.agent_home / "antigravity-cli" / "settings.json").write_text(json.dumps({"permissions": {"allow": ["write_file(*)"]}}))
@@ -54,10 +84,19 @@ class Base(unittest.TestCase):
                         FAKE_SANDBOX_RECORD=str(self.tmp / "profile.sb"))
 
     def tearDown(self):
+        for pid, _ in tagged(self.token):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
         for d in self.state.glob("*/ws"):
-            subprocess.run(["git", "worktree", "remove", "--force", str(d)], cwd=str(self.repo), capture_output=True)
+            subprocess.run(["git", "worktree", "remove", "--force", str(d)], cwd=str(self.repo), capture_output=True,
+                           timeout=60)
         shutil.rmtree(self.tmp, ignore_errors=True)
         shutil.rmtree(self.state, ignore_errors=True)
+
+    def assert_gone(self, limit=15.0):
+        self.assertTrue(wait_for(lambda: not tagged(self.token), limit), f"left running: {tagged(self.token)}")
 
     def run_cmd(self, *args, mode="clean", timeout=None, env_extra=None):
         env = dict(self.env, FAKE_AGY_MODE=mode, **(env_extra or {}))
@@ -209,19 +248,39 @@ class TestValidation(Base):
 
 class TestProcessControl(Base):
     def test_normal_exit_kills_a_surviving_child(self):
-        tag = f"antigravity-task-orphan-{os.getpid()}-{time.time_ns()}"
-        self.env["FAKE_AGY_ORPHAN"] = tag
+        self.env["FAKE_AGY_ORPHAN"] = f"{self.token}-orphan"
         r = self.run_task()
         self.assertEqual(r.returncode, 0, r.stderr)
-        out = subprocess.run(["pgrep", "-f", tag], capture_output=True, text=True)
-        self.assertEqual(out.stdout.strip(), "", "a child outlived the agent's normal exit")
+        self.assert_gone(5)
 
     def test_timeout_kills_process_group(self):
         r = self.run_task(mode="child-sleep", extra=["--timeout", "30"])
         self.assertEqual(r.returncode, 5, r.stderr)
-        time.sleep(1)
-        out = subprocess.run(["pgrep", "-f", "fake_agy.py"], capture_output=True, text=True)
-        self.assertEqual(out.stdout.strip(), "", "a child survived the timeout")
+        self.assert_gone(5)
+
+    def assert_signal_stops_everything(self, sig):
+        env = dict(self.env, FAKE_AGY_MODE="child-sleep")
+        args = ["run", "--repo", str(self.repo), "--brief", str(self.brief), "--allow", "src/allowed.py",
+                "--timeout", "120"]
+        proc = subprocess.Popen([sys.executable, str(SCRIPT), *args], env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        # The fake's child, tagged with the worktree path, is the last process the run starts.
+        self.assertTrue(wait_for(lambda: any("time.sleep(120)" in c and c.endswith("/ws")
+                                             for _, c in tagged(self.token))),
+                        "the fake's child never started")
+        proc.send_signal(sig)
+        proc.wait(timeout=30)
+        self.assert_gone()
+
+    def test_sigterm_to_the_parent_stops_the_group(self):
+        self.assert_signal_stops_everything(signal.SIGTERM)
+
+    def test_sighup_to_the_parent_stops_the_group(self):
+        self.assert_signal_stops_everything(signal.SIGHUP)
+
+    def test_sigkill_of_the_parent_stops_the_group(self):
+        self.assert_signal_stops_everything(signal.SIGKILL)
 
     def test_agent_error_exit_four(self):
         r = self.run_task(mode="error")
@@ -293,7 +352,7 @@ class TestArgvAndSandbox(Base):
                   f'echo out > "{outside}" 2>/dev/null && echo outside-ok || echo outside-denied; '
                   f'echo h > "$HOME/agy-task-sb-probe.txt" 2>/dev/null && echo home-ok || echo home-denied')
         r = subprocess.run([str(REAL_SB), "-f", str(run_dir / "sandbox.sb"), "/bin/zsh", "-c", script],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, timeout=60)
         self.assertIn("inside-ok", r.stdout)
         self.assertIn("outside-denied", r.stdout)
         self.assertIn("home-denied", r.stdout)
@@ -362,6 +421,19 @@ class TestClean(Base):
         rpt, run_dir = self.report()
         self.assertEqual(self.run_cmd("clean", "--run", rpt["run_id"]).returncode, 0)
         self.assertFalse(run_dir.exists())
+
+    def test_a_run_cut_off_before_its_report_is_pruned_after_a_day(self):
+        self.assertEqual(self.run_task().returncode, 0)
+        _, run_dir = self.report()
+        (run_dir / "report.json").unlink()  # the shape a killed run leaves
+        self.assertEqual(self.run_cmd("clean", "--all").returncode, 0)
+        self.assertTrue(run_dir.exists(), "a report-less run under a day old may still be in progress")
+        old = time.time() - 2 * 86400
+        os.utime(run_dir, (old, old))
+        r = self.run_cmd("clean", "--all")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(run_dir.exists())
+        self.assertNotIn(run_dir.name, git(["worktree", "list"], self.repo).stdout)
 
 
 if __name__ == "__main__":

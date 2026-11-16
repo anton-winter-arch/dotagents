@@ -3,16 +3,23 @@
 
 Stdlib unittest, synthetic fixture repo, fake `codex` binary. No network, no
 real Codex. Run: python3 -m unittest discover -s skills/task/harnesses/codex/tests -v
+
+Each test's temp folder name carries a fresh random token, so every process a run
+starts carries it in its argv (the script through --repo, the watchdog and the fake
+through the worktree path, the fake's own children through the tag it gives them).
+Process assertions look only at processes with that token, and tearDown kills only those.
 """
 
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+import uuid
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -21,12 +28,34 @@ FAKE = HERE / "fake_codex.py"
 
 
 def git(args, cwd):
-    return subprocess.run(["git", *args], cwd=str(cwd), text=True, capture_output=True, check=True)
+    return subprocess.run(["git", *args], cwd=str(cwd), text=True, capture_output=True, check=True, timeout=60)
+
+
+def tagged(token):
+    """(pid, command) of every live process whose argv carries `token`."""
+    out = subprocess.run(["ps", "-ww", "-A", "-o", "pid=,stat=,command="], capture_output=True, text=True,
+                         timeout=10).stdout
+    found = []
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and token in parts[2] and not parts[1].startswith("Z"):
+            found.append((int(parts[0]), parts[2]))
+    return found
+
+
+def wait_for(cond, limit=20.0):
+    end = time.monotonic() + limit
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.1)
+    return cond()
 
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="codex-task-test-"))
+        self.token = f"codex-task-test-{uuid.uuid4().hex}"
+        self.tmp = Path(tempfile.mkdtemp(prefix=f"{self.token}-"))
         self.repo = self.tmp / "repo"
         (self.repo / "src").mkdir(parents=True)
         (self.repo / "src" / "allowed.py").write_text("def f():\n    return 1\n")
@@ -47,9 +76,32 @@ class Base(unittest.TestCase):
                         TMPDIR="/nonexistent-tmpdir-for-tests", FAKE_CODEX_ARGV=str(self.tmp / "argv.json"))
 
     def tearDown(self):
+        for pid, _ in tagged(self.token):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
         for d in self.state.glob("*/ws"):
-            subprocess.run(["git", "worktree", "remove", "--force", str(d)], cwd=str(self.repo), capture_output=True)
+            subprocess.run(["git", "worktree", "remove", "--force", str(d)], cwd=str(self.repo), capture_output=True,
+                           timeout=60)
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def assert_gone(self, limit=15.0):
+        self.assertTrue(wait_for(lambda: not tagged(self.token), limit), f"left running: {tagged(self.token)}")
+
+    def start_run(self):
+        """A run whose fake Codex sleeps beside a child of its own; returns once that
+        child, the last process the run starts, is up."""
+        env = dict(self.env, FAKE_CODEX_MODE="child-sleep")
+        args = ["run", "--repo", str(self.repo), "--brief", str(self.brief),
+                "--allow", "src/allowed.py", "--timeout", "120"]
+        proc = subprocess.Popen([sys.executable, str(SCRIPT), *args], env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        self.assertTrue(wait_for(lambda: any("time.sleep(120)" in c and c.endswith("/ws")
+                                             for _, c in tagged(self.token))),
+                        "the fake's child never started")
+        return proc
 
     def run_cmd(self, *args, mode="clean", timeout=None):
         env = dict(self.env, FAKE_CODEX_MODE=mode)
@@ -198,7 +250,7 @@ class TestValidation(Base):
         env = dict(self.env, CODEX_TASK_STATE="/tmp/codex-task-x", FAKE_CODEX_MODE="clean")
         r = subprocess.run([sys.executable, str(SCRIPT), "run", "--repo", str(self.repo),
                             "--allow", "src/allowed.py", "--brief", str(self.brief)],
-                           env=env, text=True, capture_output=True)
+                           env=env, text=True, capture_output=True, timeout=60)
         self.assertEqual(r.returncode, 2)
         self.assertIn("/tmp", r.stderr)
 
@@ -206,24 +258,41 @@ class TestValidation(Base):
         env = dict(self.env, TMPDIR=str(self.tmp), FAKE_CODEX_MODE="clean")
         r = subprocess.run([sys.executable, str(SCRIPT), "run", "--repo", str(self.repo),
                             "--allow", "src/allowed.py", "--brief", str(self.brief)],
-                           env=env, text=True, capture_output=True)
+                           env=env, text=True, capture_output=True, timeout=60)
         self.assertEqual(r.returncode, 2)
         self.assertIn("TMPDIR", r.stderr)
 
 
 class TestProcessControl(Base):
     def test_normal_exit_kills_a_surviving_child(self):
-        tag = f"codex-task-orphan-{os.getpid()}-{time.time_ns()}"
-        self.env["FAKE_CODEX_ORPHAN"] = tag
+        self.env["FAKE_CODEX_ORPHAN"] = f"{self.token}-orphan"
         r = self.run_task()
         self.assertEqual(r.returncode, 0, r.stderr)
-        out = subprocess.run(["pgrep", "-f", tag], capture_output=True, text=True)
-        self.assertEqual(out.stdout.strip(), "", "a child outlived the agent's normal exit")
+        self.assert_gone(5)
 
     def test_timeout_kills_process_group(self):
         r = self.run_task(mode="child-sleep", extra=["--timeout", "30"])
-        # --timeout minimum is 30 s; shorten via the fake's own clock instead.
-        self.assertIn(r.returncode, (5,), r.stderr)
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assert_gone(5)
+
+    def assert_signal_stops_everything(self, sig):
+        proc = self.start_run()
+        proc.send_signal(sig)
+        proc.wait(timeout=30)
+        self.assert_gone()
+
+    def test_sigterm_to_the_parent_stops_the_group(self):
+        self.assert_signal_stops_everything(signal.SIGTERM)
+
+    def test_sighup_to_the_parent_stops_the_group(self):
+        self.assert_signal_stops_everything(signal.SIGHUP)
+
+    def test_sigint_to_the_parent_stops_the_group(self):
+        self.assert_signal_stops_everything(signal.SIGINT)
+
+    def test_sigkill_of_the_parent_stops_the_group(self):
+        # Nothing in the parent runs; the watchdog sees its parent gone and stops the group.
+        self.assert_signal_stops_everything(signal.SIGKILL)
 
     def test_fast_timeout(self):
         env = dict(self.env, FAKE_CODEX_MODE="sleep", FAKE_CODEX_SLEEP="120")
@@ -438,27 +507,6 @@ class TestBoundaryHardening(Base):
             self.assertEqual(r.returncode, 2, f"{cmd} accepted '..': {r.stdout}{r.stderr}")
         self.assertTrue(victim.exists(), "state dir contents were removed via '..'")
 
-    def test_codex_is_killed_when_the_parent_is_interrupted(self):
-        # start_new_session=True means a parent kill orphans Codex. The poll
-        # loop must tear the group down on the way out.
-        env = dict(self.env, FAKE_CODEX_MODE="sleep", FAKE_CODEX_SLEEP="60")
-        args = ["run", "--repo", str(self.repo), "--brief", str(self.brief),
-                "--allow", "src/allowed.py", "--timeout", "60"]
-        proc = subprocess.Popen([sys.executable, str(SCRIPT), *args], env=env,
-                                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        deadline = time.time() + 20
-        child = None
-        while time.time() < deadline and child is None:
-            out = subprocess.run(["pgrep", "-f", "fake_codex.py"], capture_output=True, text=True)
-            child = out.stdout.strip() or None
-            if child is None:
-                time.sleep(0.3)
-        self.assertIsNotNone(child, "fake codex never started")
-        proc.terminate()
-        proc.wait(timeout=20)
-        time.sleep(2)
-        out = subprocess.run(["pgrep", "-f", "fake_codex.py"], capture_output=True, text=True)
-        self.assertEqual(out.stdout.strip(), "", "Codex survived the parent")
 
 
 class TestClean(Base):
@@ -469,6 +517,19 @@ class TestClean(Base):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(run_dir.exists())
         self.assertNotIn(str(run_dir), git(["worktree", "list"], self.repo).stdout)
+
+    def test_a_run_cut_off_before_its_report_is_pruned_after_a_day(self):
+        self.assertEqual(self.run_task().returncode, 0)
+        _, run_dir = self.report()
+        (run_dir / "report.json").unlink()  # the shape a killed run leaves
+        self.assertEqual(self.run_cmd("clean", "--all").returncode, 0)
+        self.assertTrue(run_dir.exists(), "a report-less run under a day old may still be in progress")
+        old = time.time() - 2 * 86400
+        os.utime(run_dir, (old, old))
+        r = self.run_cmd("clean", "--all")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(run_dir.exists())
+        self.assertNotIn(run_dir.name, git(["worktree", "list"], self.repo).stdout)
 
 
 class TestDaemonReaper(Base):
@@ -504,6 +565,14 @@ class TestDaemonReaper(Base):
         self.assertFalse((home / "app-server-daemon").exists())
         rpt, _ = self.report()
         self.assertTrue(any("killed a Codex daemon" in w for w in rpt["warnings"]), rpt["warnings"])
+
+    def test_an_interrupted_run_still_kills_the_daemon(self):
+        home, daemon = self.plant(self.daemon_argv())
+        proc = self.start_run()
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=30)
+        self.assertIsNotNone(daemon.poll(), "the daemon outlived the interrupted run")
+        self.assertFalse((home / "app-server-daemon").exists())
 
     def test_clean_kills_a_daemon_left_under_the_home(self):
         home, proc = self.plant(self.daemon_argv())

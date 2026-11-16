@@ -175,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true", help="list the cells and exit")
     p.add_argument("--report", default=None, help="re-print the table from a results file")
     a = p.parse_args(argv)
+    sl.procguard.install_signal_handlers()
     if a.report:
         rows = [json.loads(l) for l in Path(a.report).read_text().splitlines() if l.strip()]
         print(table(rows))

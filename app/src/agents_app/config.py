@@ -105,6 +105,21 @@ def ollama_keep_alive() -> str:
     return _get("OLLAMA_KEEP_ALIVE", "ollama_keep_alive", "5m")
 
 
+TURN_TIMEOUT_MAX = 7200.0
+
+
+def turn_timeout() -> float:
+    """AGENTS_APP_TURN_TIMEOUT, then `turn_timeout`, default 1800: the
+    wall-clock cap in seconds on one two-party agent turn, and the
+    fallback cap on any spawned CLI. Values outside (0, 7200] fall back
+    to the default; two hours is the house ceiling for an agent child."""
+    try:
+        value = float(_get("AGENTS_APP_TURN_TIMEOUT", "turn_timeout", "1800"))
+    except ValueError:
+        return 1800.0
+    return value if 0 < value <= TURN_TIMEOUT_MAX else 1800.0
+
+
 def harness() -> str:
     """AGENTS_APP_HARNESS, then `harness` in config, default claude.
     Which terminal agent harness drives the chat lane (claude | codex |

@@ -4,11 +4,13 @@
 FAKE_CLAUDE_MODEL sets the model it claims to have used; FAKE_CLAUDE_RESULT overrides the result text;
 FAKE_CLAUDE_ARGS, when set, receives the argv it was called with (appended, one JSON line per call).
 FAKE_CLAUDE_MODE picks a failure: "max_turns" (an error result with no JSON answer), "crash" (exit 1, no JSON),
-"hang" (sleep past any timeout). FAKE_CLAUDE_FAIL_FIRST, a counter file path, makes only the first call fail in that mode.
+"hang" (sleep past any timeout), "hang_tree" (start a grandchild tagged with FAKE_CLAUDE_TOKEN in its argv, the way a
+worker's tool call would, then hang). FAKE_CLAUDE_FAIL_FIRST, a counter file path, makes only the first call fail in that mode.
 """
 
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -19,6 +21,7 @@ if os.environ.get("FAKE_CLAUDE_ENV"):
     # the working directory and the seat variable the runner gave this worker, one JSON line per call
     with open(os.environ["FAKE_CLAUDE_ENV"], "a") as f:
         f.write(json.dumps({"cwd": os.getcwd(), "seat": os.environ.get("AGENTS_APP_SEAT"),
+                            "no_background": os.environ.get("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"),
                             "entries": sorted(os.listdir(os.getcwd()))}) + "\n")
 model = os.environ.get("FAKE_CLAUDE_MODEL", "claude-haiku-5-5")
 mode = os.environ.get("FAKE_CLAUDE_MODE", "")
@@ -32,6 +35,11 @@ if counter and mode:
         mode = ""
 if mode == "hang":
     time.sleep(60)
+if mode == "hang_tree":
+    # the worker carries the token too, by exec'ing into the hang, so a test can find and clear every survivor
+    token = os.environ["FAKE_CLAUDE_TOKEN"]
+    subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)", token])
+    os.execv(sys.executable, [sys.executable, "-c", "import time; time.sleep(300)", token])
 if mode == "crash":
     print("fatal: something broke", file=sys.stderr)
     sys.exit(1)

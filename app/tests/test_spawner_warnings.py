@@ -54,7 +54,7 @@ def data_dir(tmp_path, monkeypatch):
 
 
 def fake_spawn(monkeypatch, lines=TURN, stderr=b""):
-    async def spawn(cmd, cwd=None, seat=None):
+    async def spawn(cmd, cwd=None, seat=None, timeout=None):
         return FakeProcess(lines, 0, stderr)
 
     monkeypatch.setattr(chat, "_spawn_claude", spawn)

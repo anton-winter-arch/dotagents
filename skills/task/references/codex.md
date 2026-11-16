@@ -76,8 +76,8 @@ overrides). Nothing is committed.
 task.py clean codex [--run <id> | --all | --older-than-days 7]
 ```
 
-Removes run directories and their worktrees. `run` also prunes runs older than
-seven days.
+Removes run directories and their worktrees.
+`run` also prunes runs older than seven days, and runs cut off before their report once they are a day old.
 
 ## What the boundary is, and is not
 

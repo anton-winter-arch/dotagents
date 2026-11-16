@@ -24,6 +24,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import procguard  # noqa: E402  - the house spawn wrapper, a byte-identical copy beside this file
+
 EXIT_OK = 0
 EXIT_ARGS = 2
 EXIT_REFUSED = 3
@@ -342,19 +345,27 @@ def run_worker(brief: str, model: str, max_turns: int, timeout: int, effort: str
     if autocompact:
         cmd += ["--autocompact", autocompact]
     cmd.append(brief)
-    env = {**os.environ, "AGENTS_APP_SEAT": SEAT}
+    # no background work: a tool call that reaches its timeout would otherwise move to the background, not stop
+    env = {**os.environ, "AGENTS_APP_SEAT": SEAT, "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"}
     (state_dir() / "cwd").mkdir(exist_ok=True, mode=0o700)
     cwd = tempfile.mkdtemp(prefix="worker-", dir=state_dir() / "cwd")
-    try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=cwd)
-    except subprocess.TimeoutExpired as e:
-        tail = (e.stdout.decode("utf-8", "replace") if isinstance(e.stdout, bytes) else (e.stdout or ""))[-500:]
-        return {"died": "timeout", "subtype": f"killed after {timeout} s", "result": tail, "is_error": True, "modelUsage": {}}
-    finally:
-        shutil.rmtree(cwd, ignore_errors=True)
+    # stderr goes to a file, not a pipe: the watchdog shares it, and a pipe whose reader died with this process
+    # would fail the watchdog's own stop message before it could stop the worker
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as errf:
+        try:
+            # its own process group under a watchdog: a timeout, a signal or this process dying stops the worker and
+            # every tool child it started, SIGTERM first so the CLI can clean up its own command trees
+            p = procguard.run(cmd, stdout=subprocess.PIPE, stderr=errf, text=True, timeout=timeout, env=env, cwd=cwd)
+        except subprocess.TimeoutExpired as e:
+            tail = (e.stdout.decode("utf-8", "replace") if isinstance(e.stdout, bytes) else (e.stdout or ""))[-500:]
+            return {"died": "timeout", "subtype": f"killed after {timeout} s", "result": tail, "is_error": True, "modelUsage": {}}
+        finally:
+            shutil.rmtree(cwd, ignore_errors=True)
+        errf.seek(0)
+        stderr = errf.read()
     lines = [ln for ln in p.stdout.splitlines() if ln.strip().startswith("{")]
     if not lines:
-        return {"died": "no_json", "subtype": f"exit {p.returncode}", "result": (p.stdout + "\n" + p.stderr).strip()[-500:],
+        return {"died": "no_json", "subtype": f"exit {p.returncode}", "result": (p.stdout + "\n" + stderr).strip()[-500:],
                 "is_error": True, "modelUsage": {}}
     try:
         return json.loads(lines[-1])
@@ -584,6 +595,7 @@ def main(argv: list[str] | None = None) -> int:
     d = sub.add_parser("doctor")
     d.set_defaults(fn=cmd_doctor)
     a = p.parse_args(argv)
+    procguard.install_signal_handlers()
     try:
         return a.fn(a)
     except TaskError as e:

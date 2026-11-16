@@ -7,7 +7,8 @@ Behavior is selected by FAKE_CODEX_MODE:
   sleep       sleep for FAKE_CODEX_SLEEP seconds (default 60), never finish
   error       emit an error item and exit 1
   noread      never read stdin, then behave like `clean`
-  child-sleep spawn a child that sleeps, then sleep (tests process-group kill)
+  child-sleep spawn a child that sleeps, tagged with the workspace path, then sleep
+              (tests process-group kill)
   commit      like `edit`, then stage and commit inside the worktree
   bigprompt   never read stdin and sleep (tests a stdin write that cannot drain)
 
@@ -59,7 +60,7 @@ def main():
         time.sleep(float(os.environ.get("FAKE_CODEX_SLEEP", "60")))
         return 0
     if mode == "child-sleep":
-        subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)", str(ws)])
         time.sleep(120)
         return 0
     if mode == "error":
@@ -101,9 +102,9 @@ def main():
         (ws / "src" / "other.py").write_text("TOUCHED = True\n")
         (ws / "README.md").write_text("changed\n")
     if mode == "commit":
-        subprocess.run(["git", "add", "-A"], cwd=ws, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=ws, check=True, timeout=60)
         subprocess.run(["git", "-c", "user.email=f@f", "-c", "user.name=f", "commit", "-qm", "sneaky"],
-                       cwd=ws, check=True)
+                       cwd=ws, check=True, timeout=60)
 
     result = {"summary": "fake edit", "files_changed": ["src/allowed.py", "src/new_allowed.py"],
               "notes": "", "blocked_on": ""}

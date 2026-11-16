@@ -7,7 +7,7 @@ Behavior is selected by FAKE_AGY_MODE:
   sleep       sleep for FAKE_AGY_SLEEP seconds (default 60), never finish
   error       print an ERROR envelope and exit 1
   denied      exit 0 with SUCCESS and an empty response, the headless auto-deny shape
-  child-sleep spawn a child that sleeps, then sleep
+  child-sleep spawn a child that sleeps, tagged with the workspace path, then sleep
   commit      like `edit`, then stage and commit inside the worktree
   pathspec    create a file whose name is git pathspec magic
   symlink     swap an allowed file for a symlink out of the repo
@@ -49,7 +49,7 @@ def main():
         time.sleep(float(os.environ.get("FAKE_AGY_SLEEP", "60")))
         return 0
     if mode == "child-sleep":
-        subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)", str(ws)])
         time.sleep(120)
         return 0
     if mode == "error":
@@ -86,8 +86,9 @@ def main():
         (ws / "src" / "other.py").write_text("TOUCHED = True\n")
         (ws / "README.md").write_text("changed\n")
     if mode == "commit":
-        subprocess.run(["git", "add", "-A"], cwd=ws, check=True)
-        subprocess.run(["git", "-c", "user.email=f@f", "-c", "user.name=f", "commit", "-qm", "sneaky"], cwd=ws, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=ws, check=True, timeout=60)
+        subprocess.run(["git", "-c", "user.email=f@f", "-c", "user.name=f", "commit", "-qm", "sneaky"], cwd=ws, check=True,
+                       timeout=60)
     result = {"summary": "fake edit", "files_changed": ["src/allowed.py", "src/new_allowed.py"], "notes": "", "blocked_on": ""}
     envelope("I made the change.\n\n```json\n" + json.dumps(result) + "\n```")
     return 0

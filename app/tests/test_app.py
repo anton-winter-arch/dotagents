@@ -222,15 +222,39 @@ def test_cmd_down_signals_the_whole_process_group(monkeypatch, tmp_path):
     (tmp_path / "pid").write_text("4242\n8765\n")
 
     sent = []
-    alive = iter([True, True, False])  # alive at check, dead after TERM
-    monkeypatch.setattr(app_module, "_alive", lambda pid: next(alive, False))
-    monkeypatch.setattr(os_module, "killpg",
-                        lambda pgid, sig: sent.append(("pg", pgid, sig)))
+    group_live = {4242: True}  # the group empties on SIGTERM
+
+    def killpg(pgid, sig):
+        if not group_live.get(pgid):
+            raise ProcessLookupError
+        sent.append(("pg", pgid, sig))
+        if sig == signal_module.SIGTERM:
+            group_live[pgid] = False
+
+    monkeypatch.setattr(os_module, "killpg", killpg)
+    monkeypatch.setattr(os_module, "kill", lambda *a: pytest.fail(
+        "down must never signal the bare pid"))
     monkeypatch.setattr(app_module, "_release_local_models", lambda: None)
+    monkeypatch.setattr(app_module, "_leader_command",
+                        lambda pid: f"python -m uvicorn {app_module._SERVER_MARK} --factory")
 
     assert app_module.cmd_down() == 0
     assert ("pg", 4242, signal_module.SIGTERM) in sent
     assert not (tmp_path / "pid").exists()
+
+
+def test_cmd_down_signals_nothing_when_ps_fails(monkeypatch, tmp_path):
+    """A failed ownership check must not read as a dead leader: the recorded
+    pid may now lead another program's group."""
+    import os as os_module
+    from agents_app import app as app_module
+    monkeypatch.setenv("AGENTS_APP_HOME", str(tmp_path))
+    (tmp_path / "pid").write_text("4242\n8765\n")
+    monkeypatch.setattr(os_module, "killpg", lambda *a: pytest.fail("signaled without a check"))
+    monkeypatch.setattr(app_module, "_leader_command", lambda pid: None)
+
+    assert app_module.cmd_down() == 1
+    assert (tmp_path / "pid").exists()
 
 
 def test_agents_snapshot_endpoint():

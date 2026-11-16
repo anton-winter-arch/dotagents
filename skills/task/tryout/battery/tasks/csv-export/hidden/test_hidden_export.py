@@ -6,7 +6,7 @@ from app.export import to_csv
 
 
 def main(*args):
-    return subprocess.run([sys.executable, "-m", "app.main", *args], capture_output=True, text=True)
+    return subprocess.run([sys.executable, "-m", "app.main", *args], capture_output=True, text=True, timeout=60)
 
 
 class TestHiddenExport(unittest.TestCase):

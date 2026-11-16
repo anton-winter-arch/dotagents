@@ -524,10 +524,10 @@ def repo_root(start: Path) -> Path:
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            cwd=start, capture_output=True, text=True, check=True,
+            cwd=start, capture_output=True, text=True, check=True, timeout=60,
         ).stdout.strip()
         return Path(out) if out else start
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, subprocess.SubprocessError):
         return start
 
 
@@ -537,8 +537,8 @@ def git_changed_paths(root: Path) -> list[Path]:
                 ["git", "ls-files", "--others", "--exclude-standard"]):
         try:
             out = subprocess.run(cmd, cwd=root, capture_output=True, text=True,
-                                 check=True).stdout
-        except (OSError, subprocess.CalledProcessError):
+                                 check=True, timeout=120).stdout
+        except (OSError, subprocess.SubprocessError):
             continue
         names.update(line.strip() for line in out.splitlines() if line.strip())
     return [root / name for name in sorted(names) if (root / name).is_file()]

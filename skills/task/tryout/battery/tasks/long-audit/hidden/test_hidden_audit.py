@@ -12,7 +12,7 @@ EXPECTED = "15cdeb0574c5a07a86d04f0a60fae66bb25edac61a63b8f88a15c2b02ca9f3d2"
 
 class TestHiddenAudit(unittest.TestCase):
     def test_audit_passes(self):
-        r = subprocess.run([sys.executable, "tools/audit.py"], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, "tools/audit.py"], capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stdout[-500:])
 
     def test_the_three_fixes(self):

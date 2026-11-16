@@ -26,13 +26,15 @@ import random
 import re
 import secrets
 import shutil
-import signal
 import subprocess
 import sys
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import procguard  # noqa: E402  - the byte-identical copy beside this script
 
 SKILL = Path(__file__).resolve().parent.parent
 PROXY = SKILL / "scripts" / "bench_proxy.py"
@@ -44,6 +46,11 @@ LEVEL_RE = re.compile(r"^[a-z]{1,16}$")
 SB_PATH_BAD = re.compile(r'["\\\x00-\x1f]')
 DENY_RE = re.compile(r"Sandbox: (\S+)\((\d+)\) deny\(\d+\) (\S+)\s*(.*)$")
 GRADE_TIMEOUT = 120
+# The harness's watchdog cap sits this far past the run's timeout, so the poll loop, which
+# also watches the wall clock, is what reports a timeout. The proxy's cap also covers its
+# own startup wait and the stop of the harness.
+WATCHDOG_SLACK_S = 30
+PROXY_SLACK_S = 120
 
 
 class BenchError(Exception):
@@ -441,53 +448,42 @@ def sandbox_bin() -> str:
     return path
 
 
-def _raise_interrupt(signum, frame):
-    raise KeyboardInterrupt(f"signal {signum}")
-
-
-def kill_group(proc: subprocess.Popen) -> None:
-    """TERM then KILL the whole process group, waiting on the group rather than the
-    leader, since members outlive a leader that has already exited. macOS answers EPERM
-    for a group whose remaining members have exited but are not yet reaped, which means
-    nothing in it can run any more, so it counts as gone."""
-    for sig, wait in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0)):
-        try:
-            os.killpg(proc.pid, sig)
-        except (ProcessLookupError, PermissionError):
-            return
-        end = time.monotonic() + wait
-        while time.monotonic() < end:
-            proc.poll()
-            try:
-                os.killpg(proc.pid, 0)
-            except (ProcessLookupError, PermissionError):
-                return
-            time.sleep(0.1)
+def stop(proc: subprocess.Popen) -> None:
+    """Stop the process group procguard started for `proc` (TERM, grace, KILL), reap its
+    watchdog and drop it from procguard's registry. A watchdog that exited on its own
+    swept its group first, so only one still running, or killed, needs stopping."""
+    rc = proc.poll()
+    if rc is None or rc < 0:
+        procguard.stop(proc.pid, leader_alive=rc is None)
+    try:
+        proc.wait(timeout=procguard.GRACE)
+    except subprocess.TimeoutExpired:
+        pass
+    procguard.release(proc)
 
 
 def spawn(argv, env, cwd, out_path, err_path, timeout) -> tuple[int, str]:
+    """Run the harness under procguard, whose watchdog stops its whole process group
+    when this process goes away, a SIGKILL included. Every exit from here stops the
+    group, so a child the harness started never outlives the run."""
     with open(out_path, "wb") as out, open(err_path, "wb") as err:
-        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err, cwd=str(cwd),
-                                env=env, start_new_session=True)
-        prior = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
-        for s in prior:
-            signal.signal(s, _raise_interrupt)
+        proc = procguard.popen(argv, timeout=timeout + WATCHDOG_SLACK_S, stdout=out, stderr=err,
+                               cwd=str(cwd), env=env)
         deadline, wall = time.monotonic() + timeout, time.time() + timeout
+        reason = "exited"
         try:
             while proc.poll() is None:
                 if time.monotonic() > deadline or time.time() > wall:
-                    kill_group(proc)
-                    return (proc.returncode if proc.returncode is not None else -9), "timeout"
+                    reason = "timeout"
+                    break
                 time.sleep(0.2)
         finally:
-            for s, h in prior.items():
-                signal.signal(s, h)
-            kill_group(proc)
-    return proc.returncode, "exited"
+            stop(proc)
+    return (proc.returncode if proc.returncode is not None else -9), reason
 
 
 class Proxy:
-    def __init__(self, run: Path, model: str, think, temperature):
+    def __init__(self, run: Path, model: str, think, temperature, timeout: float):
         self.log = run / "proxy.jsonl"
         port_file = run / "proxy.port"
         argv = [sys.executable, str(PROXY), "--tag", model, "--log", str(self.log),
@@ -497,18 +493,22 @@ class Proxy:
         if temperature is not None:
             argv += ["--temperature", str(temperature)]
         self.err = open(run / "proxy.err", "wb")
-        self.proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=self.err,
-                                     start_new_session=True)
-        end = time.time() + 15
-        while not port_file.exists():
-            if self.proc.poll() is not None or time.time() > end:
-                self.close()
-                raise BenchError(f"the proxy did not start; see {run / 'proxy.err'}")
-            time.sleep(0.05)
-        self.port = int(port_file.read_text())
+        self.proc = procguard.popen(argv, timeout=timeout + PROXY_SLACK_S, stdout=subprocess.DEVNULL,
+                                    stderr=self.err)
+        # Any exit from the wait, Ctrl-C included, stops the proxy before it propagates.
+        try:
+            end = time.time() + 15
+            while not port_file.exists():
+                if self.proc.poll() is not None or time.time() > end:
+                    raise BenchError(f"the proxy did not start; see {run / 'proxy.err'}")
+                time.sleep(0.05)
+            self.port = int(port_file.read_text())
+        except BaseException:
+            self.close()
+            raise
 
     def close(self):
-        kill_group(self.proc)
+        stop(self.proc)
         self.err.close()
 
 
@@ -614,8 +614,9 @@ def grade(run: Path, task: dict, base: Path, ws: Path, hv: dict, final_text: str
         if "unittest" in check:
             argv = [sys.executable if a == "python3" else a.replace("{dir}", check["unittest"]) for a in doc["unittest"]]
             try:
-                r = subprocess.run([sandbox_bin(), "-f", str(prof), *argv], cwd=str(gdir), env=env,
-                                   capture_output=True, text=True, timeout=GRADE_TIMEOUT)
+                # The tests run code the agent wrote, so anything they start dies with them.
+                r = procguard.run([sandbox_bin(), "-f", str(prof), *argv], cwd=str(gdir), env=env,
+                                  capture_output=True, text=True, timeout=GRADE_TIMEOUT)
                 ok, tail = r.returncode == 0, (r.stdout + r.stderr)[-1500:]
             except subprocess.TimeoutExpired:
                 ok, tail = False, "timeout"
@@ -682,7 +683,7 @@ def run_one(adapter, binpath, version, model, task, rep, think, temperature, tim
     rec = {"harness": adapter.name, "harness_version": version, "model": model, "task": task["id"], "rep": rep,
            "mode": mode, "think": think, "temperature": temperature, "max_turns": task["max_turns"],
            "started": time.time(), "run_dir": str(run), "tag": tag}
-    proxy = Proxy(run, model, think, temperature)
+    proxy = Proxy(run, model, think, temperature, timeout)
     try:
         prof = run / "sandbox.sb"
         prof.write_text(profile_text(run, ws, task["kind"] == "answer", proxy.port, tag), encoding="utf-8")
@@ -989,6 +990,9 @@ def main(argv=None) -> int:
     c.add_argument("--run")
     c.add_argument("--older-than-days", type=int, default=14)
     a = ap.parse_args(argv)
+    # Covers the whole run, the proxy's startup and the grading included: SIGTERM, SIGHUP
+    # and Ctrl-C stop every group this process owns, then unwind through each finally.
+    procguard.install_signal_handlers()
     try:
         if a.cmd == "run" and not 1 <= a.reps <= 10:
             raise BenchError("--reps takes 1 to 10")

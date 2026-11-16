@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Fake `sandbox-exec` for the test suite: records the profile it was handed to
-FAKE_SANDBOX_RECORD, then runs the wrapped command unconfined. The real profile is
-tested separately against the real sandbox-exec where it exists."""
+FAKE_SANDBOX_RECORD, then execs the wrapped command unconfined, as the real one execs
+it confined. The real profile is tested separately against the real sandbox-exec
+where it exists."""
 
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -16,7 +16,7 @@ def main():
         return 64
     if os.environ.get("FAKE_SANDBOX_RECORD"):
         Path(os.environ["FAKE_SANDBOX_RECORD"]).write_text(Path(argv[1]).read_text())
-    return subprocess.call(argv[2:])
+    os.execvp(argv[2], argv[2:])
 
 
 if __name__ == "__main__":

@@ -135,6 +135,12 @@ argument-driven (`argument-hint`), not model-triggered.
 - **Any command a skill prescribes against a script it does not own carries
   `timeout`.** A hang then fails in seconds and names itself, instead of
   consuming the whole tool budget and looking like a broken tool.
+- **Anything that starts a process or loads a model follows
+  `references/process-lifecycle.md`.** That covers agent CLIs, model runners,
+  shells, servers and background work. Each one spawns through a byte-identical
+  copy of `scripts/procguard.py`, so every child has a time limit, its whole
+  process group stops on every exit path, and models are released.
+  `scripts/check_spawns.py` enforces the rules.
 
 ## Editing existing skills
 
@@ -162,6 +168,7 @@ Run over `skills/*/SKILL.md`, `agents/*.md`, `commands/*.md`:
 6. Path hygiene per the security checklist, where installed (no home-directory paths).
 7. Trigger sanity: does the description enumerate the situations this repo
    actually uses it in?
+8. Spawns: `scripts/check_spawns.py <skill-dir>` exits 0.
 
 ## Tooling
 
@@ -173,6 +180,9 @@ Run over `skills/*/SKILL.md`, `agents/*.md`, `commands/*.md`:
   checks on anything shared outside Claude Code.
 - `scripts/trigger_ab.py` A/B tests a changed description's trigger evals against
   the committed one; the eval convention covers how to run it.
+- `scripts/procguard.py` is the spawn guard every process-starting skill copies.
+  `scripts/check_spawns.py` lints spawns, or with `--inventory` lists every spawn
+  site.
 
 ### Eval convention (house wrapper around the plugin)
 
@@ -281,6 +291,10 @@ owes tests, at every level that practically applies to it:
   anything that regenerates a file, assert idempotence: running twice produces
   identical bytes. Skipping this level is how a suite passes while the command
   itself is broken.
+- **Lifecycle** - a skill that starts processes replays each exit with real
+  processes and fakes tagged with a uuid token: a timeout, the parent SIGKILLed,
+  SIGTERM and SIGHUP. It asserts that no tagged process survives, per
+  `references/process-lifecycle.md`.
 
 Stdlib `unittest`, runnable with a plain `python3 -m unittest discover -s tests`,
 matching the other script-bearing skills. A skill that ships no executable code
@@ -295,7 +309,9 @@ which one it was is part of reporting the work.
 
 A skill is not done when the prose is written. First, `scripts/check_descriptions.py`
 exits 0: a description over the 800-character cap, or a plain scalar containing
-`: `, passes Claude Code silently and breaks stricter harnesses. Then, in order:
+`: `, passes Claude Code silently and breaks stricter harnesses. So does
+`scripts/check_spawns.py <skill-dir>`: a skill that leaks a process passes every
+other check and still overheats the machine. Then, in order:
 
 1. **Slop pass** - run `ai-slop-magic-eraser`'s `scripts/slop_check.py` over
    SKILL.md and every `references/` file; fix the findings or consciously keep

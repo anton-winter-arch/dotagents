@@ -41,6 +41,7 @@ token_usage persists into the conversation file each turn.
 """
 
 import asyncio
+import functools
 import hashlib
 import json
 import os
@@ -52,7 +53,7 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from agents_app import config, conversations, ollama, registry, tools
+from agents_app import config, conversations, ollama, procguard, registry, tools
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -224,7 +225,8 @@ async def stream_chat(message: str, conversation_id: str):
     lane = lane_for(thread_model) if thread_model else pick_lane()
     conversations.append_turn(conversation_id, "user", message)
     if lane == "claude_code":
-        async for frame in _claude_code_lane(message, conversation_id):
+        async for frame in _claude_code_lane(
+                message, conversation_id, turn_timeout=config.turn_timeout()):
             yield frame
         return
     if lane == "ollama":
@@ -283,6 +285,9 @@ def _cli_env(seat: dict | None = None) -> dict[str, str]:
         env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
     if seat:
         env["AGENTS_APP_SEAT"] = str(seat.get("id") or "seat")
+    # A claude child that reaches its cap must stop, not move its commands
+    # to the background where nothing owns them (process-lifecycle standard).
+    env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
     return env
 
 
@@ -901,19 +906,56 @@ def assert_seat_root(seat: dict | None) -> None:
             f"of {_SPAWN_EFFORTS} - refusing to spawn")
 
 
+# The watchdog's own cap trails the lane's turn deadline, so the lane's
+# "turn exceeded" frame normally lands first and the watchdog is the backstop.
+_WATCHDOG_MARGIN = 30.0
+# How long to wait for a stderr pipe after the CLI is stopped. Only a
+# process that left the guarded group (setsid) can still hold it open.
+_STDERR_DRAIN = 2.0
+
+
 async def _spawn_claude(cmd: list[str],
                         cwd: str | Path | None = None,
-                        seat: dict | None = None) -> asyncio.subprocess.Process:
+                        seat: dict | None = None,
+                        timeout: float | None = None) -> asyncio.subprocess.Process:
     """Isolated so tests can replace it with a canned fake process.
     cwd defaults to this repo; a group-chat seat passes its own repo and
-    is marked in the env (see _cli_env)."""
+    is marked in the env (see _cli_env).
+
+    The CLI runs under a procguard watchdog that leads a new process
+    group, so a stop reaches its tool shells, subagents and MCP servers
+    too, and the group stops on its own when this server exits or the
+    cap (timeout, default config.turn_timeout, plus a margin) passes.
+    The returned process is the watchdog; stop it with _stop_cli."""
+    cap = (timeout or config.turn_timeout()) + _WATCHDOG_MARGIN
     return await asyncio.create_subprocess_exec(
-        *cmd, cwd=cwd or _REPO_ROOT, env=_cli_env(seat),
+        *procguard.wrap(cmd, cap), cwd=cwd or _REPO_ROOT, env=_cli_env(seat),
         limit=_STREAM_LIMIT,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
     )
+
+
+async def _stop_cli(proc) -> None:
+    """Stop a spawned CLI's whole process group: SIGTERM, grace, then
+    SIGKILL (procguard.stop), run off the event loop because it blocks
+    for up to the grace window. A watchdog asyncio has already reaped is
+    never signaled by pid, only by group. Safe to call twice."""
+    await asyncio.get_running_loop().run_in_executor(
+        None, functools.partial(procguard.stop, proc.pid,
+                                leader_alive=proc.returncode is None))
+
+
+async def _drain_stderr(read) -> str:
+    """The text of a stderr read, bounded by _STDERR_DRAIN so a process
+    that escaped the stopped group cannot hang the turn on the pipe."""
+    try:
+        data = await asyncio.wait_for(read, _STDERR_DRAIN)
+    except asyncio.TimeoutError:
+        return ""
+    return data.decode(errors="replace")
 
 
 def _vault_rel(value) -> str | None:
@@ -1022,10 +1064,11 @@ async def _claude_code_lane(message: str, conversation_id: str,
     on frames and the persisted turn. None = today's two-party lane.
 
     turn_timeout: wall-clock ceiling on the whole turn (group rounds pass
-    one - a seat stuck waiting on background work must not hang the round;
-    live 2026-08-27: a seat's async subagent did exactly that). On expiry
-    the CLI is killed, the partial reply is kept, and the stream ends with
-    an error frame instead of hanging.
+    SEAT_TURN_TIMEOUT, stream_chat passes config.turn_timeout - a seat
+    stuck waiting on background work must not hang the round; live
+    2026-08-27: a seat's async subagent did exactly that). On expiry the
+    CLI's process group is stopped, the partial reply is kept, and the
+    stream ends with an error frame instead of hanging.
 
     prep (G10): a parallel research turn - the session works, the thread
     doesn't hear it. Nothing is appended, only tool/heartbeat/kb_file
@@ -1114,7 +1157,8 @@ async def _claude_code_lane(message: str, conversation_id: str,
                         "because the workspace is not trusted on this "
                         "device"}))
 
-    proc = await _spawn_claude(cmd, (seat or {}).get("cwd"), seat)
+    proc = await _spawn_claude(cmd, (seat or {}).get("cwd"), seat,
+                               timeout=turn_timeout)
     # Drained concurrently with stdout: stderr is a pipe, and a child
     # that fills it while this loop reads only stdout would stall.
     stderr_read = asyncio.ensure_future(proc.stderr.read())
@@ -1147,18 +1191,20 @@ async def _claude_code_lane(message: str, conversation_id: str,
 
     # The UI parents every later event under the current iteration block,
     # so one exists before anything else (including an immediate error).
-    # Prep turns render no transcript blocks, so they open none.
-    if not prep:
-        yield sse("iteration_start", iter_start(0))
+    # Prep turns render no transcript blocks, so they open none. The frame
+    # goes out inside the try: a client that disconnects on this first
+    # yield still reaches the finally that stops the CLI.
     deadline = (time.monotonic() + turn_timeout) if turn_timeout else None
     timed_out = False
     try:
+        if not prep:
+            yield sse("iteration_start", iter_start(0))
         from agents_app import group as group_module
         while True:
             # ESC-style interrupt: poll the cancel flag between line
             # reads so a kill lands mid-generation, two-party included
             if conversation_id in group_module._cancel_requested:
-                proc.kill()
+                await _stop_cli(proc)
                 if seat is None:
                     # two-party turns own the flag (no group loop to
                     # clear it); seat turns leave it for the round loop
@@ -1171,9 +1217,10 @@ async def _claude_code_lane(message: str, conversation_id: str,
                 break
             if deadline is not None and time.monotonic() >= deadline:
                 timed_out = True
-                proc.kill()
-                yield fail(f"seat turn exceeded {int(turn_timeout)}s "
-                           "and was ended; any partial reply is kept")
+                await _stop_cli(proc)
+                yield fail(f"{'seat ' if seat else ''}turn exceeded "
+                           f"{int(turn_timeout)}s and was ended; any "
+                           "partial reply is kept")
                 break
             wait = 0.5 if deadline is None else \
                 min(0.5, max(deadline - time.monotonic(), 0.001))
@@ -1342,7 +1389,7 @@ async def _claude_code_lane(message: str, conversation_id: str,
         # Read on every turn, not only a failed one: the warning that a
         # workspace's whole allowlist was ignored arrives here on turns
         # that otherwise look healthy.
-        stderr_text = (await stderr_read).decode(errors="replace")
+        stderr_text = await _drain_stderr(stderr_read)
         warning_lines, warnings_truncated = stderr_warnings(stderr_text)
         if warning_lines and not prep:
             yield sse("warnings", attr({"seat": seat["id"] if seat else "main",
@@ -1360,10 +1407,7 @@ async def _claude_code_lane(message: str, conversation_id: str,
         # Never orphan the CLI: a cancelled stream (client disconnect,
         # generator close) must not leave a headless claude running.
         if proc.returncode is None:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
+            await _stop_cli(proc)
         if reply_parts and not prep:
             conversations.append_turn(conversation_id, "assistant",
                                       "".join(reply_parts),
@@ -1711,7 +1755,8 @@ async def _peer_harness_lane(message: str, conversation_id: str, seat: dict,
         yield sse("done", {})
         return
 
-    proc = await _spawn_claude(cmd, seat.get("cwd"), seat)
+    proc = await _spawn_claude(cmd, seat.get("cwd"), seat,
+                               timeout=turn_timeout)
     actor = seat["id"] + (":prep" if prep else "")
     registry.begin(conversation_id, actor,
                    seat.get("name") or seat["id"],
@@ -1724,10 +1769,12 @@ async def _peer_harness_lane(message: str, conversation_id: str, seat: dict,
     deadline = (time.monotonic() + turn_timeout) if turn_timeout else None
     timed_out = False
     interrupted = False
-    if not prep:
-        yield sse("iteration_start",
-                  attr({"iteration": 0, "speaker_name": seat.get("name")}))
     try:
+        # inside the try, so a disconnect on this first yield still
+        # reaches the finally that stops the CLI
+        if not prep:
+            yield sse("iteration_start",
+                      attr({"iteration": 0, "speaker_name": seat.get("name")}))
         from agents_app import group as group_module
         while True:
             # ESC-style interrupt: the cancel flag is checked between
@@ -1736,7 +1783,7 @@ async def _peer_harness_lane(message: str, conversation_id: str, seat: dict,
             # wait_for cancellations)
             if conversation_id in group_module._cancel_requested:
                 interrupted = True
-                proc.kill()
+                await _stop_cli(proc)
                 if not prep:
                     yield sse("heartbeat",
                               attr({"phase": "interrupted", "iteration": 0,
@@ -1745,7 +1792,7 @@ async def _peer_harness_lane(message: str, conversation_id: str, seat: dict,
                 break
             if deadline is not None and time.monotonic() >= deadline:
                 timed_out = True
-                proc.kill()
+                await _stop_cli(proc)
                 yield fail(f"seat turn exceeded {int(turn_timeout)}s "
                            "and was ended; any partial reply is kept")
                 break
@@ -1785,7 +1832,7 @@ async def _peer_harness_lane(message: str, conversation_id: str, seat: dict,
                     finished, ok, final_text = True, op[1], op[2]
         await proc.wait()
         if not timed_out and not interrupted and not (finished and ok):
-            stderr_tail = (await proc.stderr.read()).decode().strip()[-500:]
+            stderr_tail = (await _drain_stderr(proc.stderr.read())).strip()[-500:]
             yield fail(stderr_tail or
                        f"{seat['harness']} exited without a result")
     except Exception as exc:  # failure rule: error then done, never silent
@@ -1793,10 +1840,7 @@ async def _peer_harness_lane(message: str, conversation_id: str, seat: dict,
     finally:
         registry.end(conversation_id, actor)
         if proc.returncode is None:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
+            await _stop_cli(proc)
         # the result's final text wins for persistence: cursor turns
         # stream working narration as interim messages, and only the
         # final message belongs in the thread other seats read

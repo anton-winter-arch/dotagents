@@ -11,6 +11,7 @@ tests/test_permission_matrix.py::test_seat_root_is_re_asserted_at_spawn,
 which pins both the permit and the refusal.
 """
 
+import asyncio
 import json
 import tempfile
 from pathlib import Path
@@ -35,6 +36,23 @@ def isolate_station_state(tmp_path, monkeypatch):
     settings.write_text(json.dumps({"permissions": {"allow": [], "deny": []}, "hooks": {}}))
     monkeypatch.setattr(chat, "_global_settings_path", lambda: settings)
     monkeypatch.setenv("AGENTS_APP_HOME", str(tmp_path / "app-home"))
+
+
+_real_stop_cli = chat._stop_cli
+
+
+@pytest.fixture(autouse=True)
+def stop_fakes_by_kill(monkeypatch):
+    """The lanes stop a CLI with chat._stop_cli, which signals the real
+    process group by pid. Canned fake processes have no pid or group, so
+    a stop reaches them through their own kill() instead. Real processes
+    (the lifecycle tests) still go through the real procguard stop."""
+    async def stop(proc):
+        if isinstance(proc, asyncio.subprocess.Process):
+            await _real_stop_cli(proc)
+        elif hasattr(proc, "kill"):
+            proc.kill()
+    monkeypatch.setattr(chat, "_stop_cli", stop)
 
 
 def pytest_configure(config):

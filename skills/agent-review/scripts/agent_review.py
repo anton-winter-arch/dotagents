@@ -50,6 +50,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -59,6 +60,10 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parent.parent
 SKILLS_ROOT = SKILL_DIR.parent
 REFS = SKILL_DIR / "references"
+# procguard sits beside this file; the conference skill and the tests load this module by path.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+import procguard  # noqa: E402
 
 # Every harness reviews the same way: one headless call, one turn, the clean staged files
 # inlined into the prompt with line numbers, no tool grant, an empty working directory. The
@@ -305,10 +310,14 @@ def fake_bin() -> str | None:
     return str(resolved)
 
 
-def child_env() -> dict[str, str]:
+def child_env(claude: bool = False) -> dict[str, str]:
     """What a CLI is spawned with: ENV_ALLOW and nothing else, so a token the session
-    carries never reaches a vendor's CLI. Test hooks pass only under the opt-in."""
+    carries never reaches a vendor's CLI. A `claude -p` child also runs without background
+    tasks, so a command of its that reaches its own timeout stops instead of moving to the
+    background. Test hooks pass only under the opt-in."""
     env = {k: os.environ[k] for k in ENV_ALLOW if k in os.environ}
+    if claude:
+        env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
     if test_mode():
         env.update({k: v for k, v in os.environ.items() if k.startswith(("AGENT_REVIEW_", "FAKE_"))})
     return env
@@ -823,13 +832,30 @@ def _failed(error: str) -> dict:
     return {"text": None, "usage": None, "model_reported": None, "exit_code": EXIT_FAILED, "error": error[:500]}
 
 
-def _spawn(argv: list[str], stdin_text: str | None, timeout: int, cwd: Path, work: Path, name: str) -> subprocess.CompletedProcess | dict:
-    """One CLI call, stdout kept beside the run. Returns the process, or a failure record."""
+# Set by stop_children(): a call that has not started its CLI yet does not start it.
+STOPPING = threading.Event()
+
+
+def stop_children() -> None:
+    """Stop every CLI this process runs, and start no more. A caller running members on
+    threads calls this when it is interrupted, so its exit never waits on a member."""
+    STOPPING.set()
+    procguard.stop_all(close=True)
+
+
+def _spawn(argv: list[str], stdin_text: str | None, timeout: int, cwd: Path, work: Path, name: str,
+           env: dict[str, str] | None = None) -> subprocess.CompletedProcess | dict:
+    """One CLI call under procguard (its own process group, TERM then KILL to the whole group at
+    the timeout), stdout kept beside the run. Returns the process, or a failure record."""
+    if STOPPING.is_set():
+        return _failed("stopped before the call started")
     try:
-        proc = subprocess.run(argv, input=stdin_text, capture_output=True, text=True, timeout=timeout,
-                              cwd=str(cwd), env=child_env())
+        proc = procguard.run(argv, input=stdin_text, capture_output=True, text=True, timeout=timeout,
+                             cwd=str(cwd), env=env if env is not None else child_env())
     except subprocess.TimeoutExpired:
         return _failed(f"timeout after {timeout} s")
+    except RuntimeError:            # procguard closed by stop_children() after the check above
+        return _failed("stopped before the call started")
     (work / f"{name}-stdout.txt").write_text(proc.stdout, encoding="utf-8")
     if proc.stderr.strip():
         (work / f"{name}-stderr.txt").write_text(proc.stderr, encoding="utf-8")
@@ -845,7 +871,8 @@ def _run_claude(cfg: dict, brief_path: Path, stage: Path, timeout: int, work: Pa
         argv += ["--fallback-model", CLAUDE_FALLBACK_MODEL]
     if cfg["effort"]:
         argv += ["--effort", cfg["effort"]]
-    proc = _spawn(argv, prompt, timeout, empty_cwd(work, cfg), work, f"claude-{slug(cfg.get('member') or 'claude')}")
+    proc = _spawn(argv, prompt, timeout, empty_cwd(work, cfg), work, f"claude-{slug(cfg.get('member') or 'claude')}",
+                  env=child_env(claude=True))
     if isinstance(proc, dict):
         return proc
     try:
@@ -972,8 +999,8 @@ def agy_models() -> list[str] | None:
         try:
             # an empty working directory, so no project config where the caller stands can shape what the CLI lists
             with tempfile.TemporaryDirectory(prefix="agy-models-") as cwd:
-                proc = subprocess.run([cli_path("agy"), "models"], capture_output=True, text=True, timeout=60,
-                                      env=child_env(), cwd=cwd, stdin=subprocess.DEVNULL)
+                proc = procguard.run([cli_path("agy"), "models"], capture_output=True, text=True, timeout=60,
+                                     env=child_env(), cwd=cwd)
             _AGY_MODELS = parse_agy_models(proc.stdout) if proc.returncode == 0 else None
         except (OSError, subprocess.SubprocessError, TypeError):
             _AGY_MODELS = None
@@ -1215,8 +1242,8 @@ def stage_files(paths: list[Path], rels: list[str], out: Path, sanitize: bool = 
         for p, rel in zip(paths, rels):
             dst = stage / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
-            proc = subprocess.run([sys.executable, str(SANITIZE_SCRIPT), "copy", str(p), "--out", str(dst)],
-                                  capture_output=True, text=True, timeout=600, env=env)
+            proc = procguard.run([sys.executable, str(SANITIZE_SCRIPT), "copy", str(p), "--out", str(dst)],
+                                 capture_output=True, text=True, timeout=600, env=env)
             report_path = Path(str(dst) + ".sanitize-report.json")
             if proc.returncode != 0:
                 raise ReviewError(f"sanitize refused {rel}: {(proc.stderr or proc.stdout).strip()[-300:]}")
@@ -1280,6 +1307,7 @@ def run_harness(cfg: dict, brief_path: Path, stage: Path, timeout: int, work: Pa
 
 
 def _run_fake(cfg: dict, brief_path: Path, stage: Path) -> dict:
+    # procguard: exempt - the test-mode fake member, a short script under a 60 s cap
     proc = subprocess.run([fake_bin(), cfg.get("member") or cfg["harness"], str(brief_path), str(stage),
                            cfg["model"], cfg["effort"] or ""],
                           capture_output=True, text=True, timeout=60, env=child_env())
@@ -1412,6 +1440,7 @@ def main(argv: list[str] | None = None) -> int:
     h = sub.add_parser("harnesses", help="print the harness table")
     h.set_defaults(fn=cmd_harnesses)
     a = ap.parse_args(argv)
+    procguard.install_signal_handlers()
     try:
         return a.fn(a)
     except ReviewError as e:

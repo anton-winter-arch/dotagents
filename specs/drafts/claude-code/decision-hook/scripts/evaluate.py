@@ -202,26 +202,30 @@ def eval_risk(a: argparse.Namespace) -> int:
     client = decide.Client(cfg["base_url"], time.monotonic() + 3600)
     latencies = []
     asked = 0
-    for r in rows:
-        hit = cache.get(r["id"])
-        if hit and hit.get("probs"):
-            r["probs"] = hit["probs"]
-            continue
-        t = time.monotonic()
-        try:
-            reply = client.call("POST", "/v1/systemone", {"model": a.model, "state": r.get("state"), "keep_alive": "10m",
-                                                          "questions": {question["name"]: question["question"]}})
-            r["probs"] = decide.parse_probabilities(reply, question["name"])
-        except decide.HookError as e:
-            print(f"warn {r['id']}: {e}", file=sys.stderr)
-            r["probs"] = None
-            continue
-        ms = round((time.monotonic() - t) * 1000)
-        latencies.append(ms)
-        asked += 1
-        append_cache(cache_path(a.model + ("-" + Path(a.labels).stem if a.labels else "")), {"id": r["id"], "probs": r["probs"], "ms": ms})
-    if asked:
-        decide.unload(client, a.model)
+    called = False   # any call, failed ones included, may have loaded the model
+    try:
+        for r in rows:
+            hit = cache.get(r["id"])
+            if hit and hit.get("probs"):
+                r["probs"] = hit["probs"]
+                continue
+            t = time.monotonic()
+            called = True
+            try:
+                reply = client.call("POST", "/v1/systemone", {"model": a.model, "state": r.get("state"), "keep_alive": "10m",
+                                                              "questions": {question["name"]: question["question"]}})
+                r["probs"] = decide.parse_probabilities(reply, question["name"])
+            except decide.HookError as e:
+                print(f"warn {r['id']}: {e}", file=sys.stderr)
+                r["probs"] = None
+                continue
+            ms = round((time.monotonic() - t) * 1000)
+            latencies.append(ms)
+            asked += 1
+            append_cache(cache_path(a.model + ("-" + Path(a.labels).stem if a.labels else "")), {"id": r["id"], "probs": r["probs"], "ms": ms})
+    finally:
+        if called:
+            decide.unload(client, a.model)
     # rows the model never answered stay: a failed call is a miss, and the report counts them
     tuning = [r for r in rows if r.get("split") == "tuning"]
     heldout = [r for r in rows if r.get("split") == "heldout"]
@@ -344,16 +348,20 @@ def eval_routing(a: argparse.Namespace) -> int:
         sys.exit(f"no routing index at {decide.index_path()}; run build_index.py")
     client = decide.Client(cfg["base_url"], time.monotonic() + 3600)
     cache = load_cache(cache_path("embed-" + str(index.get("model"))))
-    for r in rows:
-        hit = cache.get(r["id"])
-        if hit and hit.get("vector"):
-            r["vector"] = hit["vector"]
-            continue
-        reply = client.call("POST", "/api/embed", {"model": index.get("model"), "input": r["prompt"], "keep_alive": "5m"})
-        r["vector"] = reply["embeddings"][0]
-        append_cache(cache_path("embed-" + str(index.get("model"))), {"id": r["id"], "vector": r["vector"]})
-    if any("vector" in r and r["id"] not in cache for r in rows):
-        decide.unload(client, str(index.get("model")))
+    called = False   # any call, a failed one included, may have loaded the model
+    try:
+        for r in rows:
+            hit = cache.get(r["id"])
+            if hit and hit.get("vector"):
+                r["vector"] = hit["vector"]
+                continue
+            called = True
+            reply = client.call("POST", "/api/embed", {"model": index.get("model"), "input": r["prompt"], "keep_alive": "5m"})
+            r["vector"] = reply["embeddings"][0]
+            append_cache(cache_path("embed-" + str(index.get("model"))), {"id": r["id"], "vector": r["vector"]})
+    finally:
+        if called:
+            decide.unload(client, str(index.get("model")))
 
     def at(threshold):
         idx = dict(index, threshold=threshold)

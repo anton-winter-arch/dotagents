@@ -37,6 +37,7 @@ recorded and the run goes on with the rest (exit 3).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as _dt
 import json
 import os
@@ -112,6 +113,21 @@ def read_template(name: str) -> str:
     return (REFS / name).read_text(encoding="utf-8")
 
 
+@contextlib.contextmanager
+def member_pool(n: int):
+    """A thread pool for member calls. On any exception while collecting, Ctrl-C and SIGTERM
+    included, every member's process group is stopped, no new call starts, and the pool is
+    left without waiting on its workers, so an interrupt never waits out a member's timeout."""
+    pool = ThreadPoolExecutor(max_workers=max(1, n))
+    try:
+        yield pool
+    except BaseException:
+        ar.stop_children()
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    pool.shutdown()
+
+
 # ---------------------------------------------------------------- roster ---
 
 def parse_pairs(items: list[str] | None, what: str) -> tuple[dict[str, str], str | None]:
@@ -185,7 +201,7 @@ def ready_check(cfgs: dict, chair_cfg: dict | None) -> dict[str, dict]:
         for seat in calls:
             briefs[seat] = work / f"ready-{seat}.md"
             briefs[seat].write_text(READY_BRIEF, encoding="utf-8")
-        with ThreadPoolExecutor(max_workers=max(1, len(calls))) as pool:
+        with member_pool(len(calls)) as pool:
             futures = {s: pool.submit(ar.run_harness, cfg, briefs[s], stage, READY_TIMEOUT, work) for s, cfg in calls.items()}
             for seat, fut in futures.items():
                 res = fut.result()
@@ -279,7 +295,7 @@ def user_result(text: str | None, cfg: dict, why: str | None = None) -> dict:
 def _fan_out(cfgs: dict, briefs: dict[str, Path], stage: Path, timeout: int, work: Path) -> dict:
     results = {}
     models = {n: c for n, c in cfgs.items() if not is_user(cfgs, n)}
-    with ThreadPoolExecutor(max_workers=max(1, len(models))) as pool:
+    with member_pool(len(models)) as pool:
         futures = {name: pool.submit(ar.run_harness, cfg, briefs[name], stage, timeout, work) for name, cfg in models.items()}
         for name, fut in futures.items():
             results[name] = fut.result()
@@ -362,7 +378,7 @@ def stage2(question: str, rels: list[str], cfgs: dict, answers: dict, stage: Pat
     models = {m: c for m, c in reviewers.items() if not is_user(cfgs, m)}
     results: dict = {}
     work = out / "stage2"
-    with ThreadPoolExecutor(max_workers=max(1, len(models))) as pool:
+    with member_pool(len(models)) as pool:
         pending = {pool.submit(ar.run_harness, cfg, briefs[m], stage, timeout, work): (m, "review") for m, cfg in models.items()}
         while pending:
             done = next(as_completed(pending))
@@ -686,7 +702,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     ctxs = {topic: topic_ctx(topic, q) for topic, q in questions.items()}
     if not multi:
         return _continue(next(iter(ctxs.values())), answers=None)
-    with ThreadPoolExecutor(max_workers=len(ctxs)) as pool:
+    with member_pool(len(ctxs)) as pool:
         codes = dict(zip(ctxs, pool.map(_run_topic, ctxs.values())))
     (out / "run.json").write_text(json.dumps({
         "run_id": run_id, "files": rels, "members": members,
@@ -988,6 +1004,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--older-than-days", default=14)
     c.set_defaults(fn=cmd_clean)
     a = ap.parse_args(argv)
+    ar.procguard.install_signal_handlers()
     try:
         return a.fn(a)
     except ConferenceError as e:

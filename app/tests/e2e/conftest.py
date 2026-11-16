@@ -9,7 +9,11 @@ from pathlib import Path
 
 import pytest
 
+from agents_app import procguard
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+# Wall-clock cap on one module's server; the suite itself runs under less.
+_SERVER_CAP = 1800.0
 
 
 def _free_port() -> int:
@@ -44,10 +48,13 @@ def running_server(tmp_path_factory, extra_env=None):
            "AGENTS_APP_DATA": str(data_dir),
            "OLLAMA_URL": "http://127.0.0.1:9"}
     env.update(extra_env or {})
-    proc = subprocess.Popen(
+    # Under a procguard watchdog in its own process group: the stop below
+    # is TERM, grace, then KILL to the whole group, and the group also
+    # stops at the cap or when this test process dies.
+    proc = procguard.popen(
         [sys.executable, "-m", "uvicorn", "agents_app.app:create_app",
          "--factory", "--host", "127.0.0.1", "--port", str(port)],
-        cwd=_REPO_ROOT, env=env,
+        timeout=_SERVER_CAP, cwd=_REPO_ROOT, env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
     base = f"http://127.0.0.1:{port}"
@@ -66,8 +73,9 @@ def running_server(tmp_path_factory, extra_env=None):
             pytest.fail("server never opened its port")
         yield base
     finally:
-        proc.terminate()
-        proc.wait(timeout=5)
+        procguard.stop(proc.pid, leader_alive=proc.poll() is None)
+        proc.wait(timeout=procguard.GRACE)
+        proc.stdout.close()
 
 
 @pytest.fixture(scope="module")

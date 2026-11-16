@@ -28,12 +28,20 @@ Environment overrides (tests):
 """
 
 import datetime
+import importlib.util
 import json
 import os
-import signal
 import subprocess
 import sys
 from pathlib import Path
+
+
+def sibling(name: str):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + ".py"))
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 HOME = Path.home()
 STAMP = Path(os.environ.get("HARNESS_VERSION_STAMP") or HOME / ".local/state/harness-bench/version-check.stamp")
@@ -73,21 +81,12 @@ def main() -> int:
     if not SCRIPT.is_file():
         return 0
     try:
-        # Its own process group, so a slow `brew info` or `--version` grandchild is killed
-        # with it on timeout rather than outliving the hook.
-        proc = subprocess.Popen([sys.executable, str(SCRIPT), "versions", "--quiet"], stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, text=True,
-                                start_new_session=True)
-    except OSError:
-        return 0
-    try:
-        out = proc.communicate(timeout=timeout_s())[0].strip()
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
-        proc.wait()
+        # Under procguard: a slow `brew info` or `--version` grandchild stops with it at the
+        # timeout, and the whole group stops if the harness kills this hook first.
+        out = sibling("procguard").run([sys.executable, str(SCRIPT), "versions", "--quiet"],
+                                       capture_output=True, text=True, timeout=timeout_s(),
+                                       grace=0.5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
         return 0
     if not out:
         return 0

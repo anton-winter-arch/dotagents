@@ -423,6 +423,8 @@ def cmd_up(open_browser: bool = True) -> int:
     home = config.app_home()
     home.mkdir(parents=True, exist_ok=True)
     log = (home / "server.log").open("a")
+    # procguard: exempt - the registered server daemon: its pid file is written below and
+    # `agents down` stops its whole group, live leader or not
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "agents_app.app:create_app",
          "--factory", "--host", host, "--port", str(port)],
@@ -442,18 +444,40 @@ def cmd_up(open_browser: bool = True) -> int:
     return 0
 
 
-def _signal_server(pid: int, sig: int) -> None:
-    """Signal the server's whole process GROUP: `up` starts it with
-    start_new_session, so pgid == pid and every CLI the lanes spawned
-    (claude, cursor-agent, copilot) is in the group - `down` must never
-    leave a headless agent running (user requirement 2026-08-27)."""
+def _group_alive(pgid: int) -> bool:
+    """True while any process is in group pgid. `up` starts the server
+    with start_new_session, so pgid == its pid. A group id is never reused
+    while a member lives, so the probe stays valid after the leader died;
+    a bare pid may already belong to someone else. EPERM (macOS's answer
+    for a group of unreaped zombies, or another user's group) is gone."""
     try:
-        os.killpg(pid, sig)
+        os.killpg(pgid, 0)
     except (ProcessLookupError, PermissionError):
-        try:
-            os.kill(pid, sig)
-        except ProcessLookupError:
-            pass
+        return False
+    return True
+
+
+_SERVER_MARK = "agents_app.app:create_app"
+
+
+def _leader_command(pid: int) -> str | None:
+    """The command line of process `pid`, '' when it is gone, None when ps failed."""
+    try:
+        return subprocess.run(["/bin/ps", "-o", "command=", "-p", str(pid)], capture_output=True,
+                              text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _signal_server(pgid: int, sig: int) -> None:
+    """Signal the server's whole process GROUP, never the bare pid. Each
+    agent CLI the lanes spawned runs in its own group under a procguard
+    watchdog that stops it when the server goes away, so `down` never
+    leaves a headless agent running (user requirement 2026-08-27)."""
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
 
 
 def cmd_down() -> int:
@@ -462,14 +486,24 @@ def cmd_down() -> int:
         print("not running")
         return 0
     pid, _port = recorded
-    if _alive(pid):
+    # A pid file can outlive its server (a reboot, a crash that took the group
+    # down), and the number can then lead someone else's process group. A live
+    # leader must still be this app's server. A dead leader with live members
+    # is ours: a group id is never reused while any member of it lives.
+    leader = _leader_command(pid)
+    if leader is None:
+        print(f"could not check process {pid}, so nothing was signaled; run `agents down` again")
+        return 1
+    if leader and _SERVER_MARK not in leader:
+        print("not running (the recorded pid now belongs to another program; stale pid file removed)")
+    elif _group_alive(pid):
         _signal_server(pid, signal.SIGTERM)
         deadline = time.monotonic() + 5.0
-        while _alive(pid) and time.monotonic() < deadline:
+        while _group_alive(pid) and time.monotonic() < deadline:
             time.sleep(0.1)
-        if _alive(pid):
+        if _group_alive(pid):
             _signal_server(pid, signal.SIGKILL)
-        print(f"stopped (pid {pid} and its process group)")
+        print(f"stopped (process group {pid})")
     else:
         print("not running (stale pid file removed)")
     _pid_file().unlink(missing_ok=True)
@@ -509,7 +543,12 @@ def cmd_build() -> int:
     if not vault.is_dir():
         print(f"agents build: vault path does not exist: {vault}", file=sys.stderr)
         return 1
-    result = subprocess.run([sys.executable, str(_ENGINE), "ingest", str(vault)])
+    try:
+        # A large vault ingests in minutes; the cap only stops a hung one.
+        result = subprocess.run([sys.executable, str(_ENGINE), "ingest", str(vault)], timeout=3600)
+    except subprocess.TimeoutExpired:
+        print("agents build: the ingest ran past an hour and was stopped", file=sys.stderr)
+        return 1
     if result.returncode == 0:
         missing = kb.parity(vault)
         if missing:
@@ -580,6 +619,7 @@ _CONFIG_EFFECTIVE = {
     "claude_effort": config.claude_effort,
     "ollama_url": config.ollama_url,
     "ollama_keep_alive": config.ollama_keep_alive,
+    "turn_timeout": lambda: f"{config.turn_timeout():g}",
     # readable, never settable: see cmd_config_roots
     "seat_roots": lambda: ", ".join(str(r) for r in config.seat_roots()),
     "gitignored": lambda: config.load_file().get("gitignored", ""),
@@ -620,6 +660,7 @@ def cmd_config_roots(print_only: bool = False) -> int:
         config.save_file(config.load_file())
     print(f"\nOpening in {editor}...")
     try:
+        # procguard: exempt - the user's own interactive editor, open until they close it
         subprocess.run([editor, str(config.config_file())])
     except (OSError, subprocess.SubprocessError) as err:
         print(f"could not launch {editor}: {err}", file=sys.stderr)
@@ -696,6 +737,15 @@ def cmd_config_set(key: str | None, value: str | None) -> int:
         print("agents config: claude_effort must be one of "
               + " | ".join(_EFFORTS), file=sys.stderr)
         return 1
+    if key == "turn_timeout":
+        try:
+            seconds = float(value)
+        except ValueError:
+            seconds = 0.0
+        if not 0 < seconds <= config.TURN_TIMEOUT_MAX:
+            print("agents config: turn_timeout must be seconds in "
+                  f"(0, {config.TURN_TIMEOUT_MAX:g}]", file=sys.stderr)
+            return 1
     if key == "ollama_url" and not _loopback_url(value):
         print("agents config: ollama_url must be loopback "
               "(localhost / 127.0.0.1 / ::1) - the app never talks to a "

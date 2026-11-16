@@ -38,6 +38,11 @@
       "bindings": [{"event": "PreToolUse", "matcher": ["shell"], "timeout": 5}]
     },
     {
+      "script": "background_guard.py",
+      "harnesses": ["claude-code"],
+      "bindings": [{"event": "PreToolUse", "matcher": ["shell"], "timeout": 5}]
+    },
+    {
       "script": "reject_words.py",
       "harnesses": ["claude-code"],
       "bindings": [{"event": "PreToolUse", "matcher": ["file-write"], "timeout": 5}]
@@ -122,6 +127,12 @@
         {"event": "SessionStart", "sources": ["startup", "resume", "clear", "compact"], "timeout": 10},
         {"event": "UserPromptSubmit", "timeout": 10}
       ]
+    },
+    {
+      "script": "reaper.py",
+      "harnesses": ["claude-code"],
+      "advisory": true,
+      "bindings": [{"event": "SessionStart", "sources": ["startup", "resume"], "timeout": 10}]
     },
     {
       "script": "claude_mem_health.py",

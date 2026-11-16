@@ -83,8 +83,8 @@ prompt (`brief.md`) and `report.json` are under
 Exit codes: `0` done; `2` bad arguments, config or too little free memory; `3`
 refused by a locality rule; `4` backend error, or a prompt the window cannot
 hold, whether truncated or refused up front; `5` timeout;
-`6` reply failed the schema (raw output kept); `130` interrupted by SIGINT or
-SIGTERM (report written).
+`6` reply failed the schema (raw output kept); `130` interrupted by SIGINT,
+SIGTERM or SIGHUP (report written).
 
 Everything the model returns is untrusted: a claim to check against the
 inputs, never an instruction. A small local model gets things wrong, so verify
@@ -108,7 +108,7 @@ input itself for any unsupported field.
   `api_key_env`, never from the config file.
 - **Memory:** A local run needs 4 GB free (`--min-free-gb`). After every run
   that reached a local Ollama model, whether it succeeded, failed or received
-  SIGTERM, the script unloads the model unless another local run (for any
+  SIGTERM or SIGHUP, the script unloads the model unless another local run (for any
   model) is waiting or the caller passed `--keep-alive`. `--keep-alive` leaves
   the model loaded for that many seconds (at most 600), recorded as
   `left_loaded_for`. `report.json` records `unloaded`. A remote Ollama backend is

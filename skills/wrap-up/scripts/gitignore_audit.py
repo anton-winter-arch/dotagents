@@ -117,7 +117,7 @@ EXEMPT_BASENAMES = frozenset({
 
 
 def git(*args: str, cwd: Path | None = None, ok: tuple[int, ...] = (0,)) -> str:
-    proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=120)
     if proc.returncode not in ok:
         raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
     return proc.stdout
@@ -216,7 +216,7 @@ def ignored_subset(paths: list[str]) -> set[str]:
         return set()
     proc = subprocess.run(
         ["git", "check-ignore", "--no-index", "-z", "--stdin"],
-        input="\0".join(paths) + "\0", capture_output=True, text=True,
+        input="\0".join(paths) + "\0", capture_output=True, text=True, timeout=120,
     )
     if proc.returncode not in (0, 1):  # 1 means "none ignored"
         raise RuntimeError(f"git check-ignore failed: {proc.stderr.strip()}")

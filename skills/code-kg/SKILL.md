@@ -8,7 +8,9 @@ description: Builds and queries a SQLite+FTS5 knowledge graph over any codebase 
 X-ray a codebase once, then answer from the graph instead of grepping. One
 stdlib engine: EXECUTE `scripts/code_kg.py` via Bash for every operation -
 never reimplement its parsing inline. Storage is `<repo>/.code-kg/`
-(config.json + a rebuildable, gitignored db). Every read command re-ingests
+(config.json + a rebuildable db; the folder's own `.gitignore` of `*`, written
+when none exists, keeps all of it out of git, and `git add -f` shares a
+config). Every read command re-ingests
 on drift, so answers track the live tree without you managing freshness.
 
 The parsers cover python (AST-exact), javascript/typescript, bash, go, rust,

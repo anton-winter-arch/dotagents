@@ -105,9 +105,9 @@ def seed_files(folder: Path) -> list[Path]:
     names: list[str] | None = None
     try:
         out = subprocess.run(["git", "-C", str(folder), "ls-files", "-z", "--", "."],
-                             text=True, capture_output=True, check=True).stdout
+                             text=True, capture_output=True, check=True, timeout=60).stdout
         names = [n for n in out.split("\0") if n]
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, subprocess.SubprocessError):
         names = None
     if names is None:
         # Not a git repository (a test copy): every regular file. Inside a

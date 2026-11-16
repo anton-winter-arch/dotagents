@@ -29,6 +29,9 @@ import threading
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import procguard  # noqa: E402  - the byte-identical copy beside this script
+
 SKILL_DIR = Path(__file__).resolve().parent.parent
 BRIEF_TEMPLATE = SKILL_DIR / "references" / "brief.md"
 RESULT_SCHEMA = SKILL_DIR / "references" / "result.schema.json"
@@ -38,6 +41,12 @@ DEFAULT_EFFORT = "high"
 DEFAULT_TIMEOUT = 900
 MAX_TIMEOUT = 1800
 PRUNE_DAYS = 7
+# A run folder with no report.json was cut off before it finished (a crash or a kill).
+# A run lasts at most MAX_TIMEOUT, so after a day it is in progress nowhere and goes.
+ORPHAN_AGE_S = 86400
+# The watchdog's own cap sits this far past the run's timeout, so the poll loop, which
+# also watches the wall clock, is what reports a timeout.
+WATCHDOG_SLACK_S = 30
 TOKEN_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 # Must start alphanumeric, so '.', '..' and a leading '-' are all excluded.
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -237,88 +246,57 @@ def child_env(home: Path) -> dict[str, str]:
     return env
 
 
-def _raise_interrupt(signum, frame):
-    raise KeyboardInterrupt(f"signal {signum}")
-
-
 def spawn_codex(argv: list[str], prompt: str, run_dir: Path, timeout: int,
                 home: Path) -> tuple[int, str]:
-    """Run Codex, streaming JSONL to events.jsonl. Returns (rc, reason)."""
+    """Run Codex under procguard, streaming JSONL to events.jsonl. Returns (rc, reason).
+
+    The watchdog leads Codex's process group and stops it when this process goes away,
+    a SIGKILL included, so Codex never keeps editing the worktree and spending with
+    nothing left to harvest or stop it. Every exit from here, a normal one included,
+    stops the whole group: a child Codex started outlives it there and would keep
+    running in the worktree."""
     events = run_dir / "events.jsonl"
     stderr = run_dir / "stderr.log"
     env = child_env(home)
     ws = run_dir / "ws"
     with events.open("wb") as out, stderr.open("wb") as err:
-        proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=out, stderr=err,
-                                cwd=str(ws), start_new_session=True, env=env)
+        proc = procguard.popen(argv, timeout=timeout + WATCHDOG_SLACK_S, stdin=subprocess.PIPE,
+                               stdout=out, stderr=err, cwd=str(ws), env=env)
 
         def feed() -> None:
             # On a thread so a Codex that never drains stdin cannot block the
             # deadline loop; closing stdin is what prevents the documented hang.
+            # ValueError: the stop below may close stdin while a write is blocked.
             try:
                 proc.stdin.write(prompt.encode("utf-8"))
-            except (BrokenPipeError, OSError):
+            except (OSError, ValueError):
                 pass
             finally:
                 try:
                     proc.stdin.close()
-                except OSError:
+                except (OSError, ValueError):
                     pass
 
         threading.Thread(target=feed, daemon=True).start()
-        # SIGTERM's default action ends this process without unwinding, so the
-        # finally below never runs. Turn both signals into an exception.
-        prior = {}
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            prior[sig] = signal.getsignal(sig)
-            signal.signal(sig, _raise_interrupt)
         # Both clocks: the monotonic clock stops while a Mac sleeps, so a run that spans a
         # sleep would outlive its timeout on monotonic time alone (seen 2026-10-10).
         deadline = time.monotonic() + timeout
         wall_deadline = time.time() + timeout
-        # start_new_session=True detaches Codex from this process group, so
-        # without the finally it survives anything that kills the parent -
-        # including the Bash-tool timeout SKILL.md tells the operator to set.
-        # It would keep editing the worktree and spending with nothing left to
-        # harvest it or stop it.
+        reason = "exited"
         try:
             while proc.poll() is None:
                 if time.monotonic() > deadline or time.time() > wall_deadline:
-                    _kill_group(proc)
-                    return proc.returncode if proc.returncode is not None else -9, "timeout"
+                    reason = "timeout"
+                    break
                 time.sleep(0.2)
         finally:
-            for sig, handler in prior.items():
-                signal.signal(sig, handler)
-            # Every exit, a normal one included: a child Codex started outlives it
-            # in the same group and would keep running in the worktree.
-            _kill_group(proc)
-    return proc.returncode, "exited"
-
-
-def _kill_group(proc: subprocess.Popen) -> None:
-    """TERM then KILL Codex's whole process group, waiting on the group rather
-    than the leader, since members outlive a leader that has already exited. macOS
-    answers EPERM for a group whose remaining members have exited but are not yet
-    reaped, which means nothing in it can run any more, so it counts as gone."""
-    for sig, wait in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0)):
-        try:
-            os.killpg(proc.pid, sig)
-        except (ProcessLookupError, PermissionError):
-            return
-        end = time.monotonic() + wait
-        while time.monotonic() < end:
-            proc.poll()
-            try:
-                os.killpg(proc.pid, 0)
-            except (ProcessLookupError, PermissionError):
-                return
-            time.sleep(0.1)
+            procguard.stop_all()  # Codex's group is the only one this process owns
+    return proc.returncode, reason
 
 
 def _daemon_cmd(pid: int) -> str:
     return subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(pid)],
-                          capture_output=True, text=True).stdout
+                          capture_output=True, text=True, timeout=10).stdout
 
 
 def _under(home: Path, cmd: str) -> bool:
@@ -490,6 +468,7 @@ def cmd_run(a: argparse.Namespace) -> int:
     run_dir = sdir / run_id
     ws = run_dir / "ws"
     run_dir.mkdir(parents=True)
+    (run_dir / "repo.txt").write_text(str(root), encoding="utf-8")  # prune's way back to a report-less run's repo
     git(["worktree", "add", "--detach", str(ws), base], root)
     pointer = gitdir_pointer(ws)
 
@@ -500,11 +479,14 @@ def cmd_run(a: argparse.Namespace) -> int:
     (run_dir / "argv.json").write_text(json.dumps(argv, indent=1), encoding="utf-8")
 
     started = time.time()
-    rc, reason = spawn_codex(argv, prompt, run_dir, timeout, home)
+    try:
+        rc, reason = spawn_codex(argv, prompt, run_dir, timeout, home)
+    finally:
+        # Every exit, an interrupted run included, reaps a daemon Codex left behind.
+        if (w := reap_daemon(home)):
+            warnings.append(w)
     elapsed = round(time.time() - started, 1)
     ev = parse_events(run_dir)
-    if (w := reap_daemon(home)):
-        warnings.append(w)
     if (home / "auth.json").exists() and not (home / "auth.json").is_symlink():
         warnings.append("Codex replaced the auth symlink in the isolated home during this run; "
                         "the next run relinks, but check `codex login status` if auth fails")
@@ -617,26 +599,38 @@ def cmd_apply(a: argparse.Namespace) -> int:
 
 
 def prune(sdir: Path, days: int) -> int:
-    cutoff = time.time() - days * 86400
+    now = time.time()
     n = 0
     for d in sdir.iterdir():
-        if d.name == "home" or not d.is_dir():
+        if d.name == "home" or d.is_symlink() or not d.is_dir() or not TOKEN_RE.match(d.name):
             continue
-        if TOKEN_RE.match(d.name) and (d / "report.json").exists() and d.stat().st_mtime < cutoff:
+        limit = days * 86400 if (d / "report.json").exists() else max(days * 86400, ORPHAN_AGE_S)
+        if now - d.stat().st_mtime > limit:
             remove_run(d)
             n += 1
     return n
 
 
+def run_repo(run_dir: Path) -> str | None:
+    """The repo a run's worktree belongs to: from its report, or for a run cut off
+    before its report, from the repo.txt written before the worktree was made."""
+    try:
+        rpt = run_dir / "report.json"
+        if rpt.exists():
+            return json.loads(rpt.read_text(encoding="utf-8"))["repo"]
+        return (run_dir / "repo.txt").read_text(encoding="utf-8").strip() or None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def remove_run(run_dir: Path) -> None:
     ws = run_dir / "ws"
-    rpt = run_dir / "report.json"
-    if ws.exists() and rpt.exists():
+    root = run_repo(run_dir) if ws.exists() else None
+    if root:
         try:
-            root = json.loads(rpt.read_text(encoding="utf-8"))["repo"]
             git(["worktree", "remove", "--force", str(ws)], Path(root), check=False)
             git(["worktree", "prune"], Path(root), check=False)
-        except (OSError, ValueError, KeyError):
+        except (OSError, subprocess.SubprocessError):
             pass
     shutil.rmtree(run_dir, ignore_errors=True)
 
@@ -690,6 +684,8 @@ def main(argv: list[str] | None = None) -> int:
     c.set_defaults(fn=cmd_clean)
 
     a = ap.parse_args(argv)
+    # Before any spawn: SIGTERM, SIGHUP and Ctrl-C stop Codex's group, then unwind.
+    procguard.install_signal_handlers()
     try:
         return a.fn(a)
     except TaskError as e:

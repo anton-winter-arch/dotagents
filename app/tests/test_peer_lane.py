@@ -81,7 +81,7 @@ CODEX_LINES = [
 def fake_peer_spawn(monkeypatch, lines, returncode=0, stderr=b""):
     commands = []
 
-    async def spawn(cmd, cwd=None, seat=None):
+    async def spawn(cmd, cwd=None, seat=None, timeout=None):
         commands.append((cmd, cwd))
         return FakeProcess(lines, returncode, stderr)
 
@@ -176,7 +176,7 @@ def test_group_round_routes_peer_seats(monkeypatch):
 
     from test_group import reply_batch
 
-    async def spawn(cmd, cwd=None, seat=None):
+    async def spawn(cmd, cwd=None, seat=None, timeout=None):
         if cmd[0] == "claude":
             return FakeProcess(reply_batch("orch here"))
         return FakeProcess(CURSOR_LINES)

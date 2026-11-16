@@ -276,8 +276,9 @@ def tracked_files(src: Path) -> list[Path]:
     """Relative paths git tracks under src, or a refusal when src is not in a repository."""
     import subprocess
     try:
-        res = subprocess.run(["git", "-C", str(src), "ls-files", "-z"], capture_output=True, check=True)
-    except (OSError, subprocess.CalledProcessError) as exc:
+        res = subprocess.run(["git", "-C", str(src), "ls-files", "-z"], capture_output=True, check=True,
+                             timeout=120)
+    except (OSError, subprocess.SubprocessError) as exc:
         # the path and git's own message are not repeated: either may hold a listed term
         raise SanitizeError(f"--tracked needs a git repository at the path given ({type(exc).__name__})", 2)
     return [Path(p) for p in res.stdout.decode("utf-8", "surrogateescape").split("\0") if p]

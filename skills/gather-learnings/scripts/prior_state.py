@@ -48,8 +48,12 @@ NOT_AUTHORED = ('notes-', 'code-', 'docs-', 'user-stories', 'user-runsheet', 'in
 
 def kg(*args: str) -> list | dict | None:
     """One markdown-kg call, parsed. None when the call fails, e.g. an unregistered entity."""
-    r = subprocess.run([sys.executable, str(KG), *args, '--json'],
-                       capture_output=True, text=True)
+    # A read may re-ingest the vault first, which takes minutes on a large one.
+    try:
+        r = subprocess.run([sys.executable, str(KG), *args, '--json'],
+                           capture_output=True, text=True, timeout=900)
+    except subprocess.TimeoutExpired:
+        return None
     if r.returncode != 0:
         return None
     return json.loads(r.stdout)

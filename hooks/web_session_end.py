@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 SCANNER = "local-security"
+SCAN_TIMEOUT = 1800
 
 
 def sibling(name: str):
@@ -36,12 +37,18 @@ def sibling(name: str):
 
 
 def start_scan(folders: list[str]) -> bool:
-    """Start the scanner over the folders without waiting. False when it is not installed."""
+    """Start the scanner over the folders without waiting. False when it is not installed.
+    It outlives this hook on purpose, so it runs under procguard's --detached mode: its own
+    process group, stopped with everything it started after SCAN_TIMEOUT seconds."""
     program = shutil.which(SCANNER)
     if not program or not folders:
         return False
-    subprocess.Popen([program, "scan", "path", *folders], stdin=subprocess.DEVNULL,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    guard = str(Path(__file__).with_name("procguard.py"))
+    argv = [sys.executable, "-I", guard, "--detached", "--timeout", str(SCAN_TIMEOUT), "--",
+            program, "scan", "path", *folders]
+    # procguard: exempt - the watchdog itself is started here; it leads its own group and caps the scan
+    subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
     return True
 
 

@@ -1006,9 +1006,10 @@ class TestIngestBehavior(unittest.TestCase):
             " target=?", (src, kind, target)).fetchone()
 
     def test_bare_ingest_seeds_gitignore(self):
+        # `*` keeps the folder, its config and every database out of the repo.
         gi = self.repo / ".code-kg" / ".gitignore"
         self.assertTrue(gi.exists())
-        self.assertIn("code-kg.db", gi.read_text())
+        self.assertIn("*", gi.read_text().split())
 
     def test_counts(self):
         self.assertEqual(self.counts["files"], 23)

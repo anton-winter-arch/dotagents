@@ -545,6 +545,23 @@ def linked_store(root: Path, folder: Path, db: Path) -> str | None:
     return None
 
 
+def seed_gitignore(folder: Path) -> None:
+    """Give the engine's folder a .gitignore of `*` when it has none, so the
+    folder, its config and every database in it stay out of the repo. A
+    .gitignore already there is the repo's own choice and is never rewritten;
+    a config someone wants shared is added with `git add -f`. O_EXCL and
+    O_NOFOLLOW in one open: a link planted at the path, dangling or not, is
+    never written through, with no gap between a check and the write."""
+    gi = folder / ".gitignore"
+    try:
+        fd = os.open(gi, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    except OSError:
+        return
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write("# Local and rebuildable: the database, its checkpoint and this"
+                 " folder's config.\n*\n")
+
+
 def connect(vault: Path, must_exist: bool = False) -> sqlite3.Connection:
     db = db_path(vault)
     refused = linked_store(vault, kg_dir(vault), db)
@@ -553,6 +570,9 @@ def connect(vault: Path, must_exist: bool = False) -> sqlite3.Connection:
     if must_exist and not db.exists():
         sys.exit(f"error: no database at {db} - run `ingest` on this vault first")
     db.parent.mkdir(parents=True, exist_ok=True)
+    # Seeded on first contact, not only by `init`: the db must never be
+    # committable in the vault's repo however the folder came to exist.
+    seed_gitignore(db.parent)
     con = sqlite3.connect(db)
     con.executescript(SCHEMA)
     _add_missing_columns(con)
@@ -4026,9 +4046,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     print(f"init: wrote {cfg_file} with {len(cfg['profiles'])} confident "
           f"profile rows ({len(found['dated_logs'])} dated logs, "
           f"{len(found['generated'])} generated)")
-    print(f"      db at {db_path(vault)} - gitignore {kg_dir(vault).name}/*.db*"
-          " (covers the diff checkpoint and SQLite journal/wal sidecars;"
-          " the config stays tracked)")
+    print(f"      db at {db_path(vault)}; {kg_dir(vault).name}/.gitignore keeps the folder,"
+          " its config and its databases out of git (`git add -f` the config to share it)")
     return 0
 
 

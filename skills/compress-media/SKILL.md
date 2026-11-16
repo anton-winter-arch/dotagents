@@ -19,7 +19,13 @@ Pass the arguments of `/compress-media <args>` to the script, shell-quoting each
 With no arguments, ask the user which file or folder to compress.
 
 Give the Bash call `timeout: 600000`.
-HEVC encodes 1080p video slower than real time on a laptop (a 55 s clip took 87 s), so run anything over about three minutes of video, or a folder of videos, with `run_in_background`.
+HEVC encodes 1080p video slower than real time on a laptop (a 55 s clip took 87 s), so run anything over about three minutes of video, or a folder of videos, with `run_in_background` under the process guard, which the shell hooks require for background work:
+
+```bash
+python3 ~/.claude/hooks/procguard.py --timeout 7200 -- python3 <skill-dir>/scripts/compress_media.py PATH ...
+```
+
+Two hours is the guard's ceiling; split a larger batch into several runs.
 
 | Option | Effect |
 |---|---|

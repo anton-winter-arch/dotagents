@@ -1,15 +1,24 @@
 """Tests for harness_bench.py: the battery against its reference solutions, and the runner
-end to end with a fake harness behind the real proxy, the real sandbox and a fake daemon."""
+end to end with a fake harness behind the real proxy, the real sandbox and a fake daemon.
+
+A runner test's temp folder name carries a fresh random token, so the proxy, the fake
+harness and the watchdogs carry it in their argv (through the run folder and the fake's
+path), and the fake's own child carries it in its tag. Process assertions look only at
+processes with that token, and tearDown kills only those."""
 
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+import uuid
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE.parent / "scripts" / "harness_bench.py"
@@ -20,6 +29,35 @@ from fake_daemon import FakeDaemon  # noqa: E402
 import harness_bench as hb  # noqa: E402
 
 MODEL = "fake:cloud"
+
+
+def tagged(token):
+    """(pid, command) of every live process whose argv carries `token`."""
+    out = subprocess.run(["ps", "-ww", "-A", "-o", "pid=,stat=,command="], capture_output=True, text=True,
+                         timeout=10).stdout
+    found = []
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and token in parts[2] and not parts[1].startswith("Z"):
+            found.append((int(parts[0]), parts[2]))
+    return found
+
+
+def wait_for(cond, limit=20.0):
+    end = time.monotonic() + limit
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.1)
+    return cond()
+
+
+def kill_tagged(token):
+    for pid, _ in tagged(token):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
 
 
 class TestBattery(unittest.TestCase):
@@ -40,7 +78,7 @@ class TestBattery(unittest.TestCase):
         hb.build_base(task, base)
         shutil.copytree(base, ws)
         if solution and (solution / "solve.py").exists():
-            subprocess.run([sys.executable, str(solution / "solve.py")], cwd=ws, check=True)
+            subprocess.run([sys.executable, str(solution / "solve.py")], cwd=ws, check=True, timeout=60)
         elif solution:
             shutil.copytree(solution, ws, dirs_exist_ok=True)
         hv = hb.harvest(base, ws, task["allow"])
@@ -78,7 +116,8 @@ class TestBattery(unittest.TestCase):
 
 class RunnerBase(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="bench-run-"))
+        self.token = f"bench-run-{uuid.uuid4().hex}"
+        self.tmp = Path(tempfile.mkdtemp(prefix=f"{self.token}-"))
         self.state = self.tmp / "state"
         bindir = self.tmp / "bin"
         bindir.mkdir()
@@ -91,8 +130,12 @@ class RunnerBase(unittest.TestCase):
                         HARNESS_BENCH_FAKE_BIN=str(bindir / "fake_harness.py"))
 
     def tearDown(self):
+        kill_tagged(self.token)
         self.daemon.close()
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def assert_gone(self, limit=15.0):
+        self.assertTrue(wait_for(lambda: not tagged(self.token), limit), f"left running: {tagged(self.token)}")
 
     def bench(self, *args, **extra):
         env = dict(self.env, **extra)
@@ -180,17 +223,73 @@ class TestRunner(RunnerBase):
         self.assertTrue(self.record()["grade"]["pass"])
 
     def test_child_does_not_outlive_the_run(self):
-        tag = f"harness-bench-orphan-{os.getpid()}-{time.time_ns()}"
-        r = self.run_task("fix-defect", mode="orphan", FAKE_HARNESS_ORPHAN=tag)
+        r = self.run_task("fix-defect", mode="orphan", FAKE_HARNESS_ORPHAN=f"{self.token}-child")
         self.assertEqual(r.returncode, 0, r.stderr)
-        out = subprocess.run(["pgrep", "-f", tag], capture_output=True, text=True)
-        self.assertEqual(out.stdout.strip(), "", "a child outlived the run")
+        self.assert_gone(5)
 
     def test_table(self):
         self.run_task("fix-defect")
         r = self.bench("table")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("| fake | 0.0.0-fake | fake:cloud | pinned | low | fix-defect | 1/1 |", r.stdout)
+
+
+class TestExits(RunnerBase):
+    """The bench is stopped mid-run; the proxy, the harness and the harness's child go too."""
+
+    def start_hung_run(self):
+        env = dict(self.env, FAKE_HARNESS_MODE="hang", FAKE_HARNESS_ORPHAN=f"{self.token}-child",
+                   FAKE_HARNESS_SOLUTION=str(self.tmp / "solutions" / "fix-defect"))
+        proc = subprocess.Popen([sys.executable, str(SCRIPT), "run", "--harness", "fake", "--model", MODEL,
+                                 "--task", "fix-defect", "--think", "low", "--timeout", "120"],
+                                env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        self.assertTrue(wait_for(lambda: tagged(f"{self.token}-child")), "the harness's child never started")
+        return proc
+
+    def assert_signal_stops_everything(self, sig):
+        proc = self.start_hung_run()
+        proc.send_signal(sig)
+        proc.wait(timeout=30)
+        self.assert_gone()
+
+    def test_sigterm(self):
+        self.assert_signal_stops_everything(signal.SIGTERM)
+
+    def test_sighup(self):
+        self.assert_signal_stops_everything(signal.SIGHUP)
+
+    def test_sigint(self):
+        self.assert_signal_stops_everything(signal.SIGINT)
+
+    def test_sigkill_of_the_bench(self):
+        # Nothing in the bench runs; each watchdog sees its parent gone and stops its group.
+        self.assert_signal_stops_everything(signal.SIGKILL)
+
+
+class TestProxyStartup(unittest.TestCase):
+    def setUp(self):
+        self.token = f"bench-proxy-start-{uuid.uuid4().hex}"
+        self.tmp = Path(tempfile.mkdtemp(prefix=f"{self.token}-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.addCleanup(kill_tagged, self.token)
+
+    def test_ctrl_c_during_the_startup_wait_stops_the_proxy(self):
+        slow = self.tmp / "slow_proxy.py"  # never writes its port file
+        slow.write_text("import time\ntime.sleep(120)\n")
+        run = self.tmp / "run"
+        run.mkdir()
+        prior = signal.signal(signal.SIGINT, signal.default_int_handler)
+        self.addCleanup(signal.signal, signal.SIGINT, prior)
+        timer = threading.Timer(1.0, os.kill, (os.getpid(), signal.SIGINT))
+        with mock.patch.object(hb, "PROXY", slow):
+            timer.start()
+            with self.assertRaises(KeyboardInterrupt):
+                hb.Proxy(run, MODEL, "low", 0.0, 60)
+        timer.join()
+        # This process is still alive, so only the startup wait's own cleanup could stop it.
+        self.assertTrue(wait_for(lambda: not tagged(self.token), 15), f"left running: {tagged(self.token)}")
 
 
 class TestBoundary(RunnerBase):

@@ -7,10 +7,13 @@ Run: python3 -m unittest discover -s skills/agent-conference/tests -v
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+import uuid
 from datetime import date
 from pathlib import Path
 
@@ -897,6 +900,86 @@ class TestUserMember(Base):
         r = self.resume()
         self.assertEqual(r.returncode, 2)
         self.assertIn("not waiting", r.stderr)
+
+
+def tagged(token: str) -> list:
+    """Live processes carrying `token` in their argv."""
+    out = subprocess.run(["ps", "-A", "-o", "pid=,stat=,command="], capture_output=True, text=True, timeout=10).stdout
+    pids = []
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and token in parts[2] and not parts[1].startswith("Z"):
+            pids.append(int(parts[0]))
+    return pids
+
+
+def wait_for(cond, limit: float = 15.0) -> bool:
+    end = time.monotonic() + limit
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.1)
+    return cond()
+
+
+class TestProcessLifecycle(Base):
+    """Members hang in stage 1 through agent-review's real runners and its fake CLIs, each
+    as a process tagged with a fresh token that starts a tagged grandchild. Stopping the
+    conference, by Ctrl-C, SIGTERM or SIGKILL, returns well inside the member timeout and
+    leaves nothing tagged running. The ready check passes, since only a prompt that holds
+    the token hangs."""
+    MEMBERS = "claude,codex"
+
+    def setUp(self):
+        super().setUp()
+        self.token = f"conference-lifecycle-{uuid.uuid4().hex}"
+        self.question.write_text(f"Is f correct? {self.token}\n")
+        hang = {"hang": self.token, "hang_when": self.token}
+        self.env = {k: v for k, v in self.env.items() if k != "AGENT_REVIEW_FAKE_BIN"}
+        self.env.update(AGENT_REVIEW_CLI_DIR=str(HERE.parent.parent / "agent-review" / "tests" / "fake-cli"),
+                        AGENT_REVIEW_FAKE_RESPONSES=json.dumps({"claude": hang, "codex": hang}))
+
+    def tearDown(self):
+        for pid in tagged(self.token):  # only this test's own tagged processes
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        super().tearDown()
+
+    def start(self, questions, hung: int) -> subprocess.Popen:
+        log = (self.tmp / "conference.log").open("w")
+        self.addCleanup(log.close)
+        args = [sys.executable, str(SCRIPT), "run", "--out", str(self.out), "--members", self.MEMBERS, "--chair", "session",
+                "--no-sanitize", "--timeout", "600", "--reviews-dir", str(self.tmp / "rd"), "--file", str(self.src / "pkg" / "a.py")]
+        for q in questions:
+            args += ["--question", str(q)]
+        parent = subprocess.Popen(args, env=self.env, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+        self.addCleanup(lambda: parent.poll() is None and parent.kill())
+        self.assertTrue(wait_for(lambda: len(tagged(self.token)) >= hung),
+                        "the members never hung: " + (self.tmp / "conference.log").read_text())
+        return parent
+
+    def stop(self, parent: subprocess.Popen, sig) -> None:
+        started = time.monotonic()
+        parent.send_signal(sig)
+        parent.wait(30)
+        self.assertLess(time.monotonic() - started, 20, "the conference waited on its members")
+        self.assertTrue(wait_for(lambda: not tagged(self.token), 10), f"left running: {tagged(self.token)}")
+
+    def test_ctrl_c_mid_stage_returns_at_once(self):
+        self.stop(self.start([self.question], hung=4), signal.SIGINT)
+
+    def test_sigterm_mid_stage(self):
+        self.stop(self.start([self.question], hung=4), signal.SIGTERM)
+
+    def test_sigkill_mid_stage(self):
+        self.stop(self.start([self.question], hung=4), signal.SIGKILL)
+
+    def test_ctrl_c_with_several_topics_running(self):
+        second = self.tmp / "second.md"
+        second.write_text(f"Can f fail? {self.token}\n")
+        self.stop(self.start([self.question, second], hung=8), signal.SIGINT)
 
 
 if __name__ == "__main__":

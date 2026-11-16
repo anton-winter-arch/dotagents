@@ -30,6 +30,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import procguard  # noqa: E402
+
 VERSION_RE = re.compile(r"\d+(?:\.\d+)+(?:-[0-9a-zA-Z]+)?")
 SKILL_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
 TIMEOUT = 20
@@ -59,7 +62,7 @@ def run(argv: list[str]) -> tuple[int | None, str, str]:
     """Return (exit code, stdout, stderr); None and empty strings when the
     command could not run or timed out."""
     try:
-        p = subprocess.run(argv, text=True, capture_output=True, timeout=TIMEOUT, stdin=subprocess.DEVNULL)
+        p = procguard.run(argv, text=True, capture_output=True, timeout=TIMEOUT)
     except (OSError, subprocess.TimeoutExpired):
         return None, "", ""
     return p.returncode, p.stdout, p.stderr

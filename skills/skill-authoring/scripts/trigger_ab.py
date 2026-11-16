@@ -20,6 +20,8 @@ worker, because parallel workers in one folder invoke each other's copies. The s
 link in ~/.claude/skills is swapped for a stand-in without SKILL.md for the run, so the
 probe sees only the copy under test while hooks that load the skill's scripts keep
 working, and put back exactly as it was afterwards, on success, failure or interrupt.
+Each variant runs under procguard with a wall cap (--variant-timeout, 3600 s), and a
+failed variant stops the others rather than waiting them out.
 
 The report lists every case whose verdict differs between the two descriptions. A case
 that passed on the old description and fails on the new one is a regression, and any
@@ -41,9 +43,11 @@ import signal
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import procguard  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]
 DEFAULT_MODEL = "claude-sonnet-5"
@@ -51,10 +55,8 @@ EXIT_REGRESSION = 1
 EXIT_USAGE = 2
 SKILL_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
 
-# What a signal handler must undo: the stand-ins in place and the run_eval process groups.
+# What a signal handler must undo besides the run_eval groups procguard tracks.
 ACTIVE_HIDDEN: list = []
-CHILDREN: set = set()
-CHILDREN_LOCK = threading.Lock()
 
 
 class Usage(Exception):
@@ -98,7 +100,7 @@ def description_at(root: Path, skill: str, ref: str | None) -> str | None:
         text = path.read_text(encoding="utf-8")
     else:
         r = subprocess.run(["git", "-C", str(root), "show", f"{ref}:{rel}"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, timeout=30)
         if r.returncode != 0:
             return None
         text = r.stdout
@@ -138,30 +140,25 @@ def parse_output(text: str) -> dict:
 
 
 def run_variant(creator: Path, skill_dir: Path, eval_set: Path, description: str, model: str,
-                runs: int, timeout: int) -> dict:
-    """One run_eval call from its own throwaway project folder."""
+                runs: int, timeout: int, wall: float) -> dict:
+    """One run_eval call from its own throwaway project folder, stopped with every probe
+    it started once `wall` seconds pass."""
     project = Path(tempfile.mkdtemp(prefix="trigger-ab-"))
     try:
         (project / ".claude").mkdir()
-        env = dict(os.environ, PYTHONPATH=str(creator))
+        env = dict(os.environ, PYTHONPATH=str(creator), CLAUDE_CODE_DISABLE_BACKGROUND_TASKS="1")
         cmd = [sys.executable, "-m", "scripts.run_eval", "--eval-set", str(eval_set),
                "--skill-path", str(skill_dir), "--description", description,
                "--num-workers", "1", "--runs-per-query", str(runs), "--timeout", str(timeout)]
         if model:
             cmd += ["--model", model]
-        # Its own process group, so an interrupt can stop run_eval and every probe it started.
-        p = subprocess.Popen(cmd, cwd=project, env=env, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, text=True, start_new_session=True)
-        with CHILDREN_LOCK:
-            CHILDREN.add(p)
         try:
-            out, err = p.communicate()
-        finally:
-            with CHILDREN_LOCK:
-                CHILDREN.discard(p)
+            p = procguard.run(cmd, cwd=project, env=env, capture_output=True, text=True, timeout=wall)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"run_eval passed the {wall:g} s variant limit and was stopped") from None
         if p.returncode != 0:
-            raise RuntimeError(f"run_eval exited {p.returncode}: {err.strip()[-400:]}")
-        return parse_output(out)
+            raise RuntimeError(f"run_eval exited {p.returncode}: {p.stderr.strip()[-400:]}")
+        return parse_output(p.stdout)
     finally:
         shutil.rmtree(project, ignore_errors=True)
 
@@ -233,12 +230,7 @@ def on_signal(signum, _frame) -> None:
             hidden.put_back()
         except Exception as e:  # noqa: BLE001 - report and keep restoring the rest
             print(f"trigger_ab: could not restore {hidden.path}: {e}", file=sys.stderr)
-    with CHILDREN_LOCK:
-        for p in CHILDREN:
-            try:
-                os.killpg(p.pid, signal.SIGTERM)
-            except OSError:
-                pass
+    procguard.stop_all()
     print(f"trigger_ab: stopped by signal {signum}; hidden skills restored", file=sys.stderr)
     os._exit(128 + signum)
 
@@ -306,6 +298,8 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--runs", type=int, default=1, help="runs per case; use 3 to settle a flip")
     ap.add_argument("--model", default=DEFAULT_MODEL, help=f"probe model, pinned ({DEFAULT_MODEL})")
     ap.add_argument("--timeout", type=int, default=30, help="seconds per probe")
+    ap.add_argument("--variant-timeout", type=float, default=3600,
+                    help="seconds before one variant's run_eval and its probes are stopped (3600)")
     ap.add_argument("--jobs", type=int, default=6, help="variants run at once")
     ap.add_argument("--skill-creator", help="path to the skill-creator plugin's skill folder")
     ap.add_argument("--root", type=Path, default=REPO)
@@ -362,12 +356,23 @@ def main(argv: list[str]) -> int:
             link.__enter__()
         with cf.ThreadPoolExecutor(max_workers=max(1, a.jobs)) as ex:
             futures = {}
-            for skill, old, new, eval_set, _ in plan:
-                skill_dir = root / "skills" / skill
-                for variant, desc in (("old", old), ("new", new)):
-                    futures[(skill, variant)] = ex.submit(run_variant, creator, skill_dir, eval_set,
-                                                          desc, a.model, a.runs, a.timeout)
-            results = {key: f.result() for key, f in futures.items()}
+            try:
+                for skill, old, new, eval_set, _ in plan:
+                    skill_dir = root / "skills" / skill
+                    for variant, desc in (("old", old), ("new", new)):
+                        futures[(skill, variant)] = ex.submit(run_variant, creator, skill_dir, eval_set,
+                                                              desc, a.model, a.runs, a.timeout,
+                                                              a.variant_timeout)
+                for f in cf.as_completed(futures.values()):
+                    f.result()   # the first failure raises here, while the others still run
+                results = {key: f.result() for key, f in futures.items()}
+            except BaseException:
+                # Leaving the executor waits on every variant: drop the queued ones and
+                # stop the running ones so a failure never waits out the others' caps.
+                for f in futures.values():
+                    f.cancel()
+                procguard.stop_all()
+                raise
     finally:
         for link in reversed(links):
             link.__exit__(None, None, None)

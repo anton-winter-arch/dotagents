@@ -208,6 +208,18 @@ class TestLive(unittest.TestCase):
         self.assertEqual(rep["at_index_threshold"]["none_rate"], 1.0)
         self.assertEqual(len(self.fake.posts("/api/embed")), 3)
 
+    def test_routing_eval_unloads_the_model_when_a_call_fails(self):
+        (self.state / "labels" / "routing.jsonl").write_text(json.dumps(
+            {"id": "p1", "prompt": "research x", "label": "deep-research", "split": "heldout"}) + "\n")
+        (self.root / "index.json").write_text(json.dumps({"model": "embeddinggemma", "threshold": 0.8, "exemplars": []}))
+        self.env["DECISION_HOOK_INDEX"] = str(self.root / "index.json")
+        self.fake.status = 500
+        p = subprocess.run([sys.executable, str(SCRIPT), "--set", "routing"], capture_output=True, text=True,
+                           env=self.env, timeout=120)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertEqual([r["body"] for r in self.fake.posts("/api/generate")], [{"model": "embeddinggemma", "keep_alive": 0}],
+                         "an exception mid-loop still drops the model")
+
 
 if __name__ == "__main__":
     unittest.main()

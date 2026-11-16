@@ -26,10 +26,13 @@ Two things make it worth reaching for over `grep` or `Read`:
 
 ```
 <vault>/markdown-kg/
+    .gitignore               `*`: the whole folder stays out of git
     markdown-kg-config.md    ignore rules, profiles, entities - one file
-    markdown-kg.db           SQLite + FTS5, rebuildable - gitignore markdown-kg/*.db*
+    markdown-kg.db           SQLite + FTS5, rebuildable
     markdown-kg-prev.db      diff checkpoint from `ingest --keep-previous`
 ```
+
+The engine writes the `.gitignore` when the folder has none, and never rewrites one that exists. To share a config across machines, `git add -f` it.
 
 A vault built before the folder was renamed has the legacy `vault-kg/` folder, with `vault-kg-*` file names.
 The engine reads and writes that folder in place, and it never creates a `vault-kg/` folder.

@@ -181,7 +181,7 @@ def test_the_fixed_denies_are_unchanged_on_a_writable_seat_spawn(rules_sources,
     monkeypatch.setenv("AGENTS_APP_DATA", str(tmp_path / "data"))
     commands = []
 
-    async def spawn(cmd, cwd=None, seat=None):
+    async def spawn(cmd, cwd=None, seat=None, timeout=None):
         commands.append((cmd, cwd))
         return _FakeProcess()
 

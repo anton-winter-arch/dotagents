@@ -23,6 +23,13 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import procguard  # noqa: E402
+
+# One encode or conversion; a long 4K video stays well inside it, and a hung
+# encoder is stopped with everything it started.
+ENCODE_TIMEOUT = 4 * 3600
+
 KINDS = {
     "video": {".mov", ".mp4", ".m4v", ".mkv", ".webm", ".avi", ".mts", ".m2ts", ".3gp", ".wmv", ".flv", ".mpg", ".mpeg"},
     "audio": {".wav", ".aif", ".aiff", ".flac", ".m4a", ".mp3", ".aac", ".ogg", ".oga", ".opus", ".wma", ".caf"},
@@ -297,7 +304,10 @@ def sips_cmd(src: Path, dst: Path, fmt: str, percent: int = 0) -> list[str]:
 # ---------------------------------------------------------------- running
 
 def run(cmd: list[str], cwd: Path | None = None) -> None:
-    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, cwd=cwd)
+    try:
+        r = procguard.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=ENCODE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise MediaError(f"{cmd[0]} ran past {ENCODE_TIMEOUT // 3600} h and was stopped")
     if r.returncode != 0:
         lines = [ln for ln in (r.stderr or r.stdout).splitlines() if ln.strip()]
         raise MediaError(f"{cmd[0]} failed: {' | '.join(lines[-3:]) or f'exit {r.returncode}'}")
@@ -306,7 +316,8 @@ def run(cmd: list[str], cwd: Path | None = None) -> None:
 @functools.lru_cache(maxsize=None)
 def ffmpeg_list(flag: str) -> frozenset[str]:
     """Names from `ffmpeg -encoders` or `ffmpeg -filters`."""
-    r = subprocess.run(["ffmpeg", "-hide_banner", flag], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    r = subprocess.run(["ffmpeg", "-hide_banner", flag], capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                       timeout=60)
     return frozenset(parts[1] for parts in map(str.split, r.stdout.splitlines()) if len(parts) >= 2)
 
 
@@ -343,7 +354,10 @@ def probe(path: Path) -> Media:
     cmd = ["ffprobe", "-v", "error", *LOCAL_ONLY, "-show_format", "-show_streams", "-of", "json", str(path)]
     if kind == "gif":
         cmd.insert(1, "-count_packets")
-    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=300)
+    except subprocess.TimeoutExpired:
+        raise MediaError("ffprobe did not finish reading it within 5 minutes")
     if r.returncode != 0:
         raise MediaError(f"ffprobe could not read it: {(r.stderr.strip().splitlines() or ['no output'])[-1]}")
     data = json.loads(r.stdout or "{}")
@@ -597,4 +611,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    procguard.install_signal_handlers()
     sys.exit(main())

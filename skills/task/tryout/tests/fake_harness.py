@@ -9,6 +9,7 @@ FAKE_HARNESS_MODE, and it reaches its "model" through OLLAMA_HOST like a real ha
   escape       try a write under FAKE_HARNESS_REAL_HOME, a read of FAKE_HARNESS_READ and a
                direct connection to FAKE_HARNESS_DIRECT_PORT; report each as ok or denied
   orphan       start a sleeping child tagged FAKE_HARNESS_ORPHAN, then solve
+  hang         start a sleeping child tagged FAKE_HARNESS_ORPHAN, then sleep and never finish
 FAKE_HARNESS_ANSWER, if set, becomes the final text.
 """
 
@@ -64,8 +65,10 @@ def main():
             "direct": attempt(lambda: socket.create_connection(("127.0.0.1", int(os.environ["FAKE_HARNESS_DIRECT_PORT"])),
                                                               timeout=2).close()),
         })
-    if mode == "orphan":
+    if mode in ("orphan", "hang"):
         subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)", os.environ["FAKE_HARNESS_ORPHAN"]])
+    if mode == "hang":
+        time.sleep(120)
     sol = os.environ.get("FAKE_HARNESS_SOLUTION")
     if mode in ("solve", "oos", "trap-revert", "orphan") and sol:
         shutil.copytree(sol, ".", dirs_exist_ok=True)

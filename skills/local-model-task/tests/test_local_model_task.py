@@ -11,12 +11,15 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+import uuid
 from pathlib import Path
 from unittest import mock
 
@@ -32,6 +35,32 @@ spec.loader.exec_module(mt)
 
 def backend(base_url, api="ollama", locality="local", model="qwen3.5:4b", **extra):
     return dict({"base_url": base_url, "api": api, "locality": locality, "default_model": model}, **extra)
+
+
+# a grep stand-in that starts a grandchild carrying the test's token (argv[1]) and hangs without output
+HANG_TREE = ("import subprocess, sys, time\n"
+             "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)', sys.argv[1]])\n"
+             "time.sleep(300)")
+
+
+def tagged(token: str) -> list:
+    """Live pids whose command line carries `token`."""
+    out = subprocess.run(["ps", "-A", "-o", "pid=,stat=,command="], capture_output=True, text=True, timeout=10).stdout
+    pids = []
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and token in parts[2] and not parts[1].startswith("Z"):
+            pids.append(int(parts[0]))
+    return pids
+
+
+def wait_for(cond, limit: float = 10.0) -> bool:
+    end = time.monotonic() + limit
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.1)
+    return cond()
 
 
 # ---------------------------------------------------------------- unit
@@ -190,6 +219,8 @@ class TestHelpers(unittest.TestCase):
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="model-task-test-"))
+        self.token = f"lmt-test-{uuid.uuid4().hex}"
+        self.bin = self.tmp / "bin"
         self.state = self.tmp / "state"
         self.cfg = self.tmp / "config" / "backends.json"
         self.fake = None
@@ -202,7 +233,24 @@ class Base(unittest.TestCase):
     def tearDown(self):
         if self.fake:
             self.fake.stop()
+        mt.procguard.stop_all(grace=0.5)
+        for pid in tagged(self.token):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def hanging_grep(self) -> Path:
+        """An `rg` that starts a grandchild tagged with this test's token, prints nothing and hangs."""
+        self.bin.mkdir(exist_ok=True)
+        stub = self.bin / "rg"
+        stub.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} -c {shlex.quote(HANG_TREE)} {self.token}\n")
+        stub.chmod(0o755)
+        return stub
+
+    def assert_gone(self, limit: float = 10.0):
+        self.assertTrue(wait_for(lambda: not tagged(self.token), limit), f"left running: {tagged(self.token)}")
 
     def serve(self, **kw):
         self.fake = FakeBackend(**kw).start()
@@ -654,9 +702,7 @@ class TestSearch(Base):
         fake = self.serve()
         self.write_config({"ollama": backend(fake.url)})
         root = self.make_tree()
-        sleeper = self.tmp / "rg"
-        sleeper.write_text("#!/bin/sh\nsleep 8\n")
-        sleeper.chmod(0o755)
+        sleeper = self.hanging_grep()
         real_which = shutil.which
         t = time.monotonic()
         with mock.patch.object(mt.shutil, "which", side_effect=lambda n: str(sleeper) if n == "rg" else real_which(n)):
@@ -666,6 +712,30 @@ class TestSearch(Base):
         self.assertNotEqual(code, 0)
         self.assertIn("timed out", err.lower())
         self.assertEqual(fake.posts(), [])
+        self.assert_gone(5)
+
+    def search_stopped_leaves_no_grep(self, sig):
+        fake = self.serve()
+        self.write_config({"ollama": backend(fake.url)})
+        root = self.make_tree()
+        self.hanging_grep()
+        env = dict(self.env, PATH=f"{self.bin}:{self.env['PATH']}")
+        proc = subprocess.Popen([sys.executable, str(SCRIPT), "search", "--question", "q", "--pattern", "ENV_ALLOW",
+                                 "--path", str(root), "--min-free-gb", "0", "--timeout", "120"], env=env,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        self.assertTrue(wait_for(lambda: tagged(self.token), 20), "the grep's child never started")
+        proc.send_signal(sig)
+        proc.wait(20)
+        self.assert_gone(8)
+        self.assertEqual(fake.posts(), [])
+
+    def test_cli_search_sigterm_stops_the_grep_tree(self):
+        self.search_stopped_leaves_no_grep(signal.SIGTERM)
+
+    def test_cli_search_sigkill_stops_the_grep_tree(self):
+        # the grep runs under a watchdog that stops its group once this process is gone, even with no cleanup run
+        self.search_stopped_leaves_no_grep(signal.SIGKILL)
 
     def test_search_cap_reported(self):
         fake = self.serve(reply='{"answers_question": true, "hits": []}')
@@ -906,23 +976,27 @@ class TestCli(Base):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("Say hi.", fake.posts()[0]["body"]["messages"][-1]["content"])
 
-    def test_cli_sigterm_still_unloads(self):
-        import signal
-        import time
+    def signal_still_unloads(self, sig):
         fake = self.serve(delay=5)
         self.write_config({"ollama": backend(fake.url)})
         proc = subprocess.Popen([sys.executable, str(SCRIPT), "run", "--brief", self.brief(), "--min-free-gb", "0"],
                                 env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        deadline = time.monotonic() + 20
-        while not any(p["path"] == "/api/chat" for p in fake.posts()) and time.monotonic() < deadline:
-            time.sleep(0.1)
-        proc.send_signal(signal.SIGTERM)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        self.assertTrue(wait_for(lambda: any(p["path"] == "/api/chat" for p in fake.posts()), 20))
+        proc.send_signal(sig)
         _, err = proc.communicate(timeout=30)
         self.assertEqual(proc.returncode, 130, err)
         self.assertEqual([p["path"] for p in fake.posts()], ["/api/chat", "/api/generate"])
         report = json.loads((self.runs()[0] / "report.json").read_text())
         self.assertEqual(report["exit_code"], 130)
         self.assertTrue(report["unloaded"])
+
+    def test_cli_sigterm_still_unloads(self):
+        self.signal_still_unloads(signal.SIGTERM)
+
+    def test_cli_sighup_still_unloads(self):
+        # a closed terminal sends SIGHUP; its default action would end the run before settle() unloads the model
+        self.signal_still_unloads(signal.SIGHUP)
 
     def test_cli_bad_args(self):
         self.assertEqual(self.cli("run").returncode, mt.EXIT_ARGS)

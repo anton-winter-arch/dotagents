@@ -107,6 +107,10 @@ they touched, and answer exactly `PASS` to yield.
 - Ollama is loopback-only: every endpoint goes through `ollama.py`'s
   `_base()` guard, which refuses any non-local `OLLAMA_URL`. The server
   binds 127.0.0.1 by default; single-user local posture.
+- Every process the app starts follows the repo's lifecycle standard
+  (`skills/skill-authoring/references/process-lifecycle.md`): lanes spawn
+  through `procguard.wrap` in their own process group and stop through
+  `procguard.stop`, and `agents down` signals only a group it can prove is its own.
 - Nothing personal, client-specific, or machine-specific enters this repo.
 - Work on `develop`; `main` advances only by fast-forward refspec
   (`git push origin develop:main`) after a feature is tested - never merge

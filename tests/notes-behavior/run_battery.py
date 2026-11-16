@@ -30,6 +30,9 @@ import sys
 from datetime import date
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "skills" / "skill-authoring" / "scripts"))
+import procguard  # noqa: E402
+
 MODEL = "claude-opus-5"
 TIMEOUT_S = 1200
 
@@ -188,7 +191,7 @@ def build_fixture(root: Path, scenario: str) -> None:
         ["git", "add", "-A"],
         ["git", "commit", "-qm", "fixture: starting state"],
     ):
-        subprocess.run(cmd, cwd=root, env=env, check=True,
+        subprocess.run(cmd, cwd=root, env=env, check=True, timeout=60,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -201,9 +204,10 @@ def run_skill(root: Path, transcript: Path) -> int:
         "--dangerously-skip-permissions",
     ]
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
     with transcript.open("w") as fh:
-        proc = subprocess.run(cmd, cwd=root, env=env, stdout=fh,
-                              stderr=subprocess.DEVNULL, timeout=TIMEOUT_S)
+        proc = procguard.run(cmd, cwd=root, env=env, stdout=fh,
+                             stderr=subprocess.DEVNULL, timeout=TIMEOUT_S)
     return proc.returncode
 
 
@@ -420,6 +424,7 @@ def main() -> int:
     ap.add_argument("--build-only", action="store_true")
     ap.add_argument("--grade-only", action="store_true")
     args = ap.parse_args()
+    procguard.install_signal_handlers()
 
     work = Path(args.workdir).expanduser().resolve()
     fixture = work / f"fixture-{args.scenario}"

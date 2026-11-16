@@ -46,7 +46,7 @@ def fake_seq(monkeypatch, batches):
     commands = []
     prep_commands = []
 
-    async def spawn(cmd, cwd=None, seat=None):
+    async def spawn(cmd, cwd=None, seat=None, timeout=None):
         if "[PREP TURN" in cmd[2]:
             prep_commands.append(cmd)
             return FakeProcess(reply_batch("READY"))
@@ -402,7 +402,7 @@ def test_hung_seat_turn_times_out_and_round_moves_on(monkeypatch):
     cid = two_seat_thread()
     hung: list = []
 
-    async def spawn(cmd, cwd=None, seat=None):
+    async def spawn(cmd, cwd=None, seat=None, timeout=None):
         # StreamReader needs the running loop, so fakes build inside spawn
         if "[PREP TURN" in cmd[2]:
             return FakeProcess(reply_batch("READY"))
@@ -487,7 +487,7 @@ def test_failed_prep_notes_heartbeat_and_speak_proceeds(monkeypatch):
     monkeypatch.setattr(group, "MAX_ROUNDS", 1)
     cid = two_seat_thread()
 
-    async def spawn(cmd, cwd=None, seat=None):
+    async def spawn(cmd, cwd=None, seat=None, timeout=None):
         if "[PREP TURN" in cmd[2]:
             return FakeProcess([INIT], 1, b"prep exploded")
         return FakeProcess(reply_batch("spoken"))
@@ -508,7 +508,7 @@ def test_cancel_kills_running_prep(monkeypatch):
     cid = two_seat_thread()
     hung: list = []
 
-    async def spawn(cmd, cwd=None, seat=None):
+    async def spawn(cmd, cwd=None, seat=None, timeout=None):
         if "[PREP TURN" in cmd[2]:
             proc = HangingProcess()
             hung.append(proc)

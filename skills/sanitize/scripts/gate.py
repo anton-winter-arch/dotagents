@@ -97,6 +97,7 @@ class Blobs:
 
     def __init__(self):
         try:
+            # procguard: exempt - a pipe-driven helper owned by this object and closed in every caller's finally
             self.proc = subprocess.Popen([*GIT, "cat-file", "--batch"], stdin=subprocess.PIPE,
                                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         except OSError as exc:
@@ -323,7 +324,7 @@ def ref_ranges(stdin_text: str, remote: str | None) -> list[list[str]]:
         if lsha == ZERO:
             continue                                   # a deleted ref sends nothing
         known = rsha != ZERO and subprocess.run([*GIT, "cat-file", "-e", f"{rsha}^{{commit}}"],
-                                                capture_output=True).returncode == 0
+                                                capture_output=True, timeout=60).returncode == 0
         ranges.append([f"{rsha}..{lsha}"] if known else [lsha, "--not", *exclude])
     return ranges
 

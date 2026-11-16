@@ -6,7 +6,7 @@ import unittest
 
 class TestHiddenCheck(unittest.TestCase):
     def test_check_passes(self):
-        r = subprocess.run([sys.executable, "tools/check.py", "--all"], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, "tools/check.py", "--all"], capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
     def test_zones_kept_and_completed(self):

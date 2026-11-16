@@ -19,19 +19,27 @@ unsafe and unreliable, in two specific ways this wrapper fixes:
     python3 scripts/run_evals.py                 # all evals, haiku, 3 runs
     python3 scripts/run_evals.py --model sonnet --runs 5
     python3 scripts/run_evals.py --keep           # leave the sandbox for inspection
+    python3 scripts/run_evals.py --timeout 1800   # wall cap for the whole harness run
 
-Exit 0 all passed, 1 any failed, 2 setup error.
+The harness and every probe it starts run in one process group under procguard,
+which stops the group at the --timeout cap (default 3600 s) or on a signal.
+
+Exit 0 all passed, 1 any failed, 2 setup error or time limit.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import procguard  # noqa: E402
 
 SKILL = Path(__file__).resolve().parent.parent
 SKILL_NAME = SKILL.name
@@ -115,7 +123,10 @@ def main() -> int:
     ap.add_argument("--runs", type=int, default=3, help="runs per query")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--keep", action="store_true", help="do not delete the sandbox")
+    ap.add_argument("--timeout", type=float, default=3600,
+                    help="seconds before the harness and its probes are stopped (default 3600)")
     args = ap.parse_args()
+    procguard.install_signal_handlers()
 
     harness = find_harness()
     cases = load_cases()
@@ -131,21 +142,28 @@ def main() -> int:
         print(f"skill:   {SKILL_NAME}")
         print(f"model:   {args.model}   runs/query: {args.runs}\n")
 
-        proc = subprocess.run(
-            [
-                sys.executable,
-                str(harness / "scripts" / "run_eval.py"),
-                "--eval-set", str(eval_set),
-                "--skill-path", str(SKILL),
-                "--model", args.model,
-                "--runs-per-query", str(args.runs),
-                "--num-workers", str(args.workers),
-            ],
-            cwd=sandbox,
-            env={**__import__("os").environ, "PYTHONPATH": str(harness)},
-            capture_output=True,
-            text=True,
-        )
+        try:
+            proc = procguard.run(
+                [
+                    sys.executable,
+                    str(harness / "scripts" / "run_eval.py"),
+                    "--eval-set", str(eval_set),
+                    "--skill-path", str(SKILL),
+                    "--model", args.model,
+                    "--runs-per-query", str(args.runs),
+                    "--num-workers", str(args.workers),
+                ],
+                cwd=sandbox,
+                env={**os.environ, "PYTHONPATH": str(harness),
+                     "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"},
+                capture_output=True,
+                text=True,
+                timeout=args.timeout,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"harness passed the {args.timeout:g} s limit; it and its probes were stopped",
+                  file=sys.stderr)
+            return 2
         if proc.returncode != 0 and not proc.stdout.strip():
             print(proc.stderr[-2000:], file=sys.stderr)
             return 2

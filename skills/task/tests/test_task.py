@@ -173,7 +173,7 @@ FAKE_CODEX = HERE.parent / "harnesses" / "codex" / "tests" / "fake_codex.py"
 
 
 def git(args, cwd):
-    return subprocess.run(["git", *args], cwd=str(cwd), text=True, capture_output=True, check=True)
+    return subprocess.run(["git", *args], cwd=str(cwd), text=True, capture_output=True, check=True, timeout=60)
 
 
 class SkillPreloadTest(unittest.TestCase):
@@ -210,7 +210,7 @@ class SkillPreloadTest(unittest.TestCase):
     def tearDown(self):
         for d in self.state.glob("*/ws"):
             subprocess.run(["git", "worktree", "remove", "--force", str(d)], cwd=str(self.repo),
-                           capture_output=True)
+                           capture_output=True, timeout=60)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def task(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
@@ -277,7 +277,7 @@ class SkillPreloadTest(unittest.TestCase):
         finally:
             for ws in cache_state.glob("*/*/ws"):
                 subprocess.run(["git", "worktree", "remove", "--force", str(ws)], cwd=str(self.repo),
-                               capture_output=True)
+                               capture_output=True, timeout=60)
             shutil.rmtree(cache_state, ignore_errors=True)
 
     def test_claude_only_tools_warn(self):

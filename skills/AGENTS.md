@@ -29,6 +29,10 @@ That `python3` can be the 3.9 that stock macOS ships, so skill scripts follow th
 The one outside dependency allowed is another skill, referenced by name: its CLI, or its `scripts/` found as a sibling folder.
 A skill that must read the repo itself, such as the seeder or the skill checkers, says so in its SKILL.md.
 
+**A skill that starts processes or loads models owns their whole life.**
+Agent CLIs, model runners, shells, servers and background work follow [`skill-authoring/references/process-lifecycle.md`](skill-authoring/references/process-lifecycle.md): they spawn through a byte-identical copy of `procguard.py`, have a time limit, stop as a whole process group on every exit path, and release models.
+`skill-authoring/scripts/check_spawns.py` and the repo's `tests/test_spawn_lint.py` fail on a spawn that does not.
+
 **Prose-only skills take the same discipline without the code.**
 A skill with no executable surface - pure method, standard, or advisory text - is exempt from the script rule but not from the budget: it is exactly as verbose as its purpose requires and no more.
 

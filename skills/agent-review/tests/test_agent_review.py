@@ -7,11 +7,14 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+import uuid
 from datetime import date
 from pathlib import Path
 
@@ -359,6 +362,8 @@ class TestOneShotRunners(Base):
                 self.assertEqual(cwd.parent, self.out.resolve())
                 self.assertEqual(list(cwd.iterdir()), [], "the cwd must be empty")
                 self.assertNotIn("AGENT_REVIEW_FAKE_RESPONSES_NOPE", call["env"])
+                # a `claude -p` child runs without background tasks; the other CLIs never see the flag
+                self.assertEqual("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS" in call["env"], harness == "claude", harness)
                 run = json.loads((self.out / "run.json").read_text())
                 self.assertEqual(run["usage"]["files_inlined"], 2)
                 self.assertEqual(run["exit_code"], 0)
@@ -600,9 +605,11 @@ class TestOneShotRunners(Base):
             self.assertFalse(self.out.exists())
         finally:
             empty.rmdir()
-        # PATH is not consulted when the fake dir is set: the fakes answer with PATH emptied
+        # PATH is not consulted when the fake dir is set: the fakes answer with PATH holding no
+        # agent CLI, only git and the system tools (procguard's watchdog runs `ps`)
         self.env["AGENT_REVIEW_CLI_DIR"] = str(HERE / "fake-cli")
-        env = dict(self.env, AGENT_REVIEW_FAKE_RESPONSES="{}", PATH=os.path.dirname(shutil.which("git")))
+        env = dict(self.env, AGENT_REVIEW_FAKE_RESPONSES="{}",
+                   PATH=os.pathsep.join([os.path.dirname(shutil.which("git")), "/bin"]))
         args = [sys.executable, str(SCRIPT), "run", "--harness", "antigravity", "--brief", str(self.brief), "--out", str(self.out),
                 "--file", str(self.src / "pkg" / "a.py")]
         r = subprocess.run(args, env=env, text=True, capture_output=True, timeout=120)
@@ -1073,6 +1080,93 @@ class TestReviewPaths(Base):
         self.assertIn("unavailable", r.stderr)
         self.assertFalse(self.out.exists())
         self.assertEqual(self.calls(), [])
+
+
+def tagged(token: str) -> list:
+    """Live processes carrying `token` in their argv."""
+    out = subprocess.run(["ps", "-A", "-o", "pid=,stat=,command="], capture_output=True, text=True, timeout=10).stdout
+    pids = []
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and token in parts[2] and not parts[1].startswith("Z"):
+            pids.append(int(parts[0]))
+    return pids
+
+
+def wait_for(cond, limit: float = 10.0) -> bool:
+    end = time.monotonic() + limit
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.1)
+    return cond()
+
+
+class TestProcessLifecycle(Base):
+    """A hung CLI, with a grandchild of its own, under each way the review can end: its
+    timeout, and the process running the review stopped by SIGTERM, SIGHUP or SIGKILL. The
+    fake hangs as a process tagged with a fresh token, and nothing tagged may survive."""
+
+    def setUp(self):
+        super().setUp()
+        self.token = f"agent-review-lifecycle-{uuid.uuid4().hex}"
+        self.env = {k: v for k, v in self.env.items() if k != "AGENT_REVIEW_FAKE_BIN"}
+        self.env.update(AGENT_REVIEW_CLI_DIR=str(HERE / "fake-cli"),
+                        AGENT_REVIEW_FAKE_RESPONSES=json.dumps({"claude": {"hang": self.token}}))
+
+    def tearDown(self):
+        for pid in tagged(self.token):  # only this test's own tagged processes
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        super().tearDown()
+
+    def assert_gone(self, limit: float = 10.0):
+        self.assertTrue(wait_for(lambda: not tagged(self.token), limit), f"left running: {tagged(self.token)}")
+
+    def test_a_hung_cli_is_stopped_with_its_whole_tree_at_the_timeout(self):
+        from unittest import mock
+        stage = self.tmp / "stage"
+        stage.mkdir()
+        (stage / "a.py").write_text("x = 1\n")
+        out = {}
+        env = {k: v for k, v in self.env.items() if k.startswith("AGENT_REVIEW_")}
+        with mock.patch.dict(os.environ, env):
+            os.environ.pop("AGENT_REVIEW_FAKE_BIN", None)
+            cfg = ar.resolve("claude", None, None)
+            started = time.monotonic()
+            worker = threading.Thread(target=lambda: out.update(ar.run_harness(cfg, self.brief, stage, 3, self.tmp)))
+            worker.start()
+            self.assertTrue(wait_for(lambda: len(tagged(self.token)) >= 2), "the fake CLI never hung")
+            worker.join(30)
+        self.assertFalse(worker.is_alive())
+        self.assertLess(time.monotonic() - started, 15)
+        self.assertEqual((out["exit_code"], out["error"]), (ar.EXIT_FAILED, "timeout after 3 s"))
+        self.assert_gone(5)
+
+    def stop_parent(self, sig):
+        log = (self.tmp / "parent.log").open("w")
+        self.addCleanup(log.close)
+        args = [sys.executable, str(SCRIPT), "run", "--harness", "claude", "--brief", str(self.brief), "--out", str(self.out),
+                "--file", str(self.src / "pkg" / "a.py"), "--no-sanitize", "--timeout", "300"]
+        parent = subprocess.Popen(args, env=self.env, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+        self.addCleanup(lambda: parent.poll() is None and parent.kill())
+        self.assertTrue(wait_for(lambda: len(tagged(self.token)) >= 2), "the fake CLI never hung")
+        started = time.monotonic()
+        parent.send_signal(sig)
+        parent.wait(30)
+        self.assertLess(time.monotonic() - started, 20, "the review waited on its CLI")
+        self.assert_gone(10)
+
+    def test_review_parent_sigterm(self):
+        self.stop_parent(signal.SIGTERM)
+
+    def test_review_parent_sighup(self):
+        self.stop_parent(signal.SIGHUP)
+
+    def test_review_parent_sigkill(self):
+        self.stop_parent(signal.SIGKILL)
 
 
 if __name__ == "__main__":

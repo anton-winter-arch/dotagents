@@ -5,12 +5,17 @@ no test spends tokens or reaches a model."""
 import importlib.util
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
+import uuid
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE.parent / "scripts" / "support_local.py"
@@ -305,6 +310,7 @@ class TestHeadlessRun(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         call = self.env_calls()[0]
         self.assertEqual(call["seat"], "support-local")
+        self.assertEqual(call["no_background"], "1", "a timed-out tool call must stop, not move to the background")
         self.assertEqual(call["entries"], [], "the worker's cwd holds nothing")
         self.assertNotEqual(Path(call["cwd"]).resolve(), Path.cwd().resolve())
         self.assertFalse(Path(call["cwd"]).exists(), "the empty cwd is removed after the run")
@@ -424,6 +430,98 @@ class TestHeadlessRun(unittest.TestCase):
                            input=json.dumps(obj), capture_output=True, text=True, env=self.env, timeout=60)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("1 verified, 0 unsupported", p.stdout)
+
+
+def tagged(token: str) -> list:
+    """Live pids whose command line carries `token`."""
+    out = subprocess.run(["ps", "-A", "-o", "pid=,stat=,command="], capture_output=True, text=True, timeout=10).stdout
+    pids = []
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and token in parts[2] and not parts[1].startswith("Z"):
+            pids.append(int(parts[0]))
+    return pids
+
+
+def wait_for(cond, limit: float = 10.0) -> bool:
+    end = time.monotonic() + limit
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.1)
+    return cond()
+
+
+class TestWorkerLifecycle(unittest.TestCase):
+    """The worker and every tool child it starts end with the run: on a timeout, and when the runner itself is
+    stopped or killed. The fake worker starts a grandchild tagged with a fresh token and hangs; each test asserts
+    no tagged process survives, and kills only those in tearDown."""
+
+    def setUp(self):
+        self.token = f"support-local-test-{uuid.uuid4().hex}"
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        fake = bin_dir / "claude"
+        fake.write_text("#!/bin/sh\nexec " + sys.executable + " " + str(HERE / "fake_claude.py") + ' "$@"\n')
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+        self.corpus = self.root / "corpus"
+        self.corpus.mkdir()
+        self.env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "SUPPORT_LOCAL_STATE": str(self.root / "state"),
+                    "FAKE_CLAUDE_MODE": "hang_tree", "FAKE_CLAUDE_TOKEN": self.token}
+
+    def tearDown(self):
+        sl.procguard.stop_all(grace=0.5)
+        for pid in tagged(self.token):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        self.tmp.cleanup()
+
+    def assert_gone(self, limit: float = 10.0):
+        self.assertTrue(wait_for(lambda: not tagged(self.token), limit), f"left running: {tagged(self.token)}")
+
+    def test_a_worker_past_its_timeout_returns_the_timeout_result_and_leaves_nothing(self):
+        results = []
+        with mock.patch.dict(os.environ, self.env):
+            t = threading.Thread(target=lambda: results.append(sl.run_worker("brief", "claude-haiku-5-5", 3, 2)))
+            t.start()
+            self.assertTrue(wait_for(lambda: tagged(self.token)), "the worker's tool child never started")
+            t.join(30)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(results[0]["died"], "timeout")
+        self.assertEqual(results[0]["subtype"], "killed after 2 s")
+        self.assertTrue(results[0]["is_error"])
+        self.assert_gone(5)
+        self.assertEqual(list((self.root / "state" / "cwd").iterdir()), [], "the worker's cwd is removed")
+
+    def start_runner(self) -> subprocess.Popen:
+        runner = subprocess.Popen([sys.executable, str(SCRIPT), "run", "--goal", "g", "--corpus", str(self.corpus),
+                                   "--timeout", "300", "--retries", "0"], env=self.env, stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: runner.poll() is None and runner.kill())
+        self.assertTrue(wait_for(lambda: tagged(self.token), 20), "the worker's tool child never started")
+        return runner
+
+    def test_runner_sigterm_stops_the_worker_tree(self):
+        runner = self.start_runner()
+        runner.send_signal(signal.SIGTERM)
+        runner.wait(20)
+        self.assert_gone(8)
+
+    def test_runner_sighup_stops_the_worker_tree(self):
+        runner = self.start_runner()
+        runner.send_signal(signal.SIGHUP)
+        runner.wait(20)
+        self.assert_gone(8)
+
+    def test_runner_sigkill_stops_the_worker_tree(self):
+        runner = self.start_runner()
+        runner.kill()
+        runner.wait(5)
+        self.assert_gone(8)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,12 @@
 """Shared body of the four fake CLIs in this folder (claude, codex, agent, agy). Each
 records its argv, stdin, cwd and environment as one JSON line to AGENT_REVIEW_FAKE_RECORD
 and prints the real CLI's output shape, with the text from AGENT_REVIEW_FAKE_RESPONSES
-keyed by CLI name ({"text": ..., "fail": bool}). No model, no network."""
+keyed by CLI name ({"text": ..., "fail": bool}). No model, no network.
+
+{"hang": "<token>"} makes the call hang the way a stuck CLI does: the process becomes one
+tagged with that token in its argv, which starts a tagged grandchild and sleeps, so a test
+can check that stopping the call leaves nothing behind. "hang_when": "<text>" limits that to
+the calls whose prompt or argv holds the text."""
 
 import json
 import os
@@ -11,6 +16,9 @@ from pathlib import Path
 
 AGY_MODELS = ["gemini-4-argon-medium", "gemini-4-argon-high", "gemini-4-argon-low", "gemini-3.8-flash-high",
               "gemini-3.8-flash-medium", "gemini-3.8-flash-low", "claude-opus-5-5-high"]
+HANGER = ("import subprocess, sys, time\n"
+          "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)', sys.argv[1]])\n"
+          "time.sleep(600)")
 
 
 def main(name: str) -> int:
@@ -22,6 +30,8 @@ def main(name: str) -> int:
         for slug in spec.get("models", AGY_MODELS):
             print(f"{slug}\t{slug.replace('-', ' ').title()}")
         return 0
+    if spec.get("hang") and spec.get("hang_when", "") in stdin + "\n".join(sys.argv):
+        os.execv(sys.executable, [sys.executable, "-c", HANGER, spec["hang"]])
     if name == "agy" and "--model" in sys.argv and sys.argv[sys.argv.index("--model") + 1] not in spec.get("models", AGY_MODELS):
         # the real CLI since 1.3.x: a slug it does not list is refused up front, the message in `error` and on stderr
         wanted = sys.argv[sys.argv.index("--model") + 1]

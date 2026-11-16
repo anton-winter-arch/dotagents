@@ -588,7 +588,11 @@ def summarize_links(text: str) -> list[str]:
 
 def run_via(argv: list[str], home: Path) -> tuple[int, str]:
     env = dict(os.environ, HOME=str(home))
-    p = subprocess.run(argv, text=True, capture_output=True, env=env, stdin=subprocess.DEVNULL)
+    try:
+        p = subprocess.run(argv, text=True, capture_output=True, env=env, stdin=subprocess.DEVNULL,
+                           timeout=600)
+    except subprocess.TimeoutExpired:
+        return 1, f"{Path(argv[1] if len(argv) > 1 else argv[0]).name} ran past 600 s and was stopped"
     return p.returncode, (p.stdout + p.stderr)
 
 

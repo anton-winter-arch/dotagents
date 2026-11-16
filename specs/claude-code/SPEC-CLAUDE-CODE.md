@@ -497,10 +497,10 @@ use. The canonical list and the honest per-tool header conventions live in
 
 The hook scripts live in two repository folders and are copied flat into
 `~/.claude/hooks/`. The repository's `hooks/`, with `hooks/manifest.json`,
-holds the twenty-five scripts that enforce rules about the repository, the machine
+holds the twenty-seven scripts that enforce rules about the repository, the machine
 or the content (every guard, gate and content check this section lists, the
-chat-register pair included) and their eight companion files, `_input.py`,
-`_shell_dirs.py`, `_web_guard.py`, `web_download.py`, `_require.sh`,
+chat-register pair included) and their nine companion files, `_input.py`,
+`_shell_dirs.py`, `_web_guard.py`, `web_download.py`, `procguard.py`, `_require.sh`,
 `reject-words.json`, `no-meta-commentary.patterns` and the published-copy
 example list, which are copied but never wired. This folder's `hooks/`, with
 its own `manifest.json`, holds the six that serve Claude Code
@@ -512,7 +512,7 @@ key of [`settings.json`](settings.json) from the two manifests, and
 entries only. The build plan and the hook-input captures are in
 `tasks/SPEC-HARNESS-SEEDING.md`.
 
-Thirty-one wired hooks: three Bash-write/delete guards (`deny-bash-file-writes.sh`,
+Thirty-three wired hooks: three Bash-write/delete guards (`deny-bash-file-writes.sh`,
 `guard-rm.sh`, `block-env-files.sh`), the clipboard-read prompt
 (`ask-clipboard-reads.sh`), the `~/.claude`-edit prompt
 (`ask-before-claude-folder-edits.sh`), the SessionStart inbox check
@@ -538,13 +538,15 @@ warning (`warn_cross_repo_git.py`), the foreign-edit warning
 (`warn_foreign_edits.py`), the git-hook bypass guard
 (`guard_git_bypass.py`, refusing an agent's `--no-verify` and hooks-path overrides),
 the debugger guard (`deny_debugger_attach.py`, refusing an agent's `lldb`, `gdb`,
-`debugserver` and `DevToolsSecurity` commands), the dialog guard
+`debugserver` and `DevToolsSecurity` commands), the background guard
+(`background_guard.py`, holding background commands to the process guard and refusing detached work),
+the orphan report (`reaper.py`, SessionStart), the dialog guard
 (`peer_turn_no_dialog.py`, refusing a question or plan dialog on a turn the user did not start),
 and the three web hooks (`web_fetch_guard.py`, remembering a host's refusal and spacing page fetches;
 `download_guard.py`, governing shell fetches and where a download lands; `web_session_end.py`, scanning
 the session's downloads and removing its web state).
-Ten are advisory/non-blocking (`read-size-advisory`,
-`cmon_nudge`, `harness_version_check`, `claude_mem_health`, `warn_cross_repo_git`, `warn_foreign_edits`, both `no-meta-commentary` sides,
+Eleven are advisory/non-blocking (`read-size-advisory`,
+`cmon_nudge`, `harness_version_check`, `claude_mem_health`, `reaper`, `warn_cross_repo_git`, `warn_foreign_edits`, both `no-meta-commentary` sides,
 `memory_lint`'s judgment checks, and `reject_identifiers`), and
 `memory-routing` is advisory until a memory folder reaches its cap;
 the rest can block.
@@ -1265,6 +1267,33 @@ Tests: `tests/station-hooks/test-deny-debugger-attach.py`.
 
 Script: [`../../hooks/deny_debugger_attach.py`](../../hooks/deny_debugger_attach.py).
 
+### `background_guard.py`
+
+PreToolUse guard (matcher `Bash`) - **blocking** (exit 2).
+It enforces the process-lifecycle standard (`skills/skill-authoring/references/process-lifecycle.md`) for agent shell commands.
+A local Claude Code session puts no time limit on a background command, and a foreground command that reaches its timeout moves to the background rather than stopping.
+A `run_in_background` command must therefore be one call of the companion `procguard.py` with a time limit of at most 7200 seconds, optionally after `cd` steps.
+That call runs the command in its own process group, and the group stops at the time limit or when the session's shell goes away.
+`--detached` and an interpreter reading its program from stdin are refused.
+Any command that detaches work from the session (a lone `&`, `nohup`, `setsid`, `disown`) is refused in the foreground too.
+Quoted text, `&&`, `2>&1`, `&>` and here-document bodies never count, through the same tokenizer as `deny_debugger_attach.py`.
+It exits 0 on any error of its own.
+Tests: `tests/station-hooks/test-background-guard.py`.
+
+Script: [`../../hooks/background_guard.py`](../../hooks/background_guard.py).
+
+### `reaper.py`
+
+SessionStart (matchers `startup`, `resume`) - advisory, never blocks.
+It reports the user's own heavy interpreter, agent-CLI, model-runner and encoder processes that are orphaned (parent pid 1) or have run under a live session for over an hour. Heavy means an average CPU of at least 10% over the process's life, or at least 2 GB resident.
+It never stops anything; the model is told to name each process to the user and to stop one only after a yes.
+Long tokens in command lines are masked and the home path is shown as `~`.
+Lines in `~/.claude/state/reaper-ignore` exempt a process the user runs on purpose.
+`reaper.py --report` prints the same findings as plain text for wrap-up's resource step.
+Tests: `tests/station-hooks/test-reaper.py`.
+
+Script: [`../../hooks/reaper.py`](../../hooks/reaper.py).
+
 ### `web_fetch_guard.py`
 
 Hooks on the fetch tool (matcher `WebFetch`): PreToolUse **blocking** (a JSON `deny` or `ask`), PostToolUse and PostToolUseFailure recording only.
@@ -1307,6 +1336,7 @@ Script: [`../../hooks/download_guard.py`](../../hooks/download_guard.py).
 
 SessionEnd hook - non-blocking.
 When the session recorded download folders and the `local-security` command is installed, it starts `local-security scan path <folders>` as a detached process and does not wait: a finding reaches the user through that tool's own alerts.
+The scan runs under the companion `procguard.py` in `--detached` mode, so it and everything it starts stop after 30 minutes.
 Only folders that still exist strictly inside a temp root are passed, as absolute paths; a temp root itself is never recorded or scanned.
 Then it removes the session's `web-guard` state folder and nothing else.
 A session that ends without this event leaves that folder for the operating system to clear.

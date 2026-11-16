@@ -173,7 +173,8 @@ def seed(dest: Path, guards: tuple[Path, ...], dry_run: bool, files: list[tuple[
 
 
 def kg(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, str(KG), *args], capture_output=True, text=True)
+    # An ingest of a large vault takes minutes; the cap only stops a hung one.
+    return subprocess.run([sys.executable, str(KG), *args], capture_output=True, text=True, timeout=900)
 
 
 def merge_profiles(config: Path, replace_detected: bool = False) -> int:

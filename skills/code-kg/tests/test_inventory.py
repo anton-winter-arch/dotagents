@@ -156,7 +156,7 @@ class TestTree(InventoryCase):
 
 SHARED = ("glob_match", "tree_payload", "render_tree", "write_checkpoint",
           "_ro_connect", "classify_units", "est_tokens", "rank_from",
-          "linked_store")
+          "linked_store", "seed_gitignore")
 
 
 class TestSharedBodies(unittest.TestCase):
