@@ -38,6 +38,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import procguard  # noqa: E402
+
 CANONICAL_GUARD = Path("skills/skill-authoring/scripts/procguard.py")
 FLOOR = "/usr/bin/python3"
 SUITE_TIMEOUT = 900
@@ -170,8 +173,10 @@ def run_check(root: Path, kind: str, path: str, py: str) -> tuple[bool, str]:
     else:
         cmd, cwd = [py, path], root
     try:
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=SUITE_TIMEOUT,
-                           stdin=subprocess.DEVNULL)
+        # The guard stops the suite's whole process group at the limit, so a hung
+        # pytest under `uv run`, or a server a test started, cannot outlive the run.
+        p = procguard.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=SUITE_TIMEOUT,
+                          stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
         return False, f"ran past {SUITE_TIMEOUT} s"
     tail = [ln for ln in (p.stderr + p.stdout).splitlines() if ln.strip()]
@@ -187,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--both", action="store_true", help="run on the newest python3 as well as the 3.9 floor")
     ap.add_argument("--force", action="store_true", help="rerun checks that already passed on this content")
     a = ap.parse_args(argv)
+    procguard.install_signal_handlers()
     root = repo_root()
     files = a.files or changed_files(root)
     checks, lint = plan(root, files)
@@ -201,8 +207,8 @@ def main(argv: list[str] | None = None) -> int:
     failed = 0
     if lint:
         lint_script = root / "skills" / "skill-authoring" / "scripts" / "check_spawns.py"
-        p = subprocess.run([pys[0], str(lint_script), *[str(root / f) for f in lint]], cwd=root,
-                           capture_output=True, text=True, timeout=300)
+        p = procguard.run([pys[0], str(lint_script), *[str(root / f) for f in lint]], cwd=root,
+                          capture_output=True, text=True, timeout=300)
         ok = p.returncode == 0
         failed += not ok
         print(f"{'ok  ' if ok else 'FAIL'} spawn lint: {(p.stdout + p.stderr).strip().splitlines()[-1:]}")
