@@ -817,17 +817,24 @@ def _match_segments(parts: list[str], pats: list[str]) -> bool:
 
 
 def glob_match(rel_path: str, pattern: str) -> bool:
-    """Glob with `**` meaning any number of path segments. A bare pattern with
-    no slash also matches on basename, the way gitignore does."""
-    pattern = pattern.strip().lstrip("./")
-    if not pattern or len(pattern) > GLOB_MAX_LEN:
+    """Glob with `**` meaning any number of path segments. code-kg's
+    `glob_match` has the same body; keep the two identical."""
+    if len(pattern) > GLOB_MAX_LEN:
         return False
-    if pattern.endswith("/"):
-        pattern += "**"
-    if _match_segments(rel_path.split("/"), pattern.split("/")):
+    pattern = pattern.strip()
+    if pattern.startswith("./"):
+        pattern = pattern[2:]
+    pattern = pattern.strip("/")
+    if not pattern:
+        return False
+    parts = rel_path.split("/")
+    pats = pattern.split("/")
+    if _match_segments(parts, pats):
         return True
-    if "/" not in pattern:
-        return _match_segment(rel_path.rsplit("/", 1)[-1], pattern)
+    # A bare pattern with no slash also matches by basename or any dir part,
+    # the way .gitignore reads `dist` or `*.min.js`.
+    if len(pats) == 1:
+        return any(_match_segment(part, pats[0]) for part in parts)
     return False
 
 
@@ -1086,13 +1093,6 @@ def scan_wikilinks(text: str) -> list[tuple[str, str, str, int]]:
     return out
 
 
-def extract_wikilinks(text: str) -> list[tuple[str, str, int]]:
-    """Wikilink (target, kind, char_offset) triples in document order: the
-    note-level view of `scan_wikilinks`, without anchors or same-note links."""
-    return [(target, kind, off)
-            for target, _, kind, off in scan_wikilinks(text) if target]
-
-
 _PAREN_RE = re.compile(r"[()]")
 
 
@@ -1185,15 +1185,6 @@ def scan_md_links(text: str) -> list[tuple[str, str, str, int]]:
     return out
 
 
-def extract_md_links(text: str) -> list[tuple[str, int]]:
-    """Inline markdown link (target, char_offset) pairs in document order:
-    the note-level view of `scan_md_links`. Images, external schemes and bare
-    fragments are skipped; `<...>` wrapping, `"title"` suffixes and fragments
-    are stripped."""
-    return [(target, off) for target, _, style, off in scan_md_links(text)
-            if target and style == "inline"]
-
-
 def _single_line(target: str) -> bool:
     """A link target that carries a line break or a control character is not a
     link; it is prose that got swallowed by an unclosed bracket. Refusing it
@@ -1209,22 +1200,6 @@ def _single_line(target: str) -> bool:
     if len(target.splitlines()) > 1:
         return False
     return not any(ord(c) < 0x20 or 0x7F <= ord(c) < 0xA0 for c in target)
-
-
-def resolve_md_link(target: str, src_rel: str) -> str | None:
-    """Resolve a markdown link target to a note id (vault-relative, no .md),
-    or None if it is not a .md file inside the vault."""
-    target = urllib.parse.unquote(target)
-    if not target.lower().endswith(".md"):
-        return None
-    if target.startswith("/"):
-        rel = posixpath.normpath(target.lstrip("/"))
-    else:
-        rel = posixpath.normpath(posixpath.join(posixpath.dirname(src_rel),
-                                                target))
-    if rel.startswith(".."):
-        return None
-    return rel[: -len(".md")]
 
 
 def resolve_wikilink(target: str, ids: list[str], by_base: dict[str, list[str]],
@@ -4018,21 +3993,13 @@ def cmd_profile(args: argparse.Namespace) -> int:
 
 def cmd_query(args: argparse.Namespace) -> int:
     vault = vault_dir(args.vault)
-    con = open_fresh(vault)
     try:
-        rows = con.execute(
-            "SELECT s.id, s.note_id, s.heading_path, s.line_start, s.line_end,"
-            " snippet(sections_fts, 2, '[', ']', ' ... ', 14)"
-            " FROM sections_fts JOIN sections s ON s.rowid = sections_fts.rowid"
-            " WHERE sections_fts MATCH ? ORDER BY bm25(sections_fts) LIMIT ?",
-            (args.fts_query, args.limit)).fetchall()
-    except sqlite3.OperationalError as e:
-        con.close()
-        sys.exit(f"error: invalid FTS5 query {args.fts_query!r}: {e}")
-    con.close()
-    payload = [{"section_id": r[0], "note_id": r[1],
-                "heading_path": r[2] or "(top)", "lines": f"{r[3]}-{r[4]}",
-                "snippet": r[5]} for r in rows]
+        rows = query(vault, args.fts_query, args.limit)
+    except ValueError as e:
+        sys.exit(f"error: {e}")
+    payload = [{"section_id": r["section_id"], "note_id": r["note_id"],
+                "heading_path": r["heading_path"] or "(top)",
+                "lines": r["lines"], "snippet": r["snippet"]} for r in rows]
     record_session_reads(vault, args.session,
                          [h["section_id"] for h in payload], "query")
 
@@ -4993,29 +4960,56 @@ def cmd_code(args: argparse.Namespace) -> int:
     return emit(args, payload, render)
 
 
+SPANS_LIMIT = 50
+# Doc rank for capped lists: fixed names, never a config pattern.
+PRIMARY_DOCS = ("README.md", "SKILL.md", "AGENTS.md", "CLAUDE.md")
+ARCHIVE_DIRS = ("archive", "archived", "_archive", "completed", "old",
+                "deprecated")
 SPAN_COLS = ("text", "src", "note_path", "section_id", "heading_path",
              "line_start", "line_end", "line")
 
 
+def doc_rank(path: str) -> int:
+    """0 for a primary doc, 2 for an archived one, 1 otherwise: the order a
+    capped list of doc rows is cut in. code-kg's `doc_rank` has the same
+    body; keep the two identical."""
+    parts = path.lower().split("/")
+    if any(p in ARCHIVE_DIRS for p in parts[:-1]):
+        return 2
+    base = path.rsplit("/", 1)[-1]
+    return 0 if base in PRIMARY_DOCS or base.startswith("SPEC") else 1
+
+
 def cmd_spans(args: argparse.Namespace) -> int:
     """With no text: every distinct code span and how many sections hold
-    it. With texts: the sections that hold each one."""
+    it, most sections first. With texts: the sections that hold each one,
+    primary docs first. `--limit` cuts either list after ranking."""
     con = open_fresh(vault_dir(args.vault))
     if args.text:
         payload = []
         for text in sorted(set(args.text)):
-            payload += [dict(zip(SPAN_COLS, r)) for r in con.execute(
+            rows = [dict(zip(SPAN_COLS, r)) for r in con.execute(
                 "SELECT c.text, c.note_id, n.path, c.section_id,"
                 " COALESCE(s.heading_path, '(top)'), s.line_start,"
                 " s.line_end, c.line FROM code_spans c"
                 " JOIN notes n ON n.id = c.note_id"
                 " LEFT JOIN sections s ON s.id = c.section_id"
                 " WHERE c.text=? ORDER BY c.note_id, c.line", (text,))]
+            payload += sorted(rows, key=lambda r: doc_rank(r["note_path"]))
+        rank = "primary docs first"
     else:
         payload = [{"text": t, "sections": n} for t, n in con.execute(
             "SELECT text, count(*) FROM code_spans GROUP BY text"
-            " ORDER BY text")]
+            " ORDER BY count(*) DESC, text")]
+        rank = "most sections first"
     con.close()
+    total = len(payload)
+    if args.limit > 0 and total > args.limit:
+        payload = payload[:args.limit]
+    cut = (f"TRUNCATED {len(payload)} of {total}, {rank};"
+           " --limit 0 for all" if len(payload) < total else "")
+    if cut and getattr(args, "json", False):
+        print(f"spans: {cut}", file=sys.stderr)
 
     def render(rows_):
         if not rows_:
@@ -5026,6 +5020,8 @@ def cmd_spans(args: argparse.Namespace) -> int:
                       f"  line {r['line']}")
             else:
                 print(f"{r['sections']:>5}  `{r['text']}`")
+        if cut:
+            print(cut)
         return 0
     return emit(args, payload, render)
 
@@ -6170,6 +6166,12 @@ def main(argv: list[str] | None = None) -> int:
                                 " name; with texts, the sections that hold"
                                 " them")
     p.add_argument("text", nargs="*")
+    p.add_argument("--limit", type=int, default=SPANS_LIMIT,
+                   help=f"rows returned, default {SPANS_LIMIT}; 0 for all."
+                        " The listing is ranked by section count, the"
+                        " sections for given texts put primary docs first"
+                        " and archives last; a cut prints TRUNCATED N of M"
+                        " (on stderr with --json)")
 
     p = add("entity", cmd_entity, "a registered entity and its mentions")
     p.add_argument("name")
@@ -6225,12 +6227,19 @@ def main(argv: list[str] | None = None) -> int:
     if not getattr(args, "json", False):
         sys.stdout = _SafeStream(out)
     try:
-        return args.fn(args)
+        rc = args.fn(args)
+        out.flush()
+        return rc
     except SystemExit as e:
         if isinstance(e.code, str):
             # The interpreter prints this after the streams are restored.
             raise SystemExit(_term_safe(e.code)) from None
         raise
+    except BrokenPipeError:
+        # The reader stopped early (`| head`). Point stdout at devnull so
+        # the interpreter's last flush cannot raise again, and exit quietly.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), out.fileno())
+        return 1
     finally:
         sys.stdout, sys.stderr = out, err
 

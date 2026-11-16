@@ -186,8 +186,10 @@ path and no submission protocol. Field reference: `references/config.md`.
    member written without its class. A span that names nothing is left
    out. Treat a `symbol` as certain only when
    `corroborated` is true, which means the note also names or links the
-   defining file. `spans` lists the code spans themselves; given span
-   texts, it lists the sections that hold them.
+   defining file. `spans` lists the code spans themselves, most sections
+   first; given span texts, it lists the sections that hold them, primary
+   docs first and archives last. Both cut at `--limit` (default 50, 0 for
+   all) and say `TRUNCATED N of M` when they do (on stderr with `--json`).
 
    Every edge above is EXTRACTED provenance - explicit link syntax in the
    corpus. An INFERRED relation is a recorded judgment, written only by an

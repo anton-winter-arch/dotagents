@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import builtins
 import hashlib
 import heapq
 import itertools
@@ -79,7 +80,7 @@ CONFIG_NAME = "config.json"
 # Bump when a parser or schema change must re-index a repo whose files have
 # not changed. The manifest folds it in, so the next read command re-ingests
 # once instead of answering from tables the old engine never filled.
-INDEX_REV = 1
+INDEX_REV = 2
 
 # Folders that are never source: build output, package caches, third-party deps.
 SKIP_FOLDERS = {
@@ -318,6 +319,56 @@ CREATE TABLE IF NOT EXISTS edges(
   PRIMARY KEY (src, kind, target, line)
 );
 CREATE INDEX IF NOT EXISTS edges_dst ON edges(dst);
+CREATE TABLE IF NOT EXISTS symbol_edges(  -- rebuilt by every ingest
+  src_file   TEXT NOT NULL,            -- the file the row was read from
+  src        TEXT NOT NULL,            -- symbol id, or file::<module>
+  dst        TEXT,                     -- symbol id; NULL unless resolved
+  target     TEXT NOT NULL,            -- as written in the source
+  kind       TEXT NOT NULL,            -- call|ref|import|decorated-by|extends
+  line       INTEGER NOT NULL,
+  status     TEXT NOT NULL,            -- resolved|weak|ambiguous|external|
+                                       -- unresolved
+  provenance TEXT NOT NULL DEFAULT 'extracted',
+  candidates TEXT NOT NULL DEFAULT ''  -- symbol ids, newline-joined
+);
+CREATE INDEX IF NOT EXISTS symbol_edges_src ON symbol_edges(src);
+CREATE INDEX IF NOT EXISTS symbol_edges_dst ON symbol_edges(dst);
+CREATE TABLE IF NOT EXISTS data_edges(    -- rebuilt by every ingest
+  src_file   TEXT NOT NULL,
+  src        TEXT NOT NULL,            -- symbol id, or file::<module>
+  kind       TEXT NOT NULL,            -- read|write|open|passes|param
+  node_kind  TEXT NOT NULL,            -- global|table|file|env|config|
+                                       -- literal|param
+  node       TEXT NOT NULL,            -- the node's name; param:<name> when
+                                       -- a parameter names it
+  line       INTEGER NOT NULL,
+  status     TEXT NOT NULL,            -- resolved|param|weak
+  via        TEXT NOT NULL DEFAULT '', -- the call that touches it, or
+                                       -- callee#arg for passes
+  provenance TEXT NOT NULL DEFAULT 'extracted'
+);
+CREATE INDEX IF NOT EXISTS data_edges_src ON data_edges(src);
+CREATE TABLE IF NOT EXISTS observed_calls(  -- survives ingest, by run
+  run_id INTEGER NOT NULL,             -- runs.id of a trace-run
+  src    TEXT NOT NULL,                -- caller symbol or file::<module>
+  dst    TEXT NOT NULL,                -- callee symbol
+  line   INTEGER NOT NULL,             -- the caller's line
+  count  INTEGER NOT NULL,
+  PRIMARY KEY (run_id, src, dst, line)
+);
+CREATE TABLE IF NOT EXISTS observed_entries(
+  run_id INTEGER NOT NULL,
+  symbol TEXT NOT NULL,
+  count  INTEGER NOT NULL,
+  PRIMARY KEY (run_id, symbol)
+);
+CREATE TABLE IF NOT EXISTS observed_lines(
+  run_id  INTEGER NOT NULL,
+  file_id TEXT NOT NULL,
+  line    INTEGER NOT NULL,
+  PRIMARY KEY (run_id, file_id, line)
+);
+CREATE INDEX IF NOT EXISTS data_edges_node ON data_edges(node_kind, node);
 CREATE TABLE IF NOT EXISTS entry_points(
   file_id TEXT NOT NULL,
   kind    TEXT NOT NULL,               -- main-guard|shebang|script|bin|
@@ -694,9 +745,14 @@ def _match_segments(parts: list[str], pats: list[str]) -> bool:
 
 
 def glob_match(rel_path: str, pattern: str) -> bool:
+    """Glob with `**` meaning any number of path segments. markdown-kg's
+    `glob_match` has the same body; keep the two identical."""
     if len(pattern) > GLOB_MAX_LEN:
         return False
-    pattern = pattern.strip().strip("/")
+    pattern = pattern.strip()
+    if pattern.startswith("./"):
+        pattern = pattern[2:]
+    pattern = pattern.strip("/")
     if not pattern:
         return False
     parts = rel_path.split("/")
@@ -2459,6 +2515,1509 @@ def _innermost_symbol(symbols: list[dict], line: int) -> str:
 
 
 # ---------- ingest (idempotent full rebuild) ----------
+# ---------- symbol edges (python, static) ----------
+# Statuses: resolved (dst set), weak (one method of that name in the repo,
+# receiver unknown), ambiguous (several), external (stdlib, builtins or a
+# package outside the repo), unresolved (a local value, a nested function,
+# or a name nothing binds). Kinds: call, ref (a function or class used as a
+# value), import, decorated-by, extends.
+SYMBOL_TARGET_MAX = 120
+SYMBOL_CANDIDATES_MAX = 20
+BUILTIN_NAMES = frozenset(dir(builtins))
+
+
+# Data nodes: what a symbol reads and writes. Literal names only; a name
+# computed at run time is not guessed.
+MUTATORS = frozenset(("append", "extend", "insert", "pop", "remove", "clear",
+                      "update", "add", "discard", "setdefault", "popitem"))
+CONFIG_NAME_RE = re.compile(r"(?i)(?:conf|cfg|settings)")
+SQL_MAX = 20000
+_SQL_NAME = r"""[`"\[]?([A-Za-z_][\w.]{0,120})"""
+SQL_WRITE_RE = re.compile(
+    r"\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?"
+    r"|DELETE\s+FROM|CREATE\s+(?:TEMP\w*\s+)?TABLE(?:\s+IF\s+NOT\s+EXISTS)?"
+    r"|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|ALTER\s+TABLE)\s+" + _SQL_NAME, re.I)
+SQL_READ_RE = re.compile(r"\b(?:FROM|JOIN)\s+" + _SQL_NAME, re.I)
+
+
+def sql_tables(sql: str) -> list[tuple[str, str]]:
+    """(access, table) pairs a SQL string names: written by INSERT, UPDATE,
+    DELETE, CREATE, DROP and ALTER; read by FROM and JOIN."""
+    sql = sql[:SQL_MAX]
+    out, spans = [], []
+    for m in SQL_WRITE_RE.finditer(sql):
+        out.append(("write", m.group(1)))
+        spans.append((m.start(), m.end()))
+    for m in SQL_READ_RE.finditer(sql):
+        if not any(a <= m.start() < b for a, b in spans):
+            out.append(("read", m.group(1)))
+    return sorted(set(out))
+
+
+class PySymbols:
+    """Resolves python names to symbol ids across the repo's files, one
+    module scope per file, built on demand and cached."""
+
+    def __init__(self, resolver: "Resolver", trees: dict, ids: dict,
+                 methods: dict) -> None:
+        self.resolver = resolver
+        self.trees = trees            # file id -> ast.Module
+        self.ids = ids                # file id -> {qualname: symbol id}
+        self.methods = methods        # method name -> [symbol id]
+        self.kinds: dict[str, str] = {}   # symbol id -> kind
+        self.roots: dict[str, list] = {}  # file id -> sys.path folders
+        self.attrs: dict[str, dict] = {}  # class id -> {attr: class id}
+        self.envs: dict[str, dict] = {}
+
+    def env(self, fid: str) -> dict:
+        """Module-level bindings: name -> ("sym", id) | ("mod", module) |
+        ("from", module, name) | ("other",)."""
+        if fid in self.envs:
+            return self.envs[fid]
+        env: dict[str, tuple] = {}
+        self.envs[fid] = env
+        tree = self.trees.get(fid)
+        if tree is None:
+            return env
+        for node in _module_statements(tree.body):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef)):
+                sid = self.ids.get(fid, {}).get(node.name)
+                env[node.name] = ("sym", sid) if sid else ("other",)
+            else:
+                _bind_imports(node, env)
+                for name in _stored_names(node):
+                    env[name] = ("other",)
+        return env
+
+    def globals(self, fid: str) -> set:
+        """Names a file assigns at module level: its global variables."""
+        env = self.env(fid)
+        return {n for n, b in env.items() if b == ("other",)}
+
+    def constant(self, fid: str, name: str) -> str | None:
+        """The string a module-level name is assigned, when it is assigned
+        exactly once, to a string literal."""
+        tree = self.trees.get(fid)
+        found = []
+        for node in _module_statements(tree.body if tree else []):
+            if name in _stored_names(node):
+                found.append(node)
+        if len(found) == 1 and isinstance(found[0], ast.Assign) \
+                and isinstance(found[0].value, ast.Constant) \
+                and isinstance(found[0].value.value, str):
+            return found[0].value.value
+        return None
+
+    def module(self, src: str, module: str) -> tuple[str | None, str]:
+        dst, status = self.resolver.resolve_python(src, module)
+        if not dst and not module.startswith("."):
+            # A folder the file itself puts on sys.path, as scripts and
+            # tests that load a sibling module do.
+            stem = module.replace(".", "/")
+            for root in self.path_roots(src):
+                for cand in (posixpath.join(root, stem) + ".py",
+                             posixpath.join(root, stem, "__init__.py")):
+                    if cand in self.resolver.files:
+                        return cand, "resolved"
+        if status == "external":
+            return None, "external"
+        return (dst, "resolved") if dst else (None, "unresolved")
+
+    def path_roots(self, fid: str) -> list[str]:
+        """Repo folders a file adds with `sys.path.insert` or `append`,
+        when the path is built from `__file__` and literals."""
+        if fid in self.roots:
+            return self.roots[fid]
+        self.roots[fid] = []
+        tree = self.trees.get(fid)
+        out = []
+        for node in _module_statements(tree.body if tree else []):
+            call = node.value if isinstance(node, ast.Expr) else None
+            if isinstance(call, ast.Call) and call.args \
+                    and _dotted(call.func) in (["sys", "path", "insert"],
+                                               ["sys", "path", "append"]):
+                d = self.static_path(fid, call.args[-1], 0)
+                if d is not None:
+                    out.append(d)
+        self.roots[fid] = out
+        return out
+
+    def static_path(self, fid: str, e, depth: int) -> str | None:
+        """A repo-relative path for an expression built from `__file__`,
+        `Path`, `.parent`, `.parents[n]`, `/`, `os.path` and literals, or
+        None. Nothing is executed."""
+        if depth > 8 or e is None:
+            return None
+        sp = lambda x: self.static_path(fid, x, depth + 1)  # noqa: E731
+        if isinstance(e, ast.Name):
+            if e.id == "__file__":
+                return fid
+            found = [n for n in _module_statements(self.trees[fid].body)
+                     if isinstance(n, ast.Assign) and len(n.targets) == 1
+                     and isinstance(n.targets[0], ast.Name)
+                     and n.targets[0].id == e.id]
+            return sp(found[0].value) if len(found) == 1 else None
+        if isinstance(e, ast.Constant) and isinstance(e.value, str):
+            return e.value
+        if isinstance(e, ast.Attribute) and e.attr == "parent":
+            p = sp(e.value)
+            return posixpath.dirname(p) if p is not None else None
+        if isinstance(e, ast.Subscript) and isinstance(e.value, ast.Attribute) \
+                and e.value.attr == "parents":
+            idx = e.slice.value if isinstance(e.slice, ast.Constant) else (
+                e.slice.value.value if isinstance(getattr(e.slice, "value",
+                                                          None), ast.Constant)
+                else None)
+            p = sp(e.value.value)
+            if p is None or not isinstance(idx, int) or idx < 0:
+                return None
+            for _ in range(idx + 1):
+                p = posixpath.dirname(p)
+            return p
+        if isinstance(e, ast.BinOp) and isinstance(e.op, ast.Div):
+            a, b = sp(e.left), sp(e.right)
+            return posixpath.normpath(posixpath.join(a, b)) \
+                if a is not None and b is not None else None
+        if isinstance(e, ast.Call):
+            if isinstance(e.func, ast.Attribute) \
+                    and e.func.attr in ("resolve", "absolute") and not e.args:
+                return sp(e.func.value)
+            name = _dotted(e.func) or []
+            if name in (["str"], ["Path"], ["pathlib", "Path"],
+                        ["os", "path", "abspath"], ["os", "path", "realpath"],
+                        ["os", "fspath"]) and len(e.args) == 1:
+                return sp(e.args[0])
+            if name == ["os", "path", "dirname"] and len(e.args) == 1:
+                p = sp(e.args[0])
+                return posixpath.dirname(p) if p is not None else None
+            if name == ["os", "path", "join"] and e.args:
+                parts = [sp(a) for a in e.args]
+                return posixpath.normpath(posixpath.join(*parts)) \
+                    if None not in parts else None
+        return None
+
+    def dict_targets(self, fid: str, name: str) -> list[str]:
+        """The functions a module-level dict literal maps to, for a call
+        written `TABLE[key](...)`."""
+        found = [n for n in _module_statements(self.trees[fid].body)
+                 if isinstance(n, ast.Assign) and len(n.targets) == 1
+                 and isinstance(n.targets[0], ast.Name)
+                 and n.targets[0].id == name]
+        if len(found) != 1 or not isinstance(found[0].value, ast.Dict):
+            return []
+        out = set()
+        for v in found[0].value.values:
+            parts = _dotted(v) if v is not None else None
+            sid, st = self.in_file(fid, parts) if parts else (None, "")
+            if st == "resolved" and sid:
+                out.add(sid)
+        return sorted(out)
+
+    def class_from(self, fid: str, expr) -> str | None:
+        if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+            try:
+                expr = ast.parse(expr.value, mode="eval").body
+            except SyntaxError:
+                return None
+        parts = _dotted(expr) if expr is not None else None
+        sid, st = self.in_file(fid, parts) if parts else (None, "")
+        return sid if st == "resolved" and self.kinds.get(sid) == "class" \
+            else None
+
+    def attr_types(self, cls_id: str) -> dict:
+        """`self.X` attributes whose class is known from the class's own
+        methods: assigned a call to a repo class, or a parameter annotated
+        with one. An attribute assigned two different classes is left out."""
+        if cls_id in self.attrs:
+            return self.attrs[cls_id]
+        fid, qual = cls_id.split("::", 1)
+        node = _find_class(self.trees.get(fid), qual)
+        seen: dict[str, set] = {}
+        for fn in (node.body if node else []):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            ann = {a.arg: a.annotation for a in fn.args.args
+                   + fn.args.kwonlyargs if a.annotation is not None}
+            for st in ast.walk(fn):
+                if not (isinstance(st, ast.Assign) and len(st.targets) == 1):
+                    continue
+                pairs = [(st.targets[0], st.value)]
+                if isinstance(st.targets[0], ast.Tuple) \
+                        and isinstance(st.value, ast.Tuple) \
+                        and len(st.targets[0].elts) == len(st.value.elts):
+                    pairs = list(zip(st.targets[0].elts, st.value.elts))
+                for t, value in pairs:
+                    if not (isinstance(t, ast.Attribute)
+                            and isinstance(t.value, ast.Name)
+                            and t.value.id == "self"):
+                        continue
+                    cls = None
+                    if isinstance(value, ast.Call):
+                        cls = self.class_from(fid, value.func)
+                    elif isinstance(value, ast.Name) and value.id in ann:
+                        cls = self.class_from(fid, ann[value.id])
+                    seen.setdefault(t.attr, set()).add(cls)
+        self.attrs[cls_id] = {a: next(iter(c)) for a, c in seen.items()
+                              if len(c) == 1 and None not in c}
+        return self.attrs[cls_id]
+
+    def in_file(self, fid: str, parts: list, depth: int = 0) -> tuple:
+        """(symbol id or None, status) for a dotted name read in `fid`'s
+        module scope."""
+        if depth > 4 or not parts:
+            return None, "unresolved"
+        b = self.env(fid).get(parts[0])
+        if b is None:
+            return (None, "external") if parts[0] in BUILTIN_NAMES \
+                else (None, "unresolved")
+        return self.binding(fid, b, parts[1:], depth)
+
+    def binding(self, fid: str, b: tuple, rest: list, depth: int) -> tuple:
+        if b[0] == "sym":
+            if not rest:
+                return b[1], "resolved"
+            qual = b[1].split("::", 1)[1] + "." + ".".join(rest)
+            owner = b[1].split("::", 1)[0]
+            sid = self.ids.get(owner, {}).get(qual)
+            if sid:
+                return sid, "resolved"
+            found = self.method(b[1], rest[0]) if len(rest) == 1 else None
+            return (found, "resolved") if found else (None, "unresolved")
+        if b[0] == "mod":
+            return self.dotted(fid, b[1], rest, depth)
+        if b[0] == "from":
+            mod, name = b[1], b[2]
+            sub = mod + name if mod.endswith(".") else f"{mod}.{name}"
+            dst, st = self.module(fid, sub)
+            if dst:
+                return self.dotted(fid, sub, rest, depth)
+            dst, st = self.module(fid, mod)
+            if not dst:
+                return None, st
+            return self.in_file(dst, [name] + rest, depth + 1)
+        return None, "unresolved"
+
+    def dotted(self, fid: str, module: str, rest: list, depth: int) -> tuple:
+        dst, st = self.module(fid, module)
+        if not dst:
+            return None, st
+        i = 0
+        while i < len(rest):
+            sub = module + rest[i] if module.endswith(".") \
+                else f"{module}.{rest[i]}"
+            d2, _ = self.module(fid, sub)
+            if not d2:
+                break
+            module, dst, i = sub, d2, i + 1
+        if i == len(rest):
+            return None, "unresolved"     # a module, not a symbol
+        return self.in_file(dst, rest[i:], depth + 1)
+
+    def bases(self, cls_id: str) -> list[str]:
+        fid, qual = cls_id.split("::", 1)
+        node = _find_class(self.trees.get(fid), qual)
+        out = []
+        for base in (node.bases if node else []):
+            parts = _dotted(base)
+            if parts:
+                sid, st = self.in_file(fid, parts)
+                if st == "resolved" and sid:
+                    out.append(sid)
+        return out
+
+    def method(self, cls_id: str, name: str, depth: int = 0) -> str | None:
+        """The method `name` on a class or the nearest base that defines it
+        inside the repo."""
+        if depth > 5:
+            return None
+        fid, qual = cls_id.split("::", 1)
+        sid = self.ids.get(fid, {}).get(f"{qual}.{name}")
+        if sid:
+            return sid
+        for base in self.bases(cls_id):
+            found = self.method(base, name, depth + 1)
+            if found:
+                return found
+        return None
+
+
+def _module_statements(body: list):
+    """Module-level statements, including those under top-level if and
+    try blocks, where conditional imports live."""
+    for node in body:
+        yield node
+        if isinstance(node, ast.If):
+            yield from _module_statements(node.body + node.orelse)
+        elif isinstance(node, ast.Try):
+            yield from _module_statements(
+                node.body + node.orelse + node.finalbody
+                + [s for h in node.handlers for s in h.body])
+
+
+def _bind_imports(node: ast.AST, env: dict) -> None:
+    if isinstance(node, ast.Import):
+        for a in node.names:
+            if a.asname:
+                env[a.asname] = ("mod", a.name)
+            else:
+                top = a.name.split(".")[0]
+                env[top] = ("mod", top)
+    elif isinstance(node, ast.ImportFrom):
+        mod = "." * node.level + (node.module or "")
+        for a in node.names:
+            if a.name != "*":
+                env[a.asname or a.name] = ("from", mod, a.name)
+
+
+def _stored_names(node: ast.AST) -> list[str]:
+    """Names a module-level statement assigns, other than defs and imports."""
+    if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+        return []
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    return [n.id for t in targets for n in ast.walk(t)
+            if isinstance(n, ast.Name)]
+
+
+def _dotted(node: ast.AST) -> list[str] | None:
+    """`a.b.c` as ['a', 'b', 'c'], or None for anything else."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        return [node.id] + parts[::-1]
+    return None
+
+
+def _find_class(tree, qual: str):
+    nodes = tree.body if tree else []
+    node = None
+    for part in qual.split("."):
+        node = next((n for n in nodes if isinstance(n, ast.ClassDef)
+                     and n.name == part), None)
+        if node is None:
+            return None
+        nodes = node.body
+    return node
+
+
+def _symbol_nodes(tree: ast.Module, fid: str) -> dict:
+    """AST def node -> symbol id, assigned in the same order and with the
+    same `~n` rule as `extract_python` and `ingest`."""
+    out, seen = {}, set()
+
+    def walk(nodes, prefix: str, depth: int) -> None:
+        for node in nodes:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef)):
+                qual = f"{prefix}{node.name}"
+                sid, n = f"{fid}::{qual}", 2
+                while sid in seen:
+                    sid, n = f"{fid}::{qual}~{n}", n + 1
+                seen.add(sid)
+                out[node] = sid
+                if isinstance(node, ast.ClassDef) and depth < 4:
+                    walk(node.body, qual + ".", depth + 1)
+    walk(tree.body, "", 0)
+    return out
+
+
+def _function_locals(fn: ast.AST) -> tuple[set, dict]:
+    """Names local to a function (parameters, assignments, nested defs,
+    loop and with targets) and the imports made inside it."""
+    names, imports = set(), {}
+    a = fn.args
+    for arg in a.posonlyargs + a.args + a.kwonlyargs:
+        names.add(arg.arg)
+    for arg in (a.vararg, a.kwarg):
+        if arg:
+            names.add(arg.arg)
+    glob = set()
+    for node in ast.walk(fn):
+        if node is fn:
+            continue
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            names.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                               ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            _bind_imports(node, imports)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+        elif isinstance(node, ast.Global):
+            glob.update(node.names)
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+    return names - glob - set(imports), imports
+
+
+class _EdgeVisitor(ast.NodeVisitor):
+    def __init__(self, fid: str, graph: PySymbols, nodes: dict) -> None:
+        self.fid, self.g, self.nodes = fid, graph, nodes
+        self.rows: list[tuple] = []
+        self.src = f"{fid}::<module>"
+        self.cls: str | None = None       # symbol id of the enclosing class
+        self.locals: set = set()
+        self.imports: dict = {}
+        self.types: dict = {}             # local name -> class symbol id
+        self.params: set = set()          # parameters never reassigned
+        self.declared_global: set = set()
+        self.data: list[tuple] = []
+
+    def emit(self, dst, target: str, kind: str, line: int, status: str,
+             cands: list | None = None) -> None:
+        self.rows.append((self.fid, self.src, dst,
+                          target[:SYMBOL_TARGET_MAX], kind, line, status,
+                          "\n".join((cands or [])[:SYMBOL_CANDIDATES_MAX])))
+
+    def lookup(self, parts: list) -> tuple:
+        head = parts[0]
+        if head in self.imports:
+            return self.g.binding(self.fid, self.imports[head], parts[1:], 0)
+        if head in self.locals:
+            return None, "local"
+        return self.g.in_file(self.fid, parts)
+
+    def by_method_name(self, name: str) -> tuple:
+        cands = sorted(self.g.methods.get(name, []))
+        if not cands:
+            return None, "unresolved", []
+        return None, ("weak" if len(cands) == 1 else "ambiguous"), cands
+
+    # -- scopes
+    def visit_def(self, node) -> None:
+        """Decorators, defaults and bases run in the enclosing scope; the
+        body runs as the def's own symbol. A def that is not a symbol (one
+        nested in a function) keeps the enclosing symbol as its source."""
+        sid = self.nodes.get(node)
+        is_class = isinstance(node, ast.ClassDef)
+        # Arguments of a decorator call and of a class keyword are ordinary
+        # expressions in the enclosing scope.
+        for d in node.decorator_list:
+            if isinstance(d, ast.Call):
+                for arg in d.args + [k.value for k in d.keywords]:
+                    self.visit(arg)
+        if is_class:
+            for k in node.keywords:
+                self.visit(k.value)
+        else:
+            for default in node.args.defaults + [
+                    x for x in node.args.kw_defaults if x is not None]:
+                self.visit(default)
+        saved = (self.src, self.cls, self.locals, self.imports, self.types,
+                 self.params, self.declared_global)
+        if sid:
+            self.src = sid
+        for d in node.decorator_list:
+            target = d.func if isinstance(d, ast.Call) else d
+            self.ref_or_call(target, "decorated-by" if sid else "ref",
+                             d.lineno)
+        if is_class:
+            for base in node.bases:
+                self.ref_or_call(base, "extends" if sid else "ref",
+                                 base.lineno)
+            if sid:
+                self.cls = sid
+        else:
+            fn_locals, fn_imports = _function_locals(node)
+            if sid:
+                self.locals, self.imports = fn_locals, fn_imports
+                self.types = self.receiver_types(node)
+                self.declare_params(node, sid)
+            else:
+                self.locals = self.locals | fn_locals
+                self.imports = {**self.imports, **fn_imports}
+        for stmt in node.body:
+            self.visit(stmt)
+        (self.src, self.cls, self.locals, self.imports, self.types,
+         self.params, self.declared_global) = saved
+
+    def declare_params(self, fn, sid: str) -> None:
+        """One `param` row per parameter, numbered as a caller passes them
+        (a method's `self` or `cls` is not counted), and the parameters
+        the body never reassigns, whose value is what the caller passed."""
+        args = fn.args.posonlyargs + fn.args.args
+        if self.g.kinds.get(sid) == "method" and args \
+                and args[0].arg in ("self", "cls"):
+            args = args[1:]
+        stored = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)
+                  and isinstance(n.ctx, ast.Store)}
+        for i, a in enumerate(args):
+            self.data_row("param", "param", a.arg, fn.lineno, "resolved",
+                          str(i))
+        for a in fn.args.kwonlyargs:
+            self.data_row("param", "param", a.arg, fn.lineno, "resolved",
+                          a.arg)
+        self.params = {a.arg for a in args + fn.args.kwonlyargs} - stored
+        self.declared_global = {n for g in ast.walk(fn)
+                                if isinstance(g, ast.Global) for n in g.names}
+
+    def receiver_types(self, fn) -> dict:
+        """Locals whose class is known: a parameter annotated with a repo
+        class, or a name assigned exactly once, from a call to one."""
+        out, stores = {}, {}
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                stores[node.id] = stores.get(node.id, 0) + 1
+        for arg in fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs:
+            ann = arg.annotation
+            if isinstance(ann, ast.Constant) and isinstance(ann.value, str):
+                try:
+                    ann = ast.parse(ann.value, mode="eval").body
+                except SyntaxError:
+                    ann = None
+            cls = self.class_of(ann)
+            if cls and arg.arg not in stores:
+                out[arg.arg] = cls
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                    and isinstance(node.targets[0], ast.Name) \
+                    and stores.get(node.targets[0].id) == 1 \
+                    and isinstance(node.value, ast.Call):
+                cls = self.class_of(node.value.func)
+                if cls:
+                    out[node.targets[0].id] = cls
+        return out
+
+    def class_of(self, expr) -> str | None:
+        parts = _dotted(expr) if expr is not None else None
+        if not parts:
+            return None
+        head = parts[0]
+        b = self.imports.get(head) or self.g.env(self.fid).get(head)
+        if b is None:
+            return None
+        sid, st = self.g.binding(self.fid, b, parts[1:], 0)
+        return sid if st == "resolved" and self.g.kinds.get(sid) == "class" \
+            else None
+
+    visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = visit_def
+
+    def visit_Lambda(self, node) -> None:
+        saved = self.locals
+        self.locals = self.locals | {a.arg for a in ast.walk(node.args)
+                                     if isinstance(a, ast.arg)}
+        self.visit(node.body)
+        self.locals = saved
+
+    def visit_Import(self, node) -> None:
+        pass
+
+    def visit_ImportFrom(self, node) -> None:
+        env: dict = {}
+        _bind_imports(node, env)
+        for name, b in env.items():
+            sid, st = self.g.binding(self.fid, b, [], 0)
+            if st == "resolved" and sid:
+                self.emit(sid, name, "import", node.lineno, "resolved")
+
+    # -- uses
+    def ref_or_call(self, func, kind: str, line: int) -> tuple:
+        """Emit one row for a call, decorator or base; (dst, status, bound)
+        where `bound` is true when the receiver fills the first parameter."""
+        target = ast.unparse(func)
+        parts = _dotted(func)
+        if parts is None and isinstance(func, ast.Subscript) \
+                and isinstance(func.value, ast.Name) \
+                and func.value.id not in self.locals:
+            cands = self.g.dict_targets(self.fid, func.value.id)
+            if cands:
+                st = "weak" if len(cands) == 1 else "ambiguous"
+                self.emit(None, target, kind, line, st, cands)
+                return None, st, False
+        if parts is None:
+            self.emit(None, target, kind, line, "unresolved")
+            return None, "unresolved", False
+        if len(parts) == 3 and parts[0] == "self" and self.cls:
+            typed = self.g.attr_types(self.cls).get(parts[1])
+            dst = self.g.method(typed, parts[2]) if typed else None
+            if dst:
+                self.emit(dst, target, kind, line, "resolved")
+                return dst, "resolved", True
+        if parts[0] in ("self", "cls") and self.cls and len(parts) == 2:
+            dst = self.g.method(self.cls, parts[1])
+            if dst:
+                self.emit(dst, target, kind, line, "resolved")
+                return dst, "resolved", True
+            dst, st, cands = self.by_method_name(parts[1])
+            self.emit(dst, target, kind, line, st, cands)
+            return dst, st, True
+        dst, st = self.lookup(parts)
+        if st == "local" and len(parts) == 2 and parts[0] in self.types:
+            dst = self.g.method(self.types[parts[0]], parts[1])
+            if dst:
+                self.emit(dst, target, kind, line, "resolved")
+                return dst, "resolved", True
+        if st == "local" and len(parts) > 1:
+            dst, st, cands = self.by_method_name(parts[-1])
+            self.emit(dst, target, kind, line, st, cands)
+            return dst, st, True
+        st = "unresolved" if st == "local" else st
+        self.emit(dst, target, kind, line, st)
+        return dst, st, False
+
+    # -- data nodes
+    def data_row(self, kind: str, node_kind: str, node: str, line: int,
+                 status: str = "resolved", via: str = "") -> None:
+        self.data.append((self.fid, self.src, kind, node_kind,
+                          node[:SYMBOL_TARGET_MAX], line, status,
+                          via[:SYMBOL_TARGET_MAX]))
+
+    def global_of(self, name: str) -> str | None:
+        """The module-level variable a bare name reads, as `file::NAME`."""
+        if self.src.endswith("::<module>") or name in self.locals:
+            return None
+        b = self.imports.get(name) or self.g.env(self.fid).get(name)
+        if b == ("other",) and name in self.g.globals(self.fid):
+            return f"{self.fid}::{name}"
+        if b and b[0] == "from":
+            dst, _ = self.g.module(self.fid, b[1])
+            if dst and b[2] in self.g.globals(dst):
+                return f"{dst}::{b[2]}"
+        return None
+
+    def argval(self, expr) -> tuple | None:
+        """('literal', text) or ('param', name) for an argument whose value
+        is known from the source, else None."""
+        if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+            return "literal", expr.value
+        if isinstance(expr, ast.Name):
+            if expr.id in self.params:
+                return "param", expr.id
+            g = self.global_of(expr.id)
+            if g:
+                fid, name = g.split("::", 1)
+                text = self.g.constant(fid, name)
+                if text is not None:
+                    return "literal", text
+        return None
+
+    def canonical(self, parts: list) -> str:
+        """The dotted name a call reaches outside the repo: `os.getenv`,
+        `sqlite3.connect`, builtin `open`."""
+        head = parts[0]
+        if head in self.locals:
+            return ""
+        b = self.imports.get(head) or self.g.env(self.fid).get(head)
+        if b is None:
+            return ".".join(parts) if head in BUILTIN_NAMES else ""
+        if b[0] == "mod":
+            return ".".join([b[1]] + parts[1:])
+        if b[0] == "from":
+            return ".".join([b[1], b[2]] + parts[1:])
+        return ""
+
+    def sinks(self, node, func) -> None:
+        line, args = node.lineno, node.args
+        kw = {k.arg: k.value for k in node.keywords if k.arg}
+        first = args[0] if args else None
+        parts = _dotted(func)
+        name = self.canonical(parts) if parts else ""
+
+        def point(kind, node_kind, expr, via):
+            v = self.argval(expr) if expr is not None else None
+            if v and v[0] == "literal":
+                self.data_row(kind, node_kind, v[1], line, "resolved", via)
+            elif v:
+                self.data_row(kind, node_kind, f"param:{v[1]}", line,
+                              "param", via)
+
+        if name in ("open", "io.open", "codecs.open"):
+            mode = args[1] if len(args) > 1 else kw.get("mode")
+            text = mode.value if isinstance(mode, ast.Constant) \
+                and isinstance(mode.value, str) else "r"
+            point("write" if set(text) & set("wax+") else "read", "file",
+                  first, name)
+        elif name in ("sqlite3.connect",):
+            point("open", "file", first, name)
+        elif name in ("os.getenv", "os.environ.get"):
+            point("read", "env", first, name)
+        elif name in ("os.putenv", "os.environ.setdefault"):
+            point("write", "env", first, name)
+        elif isinstance(func, ast.Attribute):
+            attr = func.attr
+            if attr in ("execute", "executemany", "executescript") and first:
+                v = self.argval(first)
+                if v and v[0] == "literal":
+                    for access, table in sql_tables(v[1]):
+                        self.data_row(access, "table", table, line,
+                                      "resolved", attr)
+            elif attr in ("read_text", "read_bytes", "write_text",
+                          "write_bytes") and isinstance(func.value, ast.Call):
+                inner = _dotted(func.value.func)
+                if inner and self.canonical(inner) in ("pathlib.Path",
+                                                       "Path") \
+                        and func.value.args:
+                    point("write" if attr.startswith("write") else "read",
+                          "file", func.value.args[0], f"Path.{attr}")
+            elif attr in MUTATORS and parts and len(parts) == 2:
+                g = self.global_of(parts[0])
+                if g:
+                    self.data_row("write", "global", g, line, "resolved",
+                                  attr)
+            elif attr == "get" and parts and len(parts) == 2 and first \
+                    and CONFIG_NAME_RE.search(parts[0]):
+                v = self.argval(first)
+                if v and v[0] == "literal":
+                    self.data_row("read", "config", v[1], line, "weak",
+                                  parts[0])
+
+    def passes(self, node, dst: str, bound: bool) -> None:
+        """What each argument of a resolved call carries into the callee,
+        when the source shows it: a literal, or one of the caller's own
+        parameters. `bound` shifts past the callee's `self`."""
+        for i, a in enumerate(node.args):
+            v = self.argval(a)
+            if v:
+                self.data_row("passes", v[0], v[1], node.lineno, "resolved",
+                              f"{dst}#{i}")
+        for k in node.keywords:
+            v = self.argval(k.value) if k.arg else None
+            if v:
+                self.data_row("passes", v[0], v[1], node.lineno, "resolved",
+                              f"{dst}#{k.arg}")
+
+    def visit_Call(self, node) -> None:
+        func = node.func
+        if isinstance(func, ast.Attribute) and isinstance(func.value,
+                                                          ast.Call) \
+                and isinstance(func.value.func, ast.Name) \
+                and func.value.func.id == "super" and self.cls:
+            dst = None
+            for base in self.g.bases(self.cls):
+                dst = self.g.method(base, func.attr)
+                if dst:
+                    break
+            self.emit(dst, ast.unparse(func), "call", node.lineno,
+                      "resolved" if dst else "unresolved")
+            self.visit(func.value)
+        else:
+            dst, st, bound = self.ref_or_call(func, "call", node.lineno)
+            if _dotted(func) is None:
+                self.visit(func)
+            if st == "resolved" and self.g.kinds.get(dst) in ("function",
+                                                              "method"):
+                self.passes(node, dst, bound)
+        self.sinks(node, func)
+        for arg in node.args + [k.value for k in node.keywords]:
+            self.visit(arg)
+
+    def visit_Name(self, node) -> None:
+        if isinstance(node.ctx, ast.Load):
+            self.value_ref([node.id], node)
+            g = self.global_of(node.id)
+            if g:
+                self.data_row("read", "global", g, node.lineno)
+        elif node.id in self.declared_global:
+            g = f"{self.fid}::{node.id}"
+            self.data_row("write", "global", g, node.lineno)
+
+    def visit_Subscript(self, node) -> None:
+        if isinstance(node.ctx, (ast.Store, ast.Del)) \
+                and isinstance(node.value, ast.Name):
+            g = self.global_of(node.value.id)
+            if g:
+                self.data_row("write", "global", g, node.lineno)
+                self.visit(node.slice)
+                return
+        if isinstance(node.ctx, ast.Load) and isinstance(node.slice,
+                                                         ast.Constant) \
+                and isinstance(node.slice.value, str):
+            parts = _dotted(node.value)
+            if parts and self.canonical(parts) == "os.environ":
+                self.data_row("read", "env", node.slice.value, node.lineno,
+                              "resolved", "os.environ")
+            elif parts and len(parts) == 1 \
+                    and CONFIG_NAME_RE.search(parts[0]):
+                self.data_row("read", "config", node.slice.value,
+                              node.lineno, "weak", parts[0])
+        elif isinstance(node.ctx, ast.Store) and isinstance(
+                node.slice, ast.Constant) and isinstance(node.slice.value,
+                                                         str):
+            parts = _dotted(node.value)
+            if parts and self.canonical(parts) == "os.environ":
+                self.data_row("write", "env", node.slice.value, node.lineno,
+                              "resolved", "os.environ")
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node) -> None:
+        parts = _dotted(node)
+        if parts and isinstance(node.ctx, ast.Load):
+            self.value_ref(parts, node)
+        elif parts and isinstance(node.ctx, ast.Store) and len(parts) == 2:
+            g = self.global_of(parts[0])
+            if g:
+                self.data_row("write", "global", g, node.lineno)
+        elif not parts:
+            self.generic_visit(node)
+
+    def value_ref(self, parts: list, node) -> None:
+        """A function or class used as a value: passed, stored, returned."""
+        if parts[0] in ("self", "cls"):
+            if self.cls and len(parts) == 2:
+                dst = self.g.method(self.cls, parts[1])
+                if dst:
+                    self.emit(dst, ".".join(parts), "ref", node.lineno,
+                              "resolved")
+            return
+        dst, st = self.lookup(parts)
+        if st == "resolved" and dst:
+            self.emit(dst, ".".join(parts), "ref", node.lineno, "resolved")
+
+
+def python_symbol_edges(files: list, resolver: "Resolver",
+                        all_symbols: list) -> tuple[list, list]:
+    """Static symbol edges and data rows for every python file, as rows for
+    `symbol_edges` and `data_edges`."""
+    data: list[tuple] = []
+    py = [f for f in files if f["language"] == "python"]
+    trees = {}
+    for f in py:
+        try:
+            trees[f["id"]] = ast.parse(f["body"])
+        except (SyntaxError, ValueError, RecursionError, MemoryError):
+            # The repo is untrusted input: one file too deep to parse
+            # loses its own edges, never the ingest.
+            continue
+    ids: dict[str, dict] = {}
+    methods: dict[str, list] = {}
+    for s in all_symbols:
+        if s["file_id"] in trees:
+            ids.setdefault(s["file_id"], {})[s["qualname"]] = s["id"]
+            if s["kind"] == "method":
+                methods.setdefault(s["name"], []).append(s["id"])
+    graph = PySymbols(resolver, trees, ids, methods)
+    graph.kinds = {s["id"]: s["kind"] for s in all_symbols}
+    rows = []
+    for fid, tree in trees.items():
+        v = _EdgeVisitor(fid, graph, _symbol_nodes(tree, fid))
+        try:
+            for stmt in tree.body:
+                v.visit(stmt)
+        except RecursionError:
+            continue
+        rows += v.rows
+        data += v.data
+    return rows, data
+
+
+# ---------- symbol edges (other languages, stdlib scanners) ----------
+# Each language is read from a copy of its text with comments, and where
+# the language needs it strings, replaced by spaces. Offsets and line
+# numbers are kept, so a match maps back to its line, and a name written
+# in a comment or a string is never read as a call.
+JS_KEYWORDS = frozenset((
+    "if", "for", "while", "switch", "catch", "function", "return", "typeof",
+    "new", "await", "yield", "super", "import", "export", "class", "do",
+    "else", "try", "with", "void", "delete", "in", "of", "instanceof",
+    "async", "case", "throw", "var", "let", "const", "this", "constructor",
+    "get", "set", "static"))
+# Every pattern below runs on hostile repo text: no two quantifiers may
+# claim the same characters, and every run that can repeat is bounded.
+# `TestHostileInput.test_scanners_stay_fast_on_adversarial_text` holds
+# them to that.
+JS_CALL_RE = re.compile(
+    r"(?<![\w$.])(?:new\s+)?([A-Za-z_$][\w$]*)\s*"
+    r"(?:<[\w$,\s.\[\]|]{0,200}>\s*)?\(")
+JS_MEMBER_CALL_RE = re.compile(
+    r"(?<![\w$.])([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\s*\(")
+JS_JSX_RE = re.compile(r"<([A-Z][\w$]*)(?=[\s/>])")
+JS_IDENT_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)(?![\w$])")
+JS_EXTENDS_RE = re.compile(
+    r"\bclass\s+([A-Za-z_$][\w$]*)(?![\w$])[^{]{0,200}?\bextends\s+"
+    r"([A-Za-z_$][\w$.]*)")
+JS_IMPORT_CLAUSE_RE = re.compile(
+    r"\bimport\s+(?:type\s+)?([^;'\"\s][^;'\"]{0,299}?)\s{1,64}from\s+"
+    r"(['\"])([^'\"\n]{1,300})\2")
+JS_REQUIRE_BIND_RE = re.compile(
+    r"\b(?:const|let|var)\s+(\{[^}]{0,600}\}|[A-Za-z_$][\w$]*)\s*=\s*"
+    r"require\s*\(\s*(['\"])([^'\"\n]{1,300})\2\s*\)")
+JS_METHOD_DEF_RE = re.compile(
+    r"^\s*(?:(?:public|private|protected|static|async|readonly|override|get|"
+    r"set)\s+){0,6}[A-Za-z_$][\w$]*\s*(?:<[^>]{0,200}>\s*)?\([^)]{0,2000}\)"
+    r"\s*(?::[^{=;]{0,400})?\{")
+BASH_CMD_RE = re.compile(
+    r"(?:^|[;&|({`]|\$\(|\bthen\b|\bdo\b|\belse\b|!)[ \t]*"
+    r"(?:[A-Za-z_]\w*=(?:\"[^\"\n]{0,2000}\"|'[^'\n]{0,2000}'|\$\{\w+\}"
+    r"|\$\w+(?!\w)|[^\s;&|()$`\"'{!]){0,400}[ \t]+){0,8}"
+    r"([A-Za-z_][\w-]*)(?=$|[\s;&|)])", re.M)
+BASH_HEREDOC_RE = re.compile(r"<<-?\s*")
+# The first command of a `case` arm: `in a) cmd` or `;; *) cmd`.
+BASH_CASE_ARM_RE = re.compile(
+    r"(?:;;|\bin)\s{1,64}\(?[^()\n;\s][^()\n;]{0,200}\)\s*"
+    r"([A-Za-z_][\w-]*)(?=$|[\s;&|)])",
+    re.M)
+BASH_EXPORT_RE = re.compile(r"\bexport\s+([A-Za-z_]\w*)=")
+BASH_ASSIGN_RE = re.compile(
+    r"(?:^|[\s;])(?:local\s+|declare(?:\s+-\w+){0,8}\s+)?([A-Za-z_]\w*)=")
+BASH_READ_RE = re.compile(r"\$\{?([A-Za-z_]\w*)")
+BASH_SOURCE_PATH_RE = re.compile(r"^\s*(?:source|\.)\s+(.*)$")
+SQL_STATEMENT_RE = re.compile(
+    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?(?:MATERIALIZED\s+)?"
+    r"(?:UNIQUE\s+)?(?:TABLE|VIEW|FUNCTION|PROCEDURE|TRIGGER|INDEX)\s+"
+    r"(?:IF\s+NOT\s+EXISTS\s+)?[\"`\[]?([\w.]+)", re.I)
+SQL_REFERENCES_RE = re.compile(r"\bREFERENCES\s+[\"`\[]?([\w.]+)", re.I)
+SQL_TABLE_AT_RE = re.compile(
+    r"\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+[\"`\[]?([\w.]{1,120})", re.I)
+# The table an index or trigger is defined on.
+SQL_ON_RE = re.compile(
+    r"\bCREATE\s+(?:UNIQUE\s+)?(?:INDEX|TRIGGER)\b[^;]{0,400}?\bON\s+"
+    r"[\"`\[]?([\w.]+)", re.I)
+HTML_CLASS_RE = re.compile(r"""\bclass\s*=\s*(["'])([^"']{0,500})\1""", re.I)
+HTML_ID_RE = re.compile(r"""\bid\s*=\s*(["'])([\w-]{1,100})\1""", re.I)
+HTML_HANDLER_RE = re.compile(
+    r"""\bon[a-z]{2,20}\s*=\s*(["'])\s*([A-Za-z_$][\w$]*)\s*\(""", re.I)
+CSS_CLASS_RE = re.compile(r"\.(-?[A-Za-z_][\w-]*)")
+CSS_ID_RE = re.compile(r"#(-?[A-Za-z_][\w-]*)")
+CSS_VAR_DEF_RE = re.compile(r"(?<![\w-])--([\w-]+)\s*:")
+CSS_VAR_USE_RE = re.compile(r"var\(\s*--([\w-]+)")
+
+
+JS_HOLES = {"`": ("${", "{", "}")}
+BASH_HOLES = {'"': ("$(", "(", ")")}
+
+
+def _blank(text: str, comment: tuple, block: tuple | None,
+           quotes: str, multiline: str = "", holes: dict | None = None,
+           comment_after_space: bool = False) -> str:
+    """`text` with comments and quoted strings replaced by spaces, newlines
+    kept. Linear, one pass. A quote in `quotes` ends at a newline unless
+    it is in `multiline`. `holes` maps a quote to the code it may hold
+    (`${...}` in a JS template, `$(...)` in a bash double-quoted string),
+    which is kept. With `comment_after_space`, a comment marker counts only
+    at the start of a word, as `#` does in bash (`$#` and `${#x}` are not
+    comments)."""
+    out, i, n = list(text), 0, len(text)
+    state, end = None, ""
+    holes = holes or {}
+    stack: list[list] = []   # [quote, open char, close char, depth]
+    while i < n:
+        c = text[i]
+        if state is None and stack:
+            top = stack[-1]
+            if c == top[1]:
+                top[3] += 1
+            elif c == top[2]:
+                if top[3] == 0:
+                    stack.pop()
+                    state, end = "str", top[0]
+                    i += 1
+                    continue
+                top[3] -= 1
+        if state is None:
+            if block and text.startswith(block[0], i):
+                state, end = "block", block[1]
+                for k in range(i, min(n, i + len(block[0]))):
+                    out[k] = " "
+                i += len(block[0])
+                continue
+            hit = next((m for m in comment if text.startswith(m, i)), None)
+            if hit and comment_after_space and i > 0 \
+                    and not text[i - 1].isspace() and text[i - 1] != ";":
+                hit = None
+            if hit:
+                state = "line"
+            elif c in quotes:
+                state, end = "str", c
+                i += 1
+                continue
+            else:
+                i += 1
+                continue
+        if state == "line":
+            if c == "\n":
+                state = None
+            else:
+                out[i] = " "
+        elif state == "block":
+            if text.startswith(end, i):
+                for k in range(i, i + len(end)):
+                    out[k] = " "
+                i += len(end)
+                state = None
+                continue
+            if c != "\n":
+                out[i] = " "
+        elif state == "str":
+            if c == "\\" and i + 1 < n:
+                out[i] = " "
+                if text[i + 1] != "\n":
+                    out[i + 1] = " "
+                i += 2
+                continue
+            if c == end:
+                state = None
+            elif end in holes and text.startswith(holes[end][0], i):
+                stack.append([end, holes[end][1], holes[end][2], 0])
+                state = None
+                i += len(holes[end][0])
+                continue
+            elif c == "\n" and end not in multiline:
+                state = None
+            elif c != "\n":
+                out[i] = " "
+        i += 1
+    return "".join(out)
+
+
+def _line_starts(text: str) -> list[int]:
+    starts = [0]
+    for m in re.finditer("\n", text):
+        starts.append(m.end())
+    return starts
+
+
+def _line_of(starts: list[int], offset: int) -> int:
+    import bisect
+    return bisect.bisect_right(starts, offset)
+
+
+class LineSymbols:
+    """Symbol edges and data rows for the languages without a parser in
+    the standard library: JS/TS, bash, SQL, HTML and CSS."""
+
+    def __init__(self, files: list, resolver: "Resolver",
+                 all_symbols: list) -> None:
+        self.resolver = resolver
+        self.by_file: dict[str, list] = {}
+        self.by_name: dict[str, list] = {}
+        for s in all_symbols:
+            self.by_file.setdefault(s["file_id"], []).append(s)
+            self.by_name.setdefault(s["name"], []).append(s)
+        self.lang = {f["id"]: f["language"] for f in files}
+        self.body = {f["id"]: f["body"] for f in files}
+        self.rows: list[tuple] = []
+        self.data: list[tuple] = []
+        self.owners: dict[tuple, list] = {}
+        self.names: dict[str, dict] = {}
+        self.defaults: dict[str, str | None] = {}
+        self.tables: dict[str, list] | None = None
+
+    def owner(self, fid: str, line: int, kinds: tuple = ()) -> str:
+        """The innermost symbol holding a line: a per-file table built once,
+        later starts overwriting earlier ones, so a nested symbol wins."""
+        key = (fid, kinds)
+        table = self.owners.get(key)
+        if table is None:
+            n = self.body[fid].count("\n") + 2
+            table = [""] * n
+            for s in sorted(self.by_file.get(fid, []),
+                            key=lambda s: s["line_start"]):
+                if kinds and s["kind"] not in kinds:
+                    continue
+                for ln in range(max(1, s["line_start"]),
+                                min(n - 1, s["line_end"]) + 1):
+                    table[ln] = s["id"]
+            self.owners[key] = table
+        return (table[line] if 0 < line < len(table) else "") \
+            or f"{fid}::<module>"
+
+    def emit(self, fid, src, dst, target, kind, line, status, cands=()):
+        self.rows.append((fid, src, dst, target[:SYMBOL_TARGET_MAX], kind,
+                          line, status,
+                          "\n".join(list(cands)[:SYMBOL_CANDIDATES_MAX])))
+
+    def datum(self, fid, src, kind, node_kind, node, line, status="resolved",
+              via=""):
+        self.data.append((fid, src, kind, node_kind, node[:SYMBOL_TARGET_MAX],
+                          line, status, via))
+
+    def symbol_in(self, fid: str, name: str, kinds: tuple = ()) -> str | None:
+        if fid not in self.names:
+            index: dict[str, list] = {}
+            for s in self.by_file.get(fid, []):
+                index.setdefault(s["name"], []).append(s)
+            self.names[fid] = index
+        hits = [s["id"] for s in self.names[fid].get(name, [])
+                if not kinds or s["kind"] in kinds]
+        return hits[0] if len(hits) == 1 else None
+
+    def run(self) -> tuple[list, list]:
+        for fid, lang in self.lang.items():
+            try:
+                if lang in ("javascript", "typescript"):
+                    self.js(fid)
+                elif lang == "bash":
+                    self.bash(fid)
+                elif lang == "sql":
+                    self.sql(fid)
+                elif lang == "html":
+                    self.html(fid)
+                elif lang == "css":
+                    self.css(fid)
+            except (RecursionError, MemoryError, ValueError):
+                continue
+        return self.rows, self.data
+
+    # -- javascript / typescript
+    def js(self, fid: str) -> None:
+        text = self.body[fid]
+        bare = _blank(text, ("//",), ("/*", "*/"), "")
+        code = _blank(text, ("//",), ("/*", "*/"), "'\"`", "`", JS_HOLES)
+        starts = _line_starts(text)
+        binds: dict[str, tuple] = {}     # name -> ("sym", id) | ("ns", file)
+        external: set = set()
+
+        def target_file(spec: str, line: int) -> tuple:
+            return self.resolver.resolve(fid, self.lang[fid], {
+                "target": spec, "kind": "import", "line": line})
+
+        def bind_named(names: str, dst: str, line: int) -> None:
+            for part in names.strip("{} \n").split(","):
+                part = part.strip()
+                if part.startswith("type "):
+                    part = part[5:].strip()
+                if not part:
+                    continue
+                src_name, _, local = part.partition(" as ")
+                if ":" in src_name and not local:     # require destructure
+                    src_name, _, local = src_name.partition(":")
+                src_name, local = src_name.strip(), (local or src_name).strip()
+                if not re.fullmatch(r"[A-Za-z_$][\w$]{0,200}", local):
+                    continue
+                sid = self.symbol_in(dst, src_name)
+                if sid:
+                    binds[local] = ("sym", sid)
+                    self.emit(fid, f"{fid}::<module>", sid, local, "import",
+                              line, "resolved")
+
+        def default_of(dst: str) -> str | None:
+            if dst not in self.defaults:
+                lines = self.body.get(dst, "").splitlines()
+                self.defaults[dst] = next(
+                    (s["id"] for s in self.by_file.get(dst, [])
+                     if 0 < s["line_start"] <= len(lines)
+                     and "export default" in lines[s["line_start"] - 1]),
+                    None)
+            return self.defaults[dst]
+
+        for m in JS_IMPORT_CLAUSE_RE.finditer(bare):
+            clause, spec = m.group(1).strip(), m.group(3)
+            line = _line_of(starts, m.start())
+            dst, status = target_file(spec, line)
+            names = re.findall(r"[A-Za-z_$][\w$]*", clause.split("{")[0])
+            if not dst:
+                external.update(re.findall(r"[A-Za-z_$][\w$]*", clause))
+                continue
+            head = clause.split("{")[0]
+            ns = re.search(r"\*\s+as\s+([A-Za-z_$][\w$]*)", head)
+            if ns:
+                binds[ns.group(1)] = ("ns", dst)
+            elif names:
+                sid = default_of(dst)
+                if sid:
+                    binds[names[0]] = ("sym", sid)
+                    self.emit(fid, f"{fid}::<module>", sid, names[0],
+                              "import", line, "resolved")
+            if "{" in clause:
+                bind_named(clause[clause.index("{"):], dst, line)
+        for m in JS_REQUIRE_BIND_RE.finditer(bare):
+            line = _line_of(starts, m.start())
+            dst, _ = target_file(m.group(3), line)
+            if not dst:
+                continue
+            if m.group(1).startswith("{"):
+                bind_named(m.group(1), dst, line)
+            else:
+                binds[m.group(1)] = ("ns", dst)
+        for s in self.by_file.get(fid, []):
+            binds.setdefault(s["name"], ("sym", s["id"]))
+        defined = {(s["line_start"], s["name"])
+                   for s in self.by_file.get(fid, [])}
+        import_lines = {_line_of(starts, m.start())
+                        for m in JS_IMPORT_CLAUSE_RE.finditer(bare)}
+        lines = code.splitlines()
+        called: set = set()
+        method_def: dict[int, bool] = {}
+        for m in JS_EXTENDS_RE.finditer(code):
+            line = _line_of(starts, m.start(2))
+            src = self.symbol_in(fid, m.group(1), ("class",))
+            b = binds.get(m.group(2))
+            if src and b and b[0] == "sym":
+                self.emit(fid, src, b[1], m.group(2), "extends", line,
+                          "resolved")
+                called.add((line, m.group(2)))
+        for m in JS_MEMBER_CALL_RE.finditer(code):
+            obj, attr = m.group(1), m.group(2)
+            b = binds.get(obj)
+            if b and b[0] == "ns":
+                line = _line_of(starts, m.start())
+                sid = self.symbol_in(b[1], attr)
+                self.emit(fid, self.owner(fid, line), sid, f"{obj}.{attr}",
+                          "call", line, "resolved" if sid else "unresolved")
+                called.add((line, obj))
+        for m in JS_CALL_RE.finditer(code):
+            name = m.group(1)
+            line = _line_of(starts, m.start(1))
+            if name in JS_KEYWORDS or (line, name) in defined \
+                    or line in import_lines:
+                continue
+            raw = lines[line - 1] if line <= len(lines) else ""
+            if line not in method_def:
+                method_def[line] = bool(JS_METHOD_DEF_RE.match(raw))
+            if method_def[line] and raw.strip().startswith(
+                    (name, "async " + name, "static " + name, "public ",
+                     "private ", "protected ", "get ", "set ")):
+                continue      # a method definition, not a call
+            if re.search(r"\bfunction\s*\*?\s*$", code[max(0, m.start(1) - 12):
+                                                     m.start(1)]):
+                continue
+            called.add((line, name))
+            b = binds.get(name)
+            if b and b[0] == "sym":
+                self.emit(fid, self.owner(fid, line), b[1], name, "call",
+                          line, "resolved")
+            else:
+                self.emit(fid, self.owner(fid, line), None, name, "call", line,
+                          "external" if name in external else "unresolved")
+        jsx = fid.endswith((".tsx", ".jsx", ".js", ".mjs"))
+        for m in JS_JSX_RE.finditer(code if jsx else ""):
+            name = m.group(1)
+            line = _line_of(starts, m.start(1))
+            # `useState<Recipe>(` is a type argument, not an element: an
+            # element follows an operator, a bracket or `return`.
+            before = code[max(0, m.start() - 40):m.start()].rstrip()
+            word = re.search(r"[\w$]+$", before)
+            if word and word.group(0) not in ("return", "yield", "await",
+                                              "default", "case"):
+                continue
+            b = binds.get(name)
+            called.add((line, name))
+            self.emit(fid, self.owner(fid, line), b[1] if b and b[0] == "sym"
+                      else None, f"<{name}>", "call", line,
+                      "resolved" if b and b[0] == "sym" else
+                      ("external" if name in external else "unresolved"))
+        # A bound function or class used as a value: passed, stored,
+        # returned, or written as a type.
+        for m in JS_IDENT_RE.finditer(code):
+            name = m.group(1)
+            b = binds.get(name)
+            if not b or b[0] != "sym":
+                continue
+            line = _line_of(starts, m.start(1))
+            if (line, name) in called or (line, name) in defined \
+                    or line in import_lines:
+                continue
+            src = self.owner(fid, line)
+            if src == b[1]:
+                continue
+            called.add((line, name))
+            self.emit(fid, src, b[1], name, "ref", line, "resolved")
+
+    # -- bash
+    def bash(self, fid: str) -> None:
+        text = self.body[fid]
+        lines = text.splitlines()
+        # Heredoc bodies are data, not commands. A `<<` counts only outside
+        # quotes and comments on its own line.
+        keep, i = [], 0
+        while i < len(lines):
+            keep.append(lines[i])
+            visible = _blank(lines[i], ("#",), None, "'\"",
+                             comment_after_space=True)
+            op = BASH_HEREDOC_RE.search(visible)
+            m = re.match(r"['\"]?(\w+)", lines[i][op.end():]) if op else None
+            i += 1
+            if m:
+                while i < len(lines) and lines[i].strip() != m.group(1):
+                    keep.append("")
+                    i += 1
+        # Both quote kinds may span lines in bash.
+        code = _blank("\n".join(keep), ("#",), None, "'\"", "'\"",
+                      BASH_HOLES, comment_after_space=True)
+        # Variables are read from the text with only comments and single
+        # quotes removed: a `$NAME` inside double quotes is still a read.
+        vars_text = _blank("\n".join(keep), ("#",), None, "'", "'",
+                           comment_after_space=True)
+        starts = _line_starts(code)
+        funcs = {s["name"]: s["id"] for s in self.by_file.get(fid, [])
+                 if s["kind"] == "function"}
+        for raw in lines:
+            m = BASH_SOURCE_PATH_RE.match(raw)
+            if not m:
+                continue
+            arg = m.group(1)[:1000].split(" #", 1)[0].strip()
+            path = re.sub(r"""\$\(\s*dirname\s+["']?\$\{?(?:0|BASH_SOURCE(?:\[0\])?)\}?["']?\s*\)/?"""
+                          r"""|\$\{BASH_SOURCE(?:\[0\])?%/\*\}/?|["']""", "",
+                          arg).strip()
+            for cand in (posixpath.normpath(posixpath.join(
+                    posixpath.dirname(fid), path)), posixpath.normpath(path)):
+                if self.lang.get(cand) == "bash":
+                    for s in self.by_file.get(cand, []):
+                        if s["kind"] == "function":
+                            funcs.setdefault(s["name"], s["id"])
+                    break
+        defined = {s["line_start"] for s in self.by_file.get(fid, [])}
+        seen_at: set = set()
+        for m in itertools.chain(BASH_CMD_RE.finditer(code),
+                                 BASH_CASE_ARM_RE.finditer(code)):
+            name = m.group(1)
+            line = _line_of(starts, m.start(1))
+            if name not in funcs or line in defined \
+                    or m.start(1) in seen_at:
+                continue
+            seen_at.add(m.start(1))
+            self.emit(fid, self.owner(fid, line, ("function",)), funcs[name],
+                      name, "call", line, "resolved")
+        assigned = set()
+        for m in BASH_ASSIGN_RE.finditer(vars_text):
+            assigned.add(m.group(1))
+        for m in BASH_EXPORT_RE.finditer(vars_text):
+            line = _line_of(starts, m.start(1))
+            self.datum(fid, self.owner(fid, line, ("function",)), "write",
+                       "env", m.group(1), line, "resolved", "export")
+        for m in BASH_READ_RE.finditer(vars_text):
+            name = m.group(1)
+            if name in assigned or name.isdigit() or not name.isupper():
+                continue
+            line = _line_of(starts, m.start(1))
+            self.datum(fid, self.owner(fid, line, ("function",)), "read",
+                       "env", name, line, "weak", "$")
+
+    # -- sql
+    def sql(self, fid: str) -> None:
+        text = self.body[fid]
+        code = _blank(text, ("--",), ("/*", "*/"), "'")
+        starts = _line_starts(code)
+        if self.tables is None:
+            self.tables = {}
+            for s in self.by_name.values():
+                for x in s:
+                    if x["kind"] in ("table", "view", "materialized-view"):
+                        self.tables.setdefault(x["name"].lower(),
+                                               []).append(x["id"])
+        tables = self.tables
+        pos = 0
+        for stmt in code.split(";"):
+            begin, pos = pos, pos + len(stmt) + 1
+            if not stmt.strip():
+                continue
+            m = SQL_STATEMENT_RE.search(stmt)
+            own = m.group(1).strip('"`[]') if m else None
+            src = (self.symbol_in(fid, own) if own else None) \
+                or f"{fid}::<module>"
+            seen_refs: set = set()
+            for r in itertools.chain(SQL_REFERENCES_RE.finditer(stmt),
+                                     SQL_ON_RE.finditer(stmt)):
+                name = r.group(1).strip('"`[]')
+                self._sql_ref(fid, src, name, tables,
+                              _line_of(starts, begin + r.start(1)), seen_refs)
+            # Where each table is first named, found in one pass.
+            first: dict[str, int] = {}
+            for at in SQL_TABLE_AT_RE.finditer(stmt[:SQL_MAX]):
+                first.setdefault(at.group(1).lower(), at.start())
+            for access, table in sql_tables(stmt):
+                if own and table.lower() == own.lower():
+                    continue          # the statement's own definition
+                tline = _line_of(starts, begin + first.get(table.lower(), 0))
+                self.datum(fid, src, access, "table", table, tline)
+                if not src.endswith("::<module>"):
+                    self._sql_ref(fid, src, table, tables, tline, seen_refs)
+
+    def _sql_ref(self, fid, src, name, tables, line, seen) -> None:
+        if name.lower() in seen:
+            return
+        seen.add(name.lower())
+        ids = tables.get(name.lower(), [])
+        # A table defined in the same file is the one this file means.
+        here = [i for i in ids if i.startswith(fid + "::")]
+        ids = here or ids
+        if len(ids) == 1:
+            self.emit(fid, src, ids[0], name, "ref", line, "resolved")
+        elif ids:
+            self.emit(fid, src, None, name, "ref", line, "ambiguous", ids)
+
+    # -- html and css: class, id and custom property names are data nodes
+    def html(self, fid: str) -> None:
+        text = self.body[fid]
+        code = _blank(text, (), ("<!--", "-->"), "")
+        starts = _line_starts(code)
+        src = f"{fid}::<module>"
+        # <style> blocks are stylesheets; <script> blocks are code. Neither
+        # holds markup attributes, so both are blanked for the markup scan.
+        # Each opening tag, then a plain search for its close: a regex that
+        # looks for the close from every unclosed tag is quadratic. An
+        # unclosed block runs to the end of the file.
+        blocks, low, pos = [], code.lower(), 0
+        while True:
+            m = re.compile(r"<(style|script)\b[^>]{0,300}>").search(low, pos)
+            if not m:
+                break
+            close = low.find("</" + m.group(1), m.end())
+            end = close if close >= 0 else len(code)
+            blocks.append((m.end(), end, m.group(1)))
+            if close < 0:
+                break
+            pos = close + 2
+        markup = list(code)
+        styles = [ch if ch == "\n" else " " for ch in text]
+        for a, b, tag in blocks:
+            markup[a:b] = [ch if ch == "\n" else " " for ch in code[a:b]]
+            if tag == "style":
+                styles[a:b] = text[a:b]
+        if any(tag == "style" for _, _, tag in blocks):
+            self.css(fid, "".join(styles))
+        code = "".join(markup)
+        for m in HTML_CLASS_RE.finditer(code):
+            line = _line_of(starts, m.start(2))
+            for cls in m.group(2).split():
+                if re.fullmatch(r"-?[A-Za-z_][\w-]*", cls):
+                    self.datum(fid, src, "use", "css-class", cls, line)
+        for m in HTML_ID_RE.finditer(code):
+            self.datum(fid, src, "use", "css-id", m.group(2),
+                       _line_of(starts, m.start(2)))
+        for m in HTML_HANDLER_RE.finditer(code):
+            name = m.group(2)
+            line = _line_of(starts, m.start(2))
+            cands = sorted(s["id"] for s in self.by_name.get(name, [])
+                           if self.lang.get(s["file_id"]) in (
+                               "javascript", "typescript")
+                           and s["kind"] == "function")
+            status = "weak" if len(cands) == 1 else (
+                "ambiguous" if cands else "unresolved")
+            self.emit(fid, src, None, name, "call", line, status, cands)
+
+    def css(self, fid: str, text: str | None = None) -> None:
+        """Class, id and custom-property definitions and uses in a
+        stylesheet, or in `text`: a page with all but its <style> blocks
+        blanked."""
+        text = self.body[fid] if text is None else text
+        code = _blank(text, (), ("/*", "*/"), "'\"")
+        starts = _line_starts(code)
+        src = f"{fid}::<module>"
+        depth, sel_start = 0, 0
+        for i, c in enumerate(code):
+            if c == "{":
+                if depth == 0 or "@" not in code[sel_start:i]:
+                    sel = code[sel_start:i]
+                    if "@" not in sel:
+                        for m in CSS_CLASS_RE.finditer(sel):
+                            self.datum(fid, src, "define", "css-class",
+                                       m.group(1),
+                                       _line_of(starts, sel_start + m.start()))
+                        for m in CSS_ID_RE.finditer(sel):
+                            if not re.fullmatch(r"[0-9a-fA-F]{3,8}",
+                                                m.group(1)):
+                                self.datum(fid, src, "define", "css-id",
+                                           m.group(1), _line_of(
+                                               starts, sel_start + m.start()))
+                depth += 1
+                sel_start = i + 1
+            elif c == "}":
+                depth = max(0, depth - 1)
+                sel_start = i + 1
+            elif c == ";" and depth == 0:
+                sel_start = i + 1
+        for m in CSS_VAR_DEF_RE.finditer(code):
+            self.datum(fid, src, "define", "css-var", m.group(1),
+                       _line_of(starts, m.start()))
+        for m in CSS_VAR_USE_RE.finditer(code):
+            self.datum(fid, src, "use", "css-var", m.group(1),
+                       _line_of(starts, m.start()))
+
+
 def ingest(repo: Path) -> dict:
     cfg = load_config(repo)
     paths, escapes = scan_repo(repo)
@@ -2681,8 +4240,21 @@ def ingest(repo: Path) -> dict:
     con = connect(repo)
     with con:
         for table in ("files", "symbols", "edges", "entry_points", "ignored",
-                      "components", "annotations"):
+                      "components", "annotations", "symbol_edges",
+                      "data_edges"):
             con.execute(f"DELETE FROM {table}")
+        sym_rows, data_rows = python_symbol_edges(files, resolver,
+                                                  all_symbols)
+        more_rows, more_data = LineSymbols(files, resolver,
+                                           all_symbols).run()
+        sym_rows += more_rows
+        data_rows += more_data
+        con.executemany(
+            "INSERT INTO symbol_edges(src_file, src, dst, target, kind, line,"
+            " status, candidates) VALUES (?,?,?,?,?,?,?,?)", sym_rows)
+        con.executemany(
+            "INSERT INTO data_edges(src_file, src, kind, node_kind, node,"
+            " line, status, via) VALUES (?,?,?,?,?,?,?,?)", data_rows)
         con.executemany("INSERT OR IGNORE INTO components(name, file_id)"
                         " VALUES (?,?)", component_rows)
         con.executemany(
@@ -2734,6 +4306,8 @@ def ingest(repo: Path) -> dict:
             con.execute("INSERT OR REPLACE INTO ignored(path, rule)"
                         " VALUES (?,?)", (path_, rule))
         con.execute("DELETE FROM coverage WHERE file_id NOT IN"
+                    " (SELECT id FROM files)")
+        con.execute("DELETE FROM observed_lines WHERE file_id NOT IN"
                     " (SELECT id FROM files)")
         con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES"
                     " ('manifest', ?)", (manifest(repo),))
@@ -3591,12 +5165,15 @@ def detect_test_command(repo: Path, cfg: dict) -> list[str] | None:
     return None
 
 
-def coverage_run(repo: Path, yes: bool, timeout: int = 900) -> dict:
+def coverage_run(repo: Path, yes: bool, timeout: int = 900,
+                 calls: bool = False) -> dict:
     """Runs the repo's own test suite under coverage, in the repo's own
     environment. This EXECUTES repo code: it requires --yes, and an untrusted
     or heavyweight repo belongs in a container instead (see the skill doc)."""
     cfg = load_config(repo)
     cmd = detect_test_command(repo, cfg)
+    if calls:
+        cmd = traced_command(cmd)
     if not yes:
         # The refusal names the exact command, because a repo's own
         # .code-kg/config.json may set test_command and consent must be to
@@ -3604,6 +5181,8 @@ def coverage_run(repo: Path, yes: bool, timeout: int = 900) -> dict:
         planned = (f"config test_command: {' '.join(cmd)}"
                    if cfg.get("test_command") else
                    f"detected: {' '.join(cmd)}" if cmd else "none detected")
+        if calls and cmd:
+            planned += ", with the code-kg call tracer on PYTHONPATH"
         sys.exit("error: `coverage run` executes code from this repo"
                  f" ({planned}). Re-run with --yes to consent, or use"
                  " `coverage ingest` on an artifact produced elsewhere"
@@ -3628,6 +5207,8 @@ def coverage_run(repo: Path, yes: bool, timeout: int = 900) -> dict:
                  f" {config_path(repo)} (it will run under coverage as"
                  f" written).{seen}")
     source = "config" if cfg.get("test_command") else "detected"
+    if calls:
+        return trace_run(repo, cmd, source, timeout)
     print(f"coverage run [{source}]: {' '.join(cmd)}", file=sys.stderr)
     env = {**os.environ, "PYTHONSAFEPATH": "1"}
     if cmd[:4] == ["python3", "-m", "coverage", "run"]:
@@ -3666,6 +5247,366 @@ def coverage_run(repo: Path, yes: bool, timeout: int = 900) -> dict:
             result["ingest_error"] = ("no coverage artifact found; run"
                                       " `coverage ingest <file>` manually")
     return result
+
+
+# ---------- observed calls (python, opt-in, behind coverage run --yes) ----
+# Installed as sitecustomize.py on PYTHONPATH, so every python process the
+# test command starts records itself. It writes one JSON file per process
+# and never imports repo code.
+TRACER_SOURCE = r'''
+import atexit, json, os, sys, threading
+_ROOT = os.environ.get("CODE_KG_TRACE_ROOT", "")
+_OUT = os.environ.get("CODE_KG_TRACE_OUT", "")
+if _ROOT and _OUT:
+    _mine, _lines, _calls, _entries = {}, {}, {}, {}
+
+    def _is_mine(fn):
+        hit = _mine.get(fn)
+        if hit is None:
+            real = os.path.realpath(fn) if fn and not fn.startswith("<") \
+                else ""
+            hit = _mine[fn] = real if real.startswith(_ROOT + os.sep) \
+                else ""
+        return hit
+
+    def _local(frame, event, arg):
+        if event == "line":
+            _lines.setdefault(frame.f_code.co_filename, set()).add(
+                frame.f_lineno)
+        return _local
+
+    def _trace(frame, event, arg):
+        if event != "call":
+            return None
+        co = frame.f_code
+        if not _is_mine(co.co_filename):
+            return None
+        key = (co.co_filename, co.co_firstlineno, co.co_name)
+        _entries[key] = _entries.get(key, 0) + 1
+        back = frame.f_back
+        if back is not None and _is_mine(back.f_code.co_filename):
+            ck = (back.f_code.co_filename, back.f_lineno) + key
+            _calls[ck] = _calls.get(ck, 0) + 1
+        return _local
+
+    def _dump():
+        sys.settrace(None)
+        r = _is_mine
+        out = {"pid": os.getpid(),
+               "lines": {r(f): sorted(v) for f, v in _lines.items() if r(f)},
+               "entries": [[r(f), ln, n, c] for (f, ln, n), c
+                           in _entries.items()],
+               "calls": [[r(cf), cl, r(f), ln, n, c] for (cf, cl, f, ln, n), c
+                         in _calls.items()]}
+        path = os.path.join(_OUT, "trace-%d.json" % os.getpid())
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(out, fh)
+
+    atexit.register(_dump)
+    threading.settrace(_trace)
+    sys.settrace(_trace)
+'''
+TRACE_FILES_MAX = 2000
+TRACE_FILE_BYTES = 32 * 1024 * 1024
+TRACE_TOTAL_BYTES = 256 * 1024 * 1024
+OBSERVED_NOTE = ("Observed in one run: an edge the run did not exercise is"
+                 " not evidence it never happens, and a run over thin"
+                 " coverage proves little. Threads are traced; processes"
+                 " that do not start python with this environment, and"
+                 " C code, are not.")
+
+
+def _executable_lines(text: str) -> set[int]:
+    """Lines that start a statement: what a tracer reports as run. Read from
+    the syntax tree, never `compile()`, which crashes the stock 3.9
+    interpreter on deeply nested source instead of raising."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return set()
+    return {n.lineno for n in ast.walk(tree) if isinstance(n, ast.stmt)}
+
+
+def traced_command(cmd: list | None) -> list | None:
+    """The command `--calls` runs: coverage.py and this tracer both need
+    sys.settrace, so a `python3 -m coverage run` wrapper is dropped."""
+    if cmd and cmd[:4] == ["python3", "-m", "coverage", "run"]:
+        return ["python3"] + cmd[4:]
+    return cmd
+
+
+def trace_run(repo: Path, cmd: list, source: str, timeout: int) -> dict:
+    """Runs the test command with the stdlib tracer on every python
+    process it starts, then records lines, entries and calls by run. The
+    tracer lives in a temp folder outside the repo, which the repo cannot
+    point anywhere with a symlink."""
+    import shutil
+    import tempfile
+    print(f"coverage run --calls [{source}]: {' '.join(cmd)}, with the"
+          " code-kg call tracer on PYTHONPATH", file=sys.stderr)
+    tdir = Path(tempfile.mkdtemp(prefix="code-kg-trace-"))
+    out_dir = tdir / "out"
+    out_dir.mkdir()
+    (tdir / "sitecustomize.py").write_text(TRACER_SOURCE, encoding="utf-8")
+    path = os.pathsep.join(p for p in (str(tdir),
+                                       os.environ.get("PYTHONPATH", "")) if p)
+    env = {**os.environ, "PYTHONSAFEPATH": "1", "PYTHONPATH": path,
+           "CODE_KG_TRACE_ROOT": os.path.realpath(repo),
+           "CODE_KG_TRACE_OUT": str(out_dir)}
+    try:
+        run = subprocess.run(cmd, cwd=repo, capture_output=True, text=True,
+                             timeout=timeout, env=env)
+        tail = "\n".join((run.stdout + "\n" + run.stderr).splitlines()[-15:])
+        result = {"command": " ".join(cmd), "exit_code": run.returncode,
+                  "output_tail": tail}
+        result["trace"] = trace_ingest(repo, out_dir, result)
+    finally:
+        shutil.rmtree(tdir, ignore_errors=True)
+    return result
+
+
+def trace_ingest(repo: Path, out_dir: Path, result: dict) -> dict:
+    root = os.path.realpath(repo)
+    con = open_fresh(repo)
+    files = {r[0]: r[1] for r in con.execute(
+        "SELECT id, body FROM files WHERE language='python'")}
+    syms: dict[str, list] = {}
+    for sid, fid, name, kind, a, b in con.execute(
+            "SELECT id, file_id, name, kind, line_start, line_end FROM"
+            " symbols WHERE kind IN ('function','method','class')"):
+        syms.setdefault(fid, []).append((sid, name, kind, a, b))
+
+    def rel(path: str) -> str | None:
+        r = os.path.relpath(path, root).replace(os.sep, "/") if path else ""
+        return r if r in files else None
+
+    def callee(fid: str, first: int, name: str) -> str | None:
+        hits = [s for s in syms.get(fid, []) if s[1] == name
+                and s[3] <= first <= s[4] and s[2] != "class"]
+        return max(hits, key=lambda s: s[3])[0] if hits else None
+
+    def owner(fid: str, line: int) -> str:
+        hits = [s for s in syms.get(fid, []) if s[3] <= line <= s[4]]
+        return max(hits, key=lambda s: s[3])[0] if hits \
+            else f"{fid}::<module>"
+
+    lines: dict[str, set] = {}
+    entries: dict[str, int] = {}
+    calls: dict[tuple, int] = {}
+    sizes = {fid: body.count("\n") + 1 for fid, body in files.items()}
+
+    def line_ok(fid, x) -> bool:
+        return type(x) is int and 0 < x <= sizes[fid]
+
+    def count_ok(x) -> bool:
+        return type(x) is int and 0 < x < 2 ** 62
+
+    processes, budget = 0, TRACE_TOTAL_BYTES
+    for f in sorted(out_dir.glob("trace-*.json"))[:TRACE_FILES_MAX]:
+        # Repo code ran while these were written: every field is checked
+        # before it is used, and one bad file is skipped, not fatal.
+        try:
+            size = f.stat().st_size
+            if f.is_symlink() or size > TRACE_FILE_BYTES or size > budget:
+                continue
+            budget -= size
+            data = json.loads(f.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                continue
+            got_lines, got_entries, got_calls = {}, {}, {}
+            for path, lns in (data.get("lines") or {}).items():
+                fid = rel(path) if isinstance(path, str) else None
+                if fid and isinstance(lns, list):
+                    got_lines.setdefault(fid, set()).update(
+                        x for x in lns if line_ok(fid, x))
+            for row in data.get("entries") or []:
+                path, first, name, count = row
+                fid = rel(path) if isinstance(path, str) else None
+                if fid and line_ok(fid, first) and isinstance(name, str) \
+                        and count_ok(count):
+                    sid = callee(fid, first, name)
+                    if sid:
+                        got_entries[sid] = got_entries.get(sid, 0) + count
+            for row in data.get("calls") or []:
+                cpath, cline, path, first, name, count = row
+                cfid = rel(cpath) if isinstance(cpath, str) else None
+                fid = rel(path) if isinstance(path, str) else None
+                if cfid and fid and line_ok(cfid, cline) \
+                        and line_ok(fid, first) and isinstance(name, str) \
+                        and count_ok(count):
+                    dst = callee(fid, first, name)
+                    if dst:
+                        key = (owner(cfid, cline), dst, cline)
+                        got_calls[key] = got_calls.get(key, 0) + count
+        except (OSError, ValueError, TypeError, AttributeError,
+                RecursionError, MemoryError):
+            continue
+        processes += 1
+        for fid, lns in got_lines.items():
+            lines.setdefault(fid, set()).update(lns)
+        for sid, c in got_entries.items():
+            entries[sid] = min(entries.get(sid, 0) + c, 2 ** 62)
+        for key, c in got_calls.items():
+            calls[key] = min(calls.get(key, 0) + c, 2 ** 62)
+    detail = json.dumps({"command": result["command"],
+                         "exit_code": result["exit_code"],
+                         "processes": processes, "manifest": manifest(repo)})
+    with con:
+        cur = con.execute("INSERT INTO runs(at, kind, detail) VALUES"
+                          " (?,?,?)", (now_utc(), "trace-run", detail))
+        run_id = cur.lastrowid
+        con.executemany(
+            "INSERT INTO observed_calls(run_id, src, dst, line, count)"
+            " VALUES (?,?,?,?,?)",
+            [(run_id, s, d, ln, c) for (s, d, ln), c in sorted(calls.items())])
+        con.executemany(
+            "INSERT INTO observed_entries(run_id, symbol, count) VALUES"
+            " (?,?,?)", [(run_id, s, c) for s, c in sorted(entries.items())])
+        con.executemany(
+            "INSERT INTO observed_lines(run_id, file_id, line) VALUES (?,?,?)",
+            [(run_id, fid, ln) for fid in sorted(lines)
+             for ln in sorted(lines[fid])])
+        # The same lines, folded into coverage with the lines that never
+        # ran, so `coverage report` and `dead` see this run too.
+        for fid, ran in sorted(lines.items()):
+            for ln in sorted(_executable_lines(files[fid]) | ran):
+                con.execute(
+                    "INSERT INTO coverage(file_id, line, hits) VALUES (?,?,?)"
+                    " ON CONFLICT(file_id, line) DO UPDATE SET"
+                    " hits=max(hits, excluded.hits)",
+                    (fid, ln, 1 if ln in ran else 0))
+    con.close()
+    return {"run_id": run_id, "processes": processes,
+            "calls": sum(calls.values()), "call_pairs": len(calls),
+            "symbols_entered": len(entries),
+            "files_with_lines": len(lines)}
+
+
+def _last_trace(con: sqlite3.Connection, repo: Path) -> dict:
+    row = con.execute("SELECT id, at, detail FROM runs WHERE"
+                      " kind='trace-run' ORDER BY id DESC LIMIT 1").fetchone()
+    if not row:
+        con.close()
+        sys.exit("error: no traced run - `coverage <repo> run --yes --calls`"
+                 " first")
+    d = json.loads(row[2])
+    return {"id": row[0], "at": row[1], "command": d.get("command"),
+            "exit_code": d.get("exit_code"), "processes": d.get("processes"),
+            "stale": d.get("manifest") != manifest(repo)}
+
+
+def observed_report(repo: Path, name: str | None, gap: bool,
+                    limit: int = 0) -> dict:
+    con = open_fresh(repo)
+    run = _last_trace(con, repo)
+    rid = run["id"]
+    static = set()
+    # A call to a class runs its __init__: the tracer sees the method.
+    for s, d, kind in con.execute(
+            "SELECT e.src, e.dst, s.kind FROM symbol_edges e JOIN symbols s"
+            " ON s.id = e.dst WHERE e.status='resolved'"):
+        static.add((s, d))
+        if kind == "class":
+            static.add((s, f"{d}.__init__"))
+    for s, d in con.execute("SELECT src, dst FROM symbol_edges WHERE"
+                            " status='resolved' AND dst LIKE '%::<module>'"):
+        static.add((s, d))
+    if gap or not name:
+        pairs = {(s, d): c for s, d, c in con.execute(
+            "SELECT src, dst, sum(count) FROM observed_calls WHERE run_id=?"
+            " GROUP BY src, dst", (rid,))}
+        listed = set()
+        for s, cands in con.execute(
+                "SELECT src, candidates FROM symbol_edges WHERE status IN"
+                " ('weak','ambiguous')"):
+            listed.update((s, c) for c in cands.split("\n") if c)
+        con.close()
+        missed, confirmed = [], []
+        for (s, d), c in sorted(pairs.items()):
+            if (s, d) in static or s == d:
+                continue
+            row = {"src": s, "dst": d, "count": c}
+            (confirmed if (s, d) in listed else missed).append(row)
+        missed, status = _cut(missed, limit)
+        return {"run": run, "observed_pairs": len(pairs), "gap": missed,
+                "candidates_confirmed": confirmed, "status": status,
+                "note": OBSERVED_NOTE}
+    sid = pick_symbol(con, name)
+    fid = sid.split("::", 1)[0]
+    entered = con.execute("SELECT sum(count) FROM observed_entries WHERE"
+                          " run_id=? AND symbol=?", (rid, sid)).fetchone()[0]
+    ran_lines = {ln for ln, in con.execute(
+        "SELECT line FROM observed_lines WHERE run_id=? AND file_id=?",
+        (rid, fid))}
+    if sid.endswith("::<module>"):
+        entered = 1 if ran_lines else 0
+    seen = {d for d, in con.execute(
+        "SELECT DISTINCT dst FROM observed_calls WHERE run_id=? AND src=?",
+        (rid, sid))}
+    edges = []
+    for dst, kind, line in con.execute(
+            "SELECT dst, kind, line FROM symbol_edges WHERE src=? AND"
+            " status='resolved' AND kind IN ('call','ref') ORDER BY line",
+            (sid,)):
+        if dst in seen or f"{dst}.__init__" in seen:
+            state = "observed"
+        elif not entered:
+            state = "caller_never_ran"
+        elif line not in ran_lines:
+            state = "line_never_ran"
+        else:
+            state = "line_ran_not_called"
+        edges.append({"dst": dst, "kind": kind, "line": line,
+                      "state": state})
+    extra = [{"dst": d, "line": ln, "count": c} for d, ln, c in con.execute(
+        "SELECT dst, line, count FROM observed_calls WHERE run_id=? AND"
+        " src=? ORDER BY line", (rid, sid)) if (sid, d) not in static]
+    span = con.execute("SELECT line_start, line_end FROM symbols WHERE id=?",
+                       (sid,)).fetchone()
+    lo, hi = span if span else (1, 10 ** 9)
+    code = {ln for ln, in con.execute(
+        "SELECT line FROM coverage WHERE file_id=? AND line BETWEEN ? AND ?",
+        (fid, lo, hi))}
+    con.close()
+    edges, status = _cut(edges, limit)
+    return {"symbol": sid, "run": run, "entries": entered or 0,
+            "lines_ran": len(ran_lines & code) if code else len(
+                {x for x in ran_lines if lo <= x <= hi}),
+            "lines_with_code": len(code), "edges": edges,
+            "not_in_static_graph": extra, "status": status,
+            "note": OBSERVED_NOTE}
+
+
+def cmd_observed(args: argparse.Namespace) -> int:
+    payload = observed_report(repo_dir(args.repo), args.symbol, args.gap,
+                              args.limit)
+
+    def render(p):
+        r = p["run"]
+        print(f"run {r['id']} at {r['at']}: {r['command']} (exit"
+              f" {r['exit_code']}, {r['processes']} processes)"
+              + ("  STALE: the tree changed since this run" if r["stale"]
+                 else ""))
+        if "gap" in p:
+            print(f"{len(p['candidates_confirmed'])} of"
+                  f" {p['observed_pairs']} observed caller pairs confirm a"
+                  " candidate the static graph listed (weak or ambiguous)")
+            print(f"{len(p['gap'])} are not in the static graph:")
+            for g in p["gap"]:
+                print(f"  {g['src']} -> {g['dst']}  x{g['count']}")
+        else:
+            print(f"{p['symbol']}: entered {p['entries']} times,"
+                  f" {p['lines_ran']} of {p['lines_with_code']} lines ran")
+            for e in p["edges"]:
+                print(f"  -> {e['dst']}  line {e['line']}  {e['state']}")
+            for e in p["not_in_static_graph"]:
+                print(f"  -> {e['dst']}  line {e['line']}  observed only,"
+                      " not in the static graph")
+        if p["status"] != "COMPLETE":
+            print(f"{p['status']}; --limit 0 for all")
+        print(p["note"])
+        return 0
+    return emit(args, payload, render)
 
 
 def coverage_report(repo: Path) -> dict:
@@ -4266,6 +6207,24 @@ def cmd_entrypoints(args: argparse.Namespace) -> int:
 
 
 def cmd_dead(args: argparse.Namespace) -> int:
+    if args.symbols:
+        sym = dead_symbols_report(repo_dir(args.repo), args.limit)
+
+        def render_symbols(p):
+            print(p["note"])
+            print(f"\nno resolved use ({len(p['no_resolved_use'])}):")
+            for s in p["no_resolved_use"]:
+                print(f"  {s}")
+            print(f"\nonly name-matched callers, receiver unknown"
+                  f" ({len(p['name_matched_only'])}):")
+            for s in p["name_matched_only"]:
+                print(f"  {s}")
+            print(f"\n{p['flagged']} of {p['symbols_checked']} python"
+                  f" symbols flagged")
+            if p["status"] != "COMPLETE":
+                print(f"{p['status']}; --limit 0 for all")
+            return 0
+        return emit(args, sym, render_symbols)
     payload = dead_report(repo_dir(args.repo))
 
     def render(p):
@@ -4292,7 +6251,8 @@ def cmd_dead(args: argparse.Namespace) -> int:
 def cmd_coverage(args: argparse.Namespace) -> int:
     repo = repo_dir(args.repo)
     if args.action == "run":
-        payload = coverage_run(repo, yes=args.yes, timeout=args.timeout)
+        payload = coverage_run(repo, yes=args.yes, timeout=args.timeout,
+                               calls=args.calls)
     elif args.action == "ingest":
         if not args.artifact:
             sys.exit("error: `coverage ingest` needs an artifact path")
@@ -4764,19 +6724,24 @@ SIBLING_CLI = (Path(__file__).resolve().parent.parent.parent
 SIBLING_TIMEOUT = 120
 VAULT_KG_DBS = ("markdown-kg/markdown-kg.db", "vault-kg/vault-kg.db")
 VAULT_CAP = 20          # vaults one `docs` call asks
+DOCS_LIMIT = 50         # rows per list `docs` prints unless told otherwise
+# Doc rank for capped lists: fixed names, never a config pattern.
+PRIMARY_DOCS = ("README.md", "SKILL.md", "AGENTS.md", "CLAUDE.md")
+ARCHIVE_DIRS = ("archive", "archived", "_archive", "completed", "old",
+                "deprecated")
 
 
-def sibling_json(*argv: str) -> tuple[object, str]:
+def sibling_json(*argv: str, flags: tuple = ()) -> tuple[object, str]:
     """One markdown-kg read command: (parsed answer, '') or (None, one
     line saying why there is none). That skill refreshes its own database
     first when the vault has changed. `--` ends the options, because the
-    paths that follow come from repo content."""
+    paths that follow come from repo content; `flags` go before it."""
     if not SIBLING_CLI.is_file():
         return None, "the markdown-kg skill is not installed beside this one"
     try:
         r = subprocess.run(
-            [sys.executable, str(SIBLING_CLI), argv[0], "--json", "--",
-             *argv[1:]], capture_output=True, encoding="utf-8",
+            [sys.executable, str(SIBLING_CLI), argv[0], "--json", *flags,
+             "--", *argv[1:]], capture_output=True, encoding="utf-8",
             errors="replace", timeout=SIBLING_TIMEOUT,
             env={**os.environ, "PYTHONUTF8": "1"})
         if r.returncode == 0:
@@ -4815,7 +6780,8 @@ def vault_mentions(vault_dir_: str, fid: str,
     the one resolver, and the vault is asked again for the sections of
     those that land in the file. A vault can write a path with any line
     suffix, so the spans asked about are capped."""
-    spans, why = sibling_json("spans", vault_dir_)
+    # Every span: `spans` cuts at a default limit unless told otherwise.
+    spans, why = sibling_json("spans", vault_dir_, flags=("--limit", "0"))
     if not isinstance(spans, list):
         return [], why or "markdown-kg spans: unexpected answer"
     named: dict[str, str | None] = {}
@@ -4830,14 +6796,27 @@ def vault_mentions(vault_dir_: str, fid: str,
         texts = texts[:MENTION_TEXTS]
     for i in range(0, len(texts), MENTION_CHUNK):
         rows, why = sibling_json("spans", vault_dir_,
-                                 *texts[i:i + MENTION_CHUNK])
+                                 *texts[i:i + MENTION_CHUNK],
+                                 flags=("--limit", "0"))
         if not isinstance(rows, list):
             return [], why or "markdown-kg spans: unexpected answer"
         out += [{**r, "symbol": named.get(r.get("text"))} for r in rows]
     return out, note
 
 
-def docs_report(repo: Path, name: str, mentions: bool = False) -> dict:
+def doc_rank(path: str) -> int:
+    """0 for a primary doc, 2 for an archived one, 1 otherwise: the order a
+    capped list of doc rows is cut in. markdown-kg's `doc_rank` has the
+    same body; keep the two identical."""
+    parts = path.lower().split("/")
+    if any(p in ARCHIVE_DIRS for p in parts[:-1]):
+        return 2
+    base = path.rsplit("/", 1)[-1]
+    return 0 if base in PRIMARY_DOCS or base.startswith("SPEC") else 1
+
+
+def docs_report(repo: Path, name: str, mentions: bool = False,
+                limit: int = 0) -> dict:
     """The doc sections that link to one file. `doc_links` is what this
     graph holds: the markdown files with a link edge to it, by line.
     `sections` comes from markdown-kg, asked once per vault inside the repo:
@@ -4891,13 +6870,358 @@ def docs_report(repo: Path, name: str, mentions: bool = False) -> dict:
                    | {m["doc"] for m in named if m["symbol"] is None})
         for m in named:
             m["corroborated"] = m["symbol"] is None or m["doc"] in backing
+        # The file named outright first, then corroborated symbols, then
+        # the rest; primary docs before archives within each.
         out["mentions"] = sorted(named, key=lambda m: (
-            m["vault"], m["doc"], m["line"], m["text"]))
+            m["symbol"] is not None, not m["corroborated"],
+            doc_rank(m["doc"]), m["vault"], m["doc"], m["line"], m["text"]))
+    out["sections"] = sorted(sections, key=lambda s: doc_rank(s["doc"]))
+    out["doc_links"] = sorted(doc_links, key=lambda r: doc_rank(r["src"]))
+    cuts = []
+    for key in ("sections", "doc_links", "mentions"):
+        rows = out.get(key)
+        if rows is not None and limit > 0 and len(rows) > limit:
+            cuts.append(f"{key} {limit} of {len(rows)}")
+            out[key] = rows[:limit]
+    out["status"] = "TRUNCATED " + ", ".join(cuts) if cuts else "COMPLETE"
     return out
 
 
+# ---------- symbol queries ----------
+SYMBOL_EDGE_COLS = ("src", "dst", "target", "kind", "line", "status",
+                    "candidates")
+STATUS_RANK = {"resolved": 0, "weak": 1, "ambiguous": 2, "external": 3,
+               "unresolved": 4}
+SYMBOLS_LIMIT = 50
+DEPTH_MAX = 10
+LIVENESS_NOTE = ("Static evidence only, not proof: dispatch by string,"
+                 " getattr, plugin registries, framework hooks and callers"
+                 " outside the repo are invisible. A symbol listed has no"
+                 " resolved call, reference, import, decorator or base-class"
+                 " use from another symbol in this repo. Python only.")
+
+
+def pick_symbol(con: sqlite3.Connection, name: str) -> str:
+    """A CLI symbol argument: an id (`file::qualname` or `file::<module>`),
+    or a qualname or bare name that names exactly one symbol."""
+    n = name.strip()
+    if con.execute("SELECT 1 FROM symbols WHERE id=?", (n,)).fetchone():
+        return n
+    if n.endswith("::<module>") and con.execute(
+            "SELECT 1 FROM files WHERE id=?", (n[:-10],)).fetchone():
+        return n
+    cands = [r[0] for r in con.execute(
+        "SELECT s.id FROM symbols s JOIN files f ON f.id = s.file_id"
+        " WHERE (s.qualname=? OR s.name=?) AND f.origin='project'"
+        " ORDER BY s.id", (n, n))]
+    if len(cands) == 1:
+        return cands[0]
+    con.close()
+    if cands:
+        sys.exit(f"error: {name!r} names {len(cands)} symbols - pass one"
+                 " id: " + ", ".join(cands[:SYMBOL_CANDIDATES_MAX]))
+    sys.exit(f"error: no symbol {name!r} - `symbols <repo> <name>` lists"
+             " what is indexed")
+
+
+def _edge_rows(rows) -> list[dict]:
+    out = []
+    for r in rows:
+        d = dict(zip(SYMBOL_EDGE_COLS, r))
+        d["candidates"] = d["candidates"].split("\n") if d["candidates"] \
+            else []
+        out.append(d)
+    return out
+
+
+def _cut(rows: list, limit: int) -> tuple[list, str]:
+    if limit > 0 and len(rows) > limit:
+        return rows[:limit], f"TRUNCATED {limit} of {len(rows)}"
+    return rows, "COMPLETE"
+
+
+def symbol_report(repo: Path, name: str, direction: str, depth: int = 1,
+                  limit: int = SYMBOLS_LIMIT) -> dict:
+    """Callers (`in`) or callees (`out`) of one symbol, every status, best
+    evidence first. Past depth 1, only resolved edges are followed."""
+    con = open_fresh(repo)
+    sid = pick_symbol(con, name)
+    near, far = ("dst", "src") if direction == "in" else ("src", "dst")
+    cols = ", ".join(SYMBOL_EDGE_COLS)
+    rows, frontier, seen = [], {sid}, {sid}
+    for level in range(1, max(1, min(depth, DEPTH_MAX)) + 1):
+        if not frontier:
+            break
+        marks = ",".join("?" * len(frontier))
+        got = _edge_rows(con.execute(
+            f"SELECT {cols} FROM symbol_edges WHERE {near} IN ({marks})"
+            + ("" if level == 1 else " AND status='resolved'"),
+            sorted(frontier)))
+        for r in got:
+            r["depth"] = level
+        rows += got
+        frontier = {r[far] for r in got
+                    if r["status"] == "resolved" and r[far]} - seen
+        seen |= frontier
+    name_matched = []
+    if direction == "in":
+        name_matched = [r for r in _edge_rows(con.execute(
+            f"SELECT {cols} FROM symbol_edges WHERE status IN"
+            " ('weak','ambiguous') AND instr(candidates, ?) > 0", (sid,)))
+            if sid in r["candidates"]]
+    con.close()
+    rows.sort(key=lambda r: (r["depth"], STATUS_RANK.get(r["status"], 9),
+                             r["src"], r["line"], r["target"]))
+    rows, status = _cut(rows, limit)
+    name_matched.sort(key=lambda r: (r["src"], r["line"]))
+    return {"symbol": sid, "direction": direction, "edges": rows,
+            "name_matched": name_matched, "status": status}
+
+
+def cmd_symbol_edges(args: argparse.Namespace) -> int:
+    direction = "in" if args.cmd == "callers" else "out"
+    payload = symbol_report(repo_dir(args.repo), args.symbol, direction,
+                            args.depth, args.limit)
+
+    def render(p):
+        arrow = "<-" if p["direction"] == "in" else "->"
+        print(f"{p['symbol']}: {len(p['edges'])} edges")
+        for r in p["edges"]:
+            other = r["src"] if p["direction"] == "in" else (
+                r["dst"] or r["target"])
+            extra = (f"  ({len(r['candidates'])} candidates)"
+                     if r["candidates"] else "")
+            pad = "  " * r["depth"]
+            print(f"{pad}{arrow} {other}  {r['kind']} line {r['line']}"
+                  f"  [{r['status']}]{extra}")
+        if p["name_matched"]:
+            print(f"name-matched only, receiver unknown"
+                  f" ({len(p['name_matched'])}):")
+            for r in p["name_matched"]:
+                print(f"  <- {r['src']}  `{r['target']}` line {r['line']}"
+                      f"  [{r['status']}]")
+        if p["status"] != "COMPLETE":
+            print(f"{p['status']}, resolved first; --limit 0 for all")
+        return 0
+    return emit(args, payload, render)
+
+
+def cmd_extends(args: argparse.Namespace) -> int:
+    con = open_fresh(repo_dir(args.repo))
+    sid = pick_symbol(con, args.symbol)
+    cols = ", ".join(SYMBOL_EDGE_COLS)
+    payload = {
+        "symbol": sid,
+        "bases": _edge_rows(con.execute(
+            f"SELECT {cols} FROM symbol_edges WHERE src=? AND"
+            " kind='extends' ORDER BY line", (sid,))),
+        "subclasses": _edge_rows(con.execute(
+            f"SELECT {cols} FROM symbol_edges WHERE dst=? AND"
+            " kind='extends' ORDER BY src", (sid,)))}
+    con.close()
+
+    def render(p):
+        print(p["symbol"])
+        for r in p["bases"]:
+            print(f"  extends {r['dst'] or r['target']}  [{r['status']}]")
+        for r in p["subclasses"]:
+            print(f"  extended by {r['src']}")
+        return 0
+    return emit(args, payload, render)
+
+
+DATA_ACCESS = ("read", "write", "open", "use", "define")
+FLOW_DEPTH = 3
+
+
+FLOW_ROWS_MAX = 20000
+
+
+def _flow(con: sqlite3.Connection, sym: str, depth: int,
+          stack: tuple = (), state: dict | None = None
+          ) -> tuple[list[dict], int]:
+    """What `sym` reads and writes: its own rows, then through each
+    resolved call, the callee's rows with a parameter replaced by what this
+    call site passes. (rows, accesses whose argument the source does not
+    show). Results are memoized by (symbol, depth), and `state["rows"]`
+    counts every row built against FLOW_ROWS_MAX, so a wide call tree
+    stops with `state["cut"]` set instead of growing without bound."""
+    if state is None:
+        state = {"memo": {}, "rows": 0, "cut": False}
+    key = (sym, depth)
+    if key in state["memo"]:
+        return state["memo"][key]
+    if state["rows"] >= FLOW_ROWS_MAX:
+        state["cut"] = True
+        return [], 0
+    out = _flow_once(con, sym, depth, stack, state)
+    state["rows"] += len(out[0])
+    state["memo"][key] = out
+    return out
+
+
+def _flow_once(con: sqlite3.Connection, sym: str, depth: int, stack: tuple,
+               state: dict) -> tuple[list[dict], int]:
+    rows = [{"access": k, "node_kind": nk, "node": n, "line": ln,
+             "status": st, "via": via, "hops": 0, "provenance": "extracted"}
+            for k, nk, n, ln, st, via in con.execute(
+                "SELECT kind, node_kind, node, line, status, via FROM"
+                " data_edges WHERE src=? AND kind IN ("
+                + ",".join("?" * len(DATA_ACCESS)) + ") ORDER BY line",
+                (sym,) + DATA_ACCESS)]
+    unknown = 0
+    if depth <= 0 or sym in stack:
+        return rows, unknown
+    calls = con.execute(
+        "SELECT DISTINCT dst, line FROM symbol_edges WHERE src=? AND"
+        " kind='call' AND status='resolved' ORDER BY line", (sym,)).fetchall()
+    for callee, line in calls:
+        sub, sub_unknown = _flow(con, callee, depth - 1, stack + (sym,),
+                                 state)
+        unknown += sub_unknown
+        params = {n: via for n, via in con.execute(
+            "SELECT node, via FROM data_edges WHERE src=? AND kind='param'",
+            (callee,))}
+        passed = {via.rsplit("#", 1)[1]: (nk, n) for nk, n, via in
+                  con.execute(
+                      "SELECT node_kind, node, via FROM data_edges WHERE"
+                      " src=? AND kind='passes' AND line=? AND via LIKE ?",
+                      (sym, line, f"{callee}#%"))}
+        for r in sub:
+            r = {**r, "hops": r["hops"] + 1, "provenance": "inferred",
+                 "via": f"{callee} (line {line}) > {r['via']}",
+                 "line": line}
+            if r["node"].startswith("param:"):
+                p = r["node"][6:]
+                arg = passed.get(params.get(p, "")) or passed.get(p)
+                if arg is None:
+                    unknown += 1
+                    continue
+                r["node"] = arg[1] if arg[0] == "literal" else f"param:{arg[1]}"
+                r["status"] = "resolved" if arg[0] == "literal" else "param"
+            rows.append(r)
+    return rows, unknown
+
+
+def flow_report(repo: Path, name: str, depth: int = FLOW_DEPTH,
+                limit: int = SYMBOLS_LIMIT) -> dict:
+    con = open_fresh(repo)
+    sid = pick_symbol(con, name)
+    state = {"memo": {}, "rows": 0, "cut": False}
+    rows, unknown = _flow(con, sid, max(0, min(depth, DEPTH_MAX)), (), state)
+    con.close()
+    rows.sort(key=lambda r: (r["hops"], r["node_kind"], r["node"],
+                             r["access"], r["line"]))
+    rows, status = _cut(rows, limit)
+    if state["cut"]:
+        status = (f"TRUNCATED at {FLOW_ROWS_MAX} rows built; lower --depth"
+                  if status == "COMPLETE" else
+                  f"{status}; call tree cut at {FLOW_ROWS_MAX} rows built")
+    return {"symbol": sid, "rows": rows, "status": status,
+            "unknown_arguments": unknown,
+            "note": "Static: literal names and parameters only. A name built"
+                    " at run time, a call through an unknown receiver and"
+                    " data passed inside objects are not followed."}
+
+
+def touches_report(repo: Path, node: str, limit: int = SYMBOLS_LIMIT) -> dict:
+    kind, _, name = node.partition(":")
+    if not name:
+        kind, name = "", node
+    con = open_fresh(repo)
+    q = ("SELECT src, kind, node_kind, node, line, status, via FROM"
+         " data_edges WHERE node=? AND kind IN ("
+         + ",".join("?" * len(DATA_ACCESS)) + ")")
+    params: tuple = (name,) + DATA_ACCESS
+    if kind:
+        q += " AND node_kind=?"
+        params += (kind,)
+    rows = [dict(zip(("src", "access", "node_kind", "node", "line", "status",
+                      "via"), r)) for r in con.execute(q + " ORDER BY src,"
+                                                           " line", params)]
+    con.close()
+    rows, status = _cut(rows, limit)
+    return {"node": node, "rows": rows, "status": status}
+
+
+def cmd_flow(args: argparse.Namespace) -> int:
+    payload = flow_report(repo_dir(args.repo), args.symbol, args.depth,
+                          args.limit)
+
+    def render(p):
+        print(f"{p['symbol']}: {len(p['rows'])} data accesses")
+        for r in p["rows"]:
+            hop = f"  via {r['via']}" if r["via"] else ""
+            print(f"  {r['access']:5} {r['node_kind']}:{r['node']}"
+                  f"  line {r['line']}  [{r['provenance']}]{hop}")
+        if p["unknown_arguments"]:
+            print(f"  {p['unknown_arguments']} accesses in callees depend on"
+                  " an argument the source does not show")
+        if p["status"] != "COMPLETE":
+            print(f"{p['status']}; --limit 0 for all")
+        print(p["note"])
+        return 0
+    return emit(args, payload, render)
+
+
+def cmd_touches(args: argparse.Namespace) -> int:
+    payload = touches_report(repo_dir(args.repo), args.node, args.limit)
+
+    def render(p):
+        print(f"{p['node']}: {len(p['rows'])} accesses")
+        for r in p["rows"]:
+            print(f"  {r['access']:5} {r['src']}  line {r['line']}"
+                  f"  [{r['status']}]")
+        if p["status"] != "COMPLETE":
+            print(f"{p['status']}; --limit 0 for all")
+        return 0
+    return emit(args, payload, render)
+
+
+def dead_symbols_report(repo: Path, limit: int = SYMBOLS_LIMIT) -> dict:
+    """Python functions, classes and methods in project source files with
+    no resolved use from another symbol. Dunder methods are reached by the
+    language itself and are left out."""
+    con = open_fresh(repo)
+    syms = [r for r in con.execute(
+        "SELECT s.id, s.name FROM symbols s JOIN files f ON f.id = s.file_id"
+        " WHERE f.language='python' AND f.origin='project'"
+        " AND f.role='source' AND s.kind IN ('function','class','method')"
+        " ORDER BY s.id")]
+    used = {r[0] for r in con.execute(
+        "SELECT DISTINCT dst FROM symbol_edges WHERE status='resolved'"
+        " AND dst IS NOT NULL AND src != dst")}
+    matched = set()
+    for (cands,) in con.execute(
+            "SELECT candidates FROM symbol_edges WHERE status IN"
+            " ('weak','ambiguous')"):
+        matched.update(cands.split("\n"))
+    # A traced run can add use, never take it away.
+    ran = {s for s, in con.execute(
+        "SELECT symbol FROM observed_entries WHERE run_id = (SELECT max(id)"
+        " FROM runs WHERE kind='trace-run')")}
+    con.close()
+    none, only, observed = [], [], []
+    for sid, name in syms:
+        if sid in used or (name.startswith("__") and name.endswith("__")):
+            continue
+        if sid in ran:
+            observed.append(sid)
+        else:
+            (only if sid in matched else none).append(sid)
+    total = len(none) + len(only)
+    none, s1 = _cut(none, limit)
+    only, s2 = _cut(only, limit)
+    status = "COMPLETE" if s1 == s2 == "COMPLETE" else \
+        f"TRUNCATED no_resolved_use {s1}, name_matched_only {s2}"
+    return {"no_resolved_use": none, "name_matched_only": only,
+            "observed_live": observed, "symbols_checked": len(syms),
+            "flagged": total, "status": status, "note": LIVENESS_NOTE}
+
+
 def cmd_docs(args: argparse.Namespace) -> int:
-    payload = docs_report(repo_dir(args.repo), args.path, args.mentions)
+    payload = docs_report(repo_dir(args.repo), args.path, args.mentions,
+                          args.limit)
 
     def render(p):
         print(f"{p['file']}: {len(p['sections'])} doc sections,"
@@ -4913,6 +7237,8 @@ def cmd_docs(args: argparse.Namespace) -> int:
             print(f"  {m['doc']}:{m['line']}  names `{m['text']}`{what}")
         for line in p["missing"]:
             print(f"  {line}")
+        if p["status"] != "COMPLETE":
+            print(f"  {p['status']}, ranked; --limit 0 for all")
         return 0
     return emit(args, payload, render)
 
@@ -4962,7 +7288,14 @@ def main(argv: list[str] | None = None) -> int:
     p = add("externals", cmd_externals)
     p.add_argument("--limit", type=int, default=30)
     add("entrypoints", cmd_entrypoints)
-    add("dead", cmd_dead)
+    p = add("dead", cmd_dead)
+    p.add_argument("--symbols", action="store_true",
+                   help="python functions, classes and methods with no"
+                        " resolved use from another symbol, instead of"
+                        " files; static evidence, not proof")
+    p.add_argument("--limit", type=int, default=SYMBOLS_LIMIT,
+                   help=f"with --symbols, rows per list, default"
+                        f" {SYMBOLS_LIMIT}; 0 for all")
     p = add("god-nodes", cmd_god_nodes)
     p.add_argument("--limit", type=int, default=20)
     p = add("communities", cmd_communities)
@@ -4974,6 +7307,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("artifact", nargs="?")
     p.add_argument("--yes", action="store_true")
     p.add_argument("--timeout", type=int, default=900)
+    p.add_argument("--calls", action="store_true",
+                   help="with run: trace python calls and lines with the"
+                        " stdlib tracer instead of coverage.py, for"
+                        " `observed`; every python process the tests"
+                        " start is traced")
+    p = add("observed", cmd_observed,
+            help="a symbol's static edges against the last traced run:"
+                 " observed, caller_never_ran, line_never_ran or"
+                 " line_ran_not_called; --gap lists calls the static graph"
+                 " missed")
+    p.add_argument("symbol", nargs="?")
+    p.add_argument("--gap", action="store_true")
+    p.add_argument("--limit", type=int, default=SYMBOLS_LIMIT,
+                   help=f"rows, default {SYMBOLS_LIMIT}; 0 for all")
     add("stats", cmd_stats)
     p = add("data", cmd_data)
     p.add_argument("--inspect", metavar="STORE",
@@ -5000,8 +7347,48 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--mentions", action="store_true",
                    help="also the sections that name the file, or a symbol"
                         " in it, in a code span")
+    p.add_argument("--limit", type=int, default=DOCS_LIMIT,
+                   help=f"rows per list, default {DOCS_LIMIT}; 0 for all."
+                        " Ranked first: mentions that name the file, then"
+                        " corroborated symbols, then primary docs before"
+                        " archives. `status` says COMPLETE or TRUNCATED"
+                        " <list> N of M")
     p = add("resolve", cmd_resolve)
     p.add_argument("text", nargs="+")
+    for name, what in (("callers", "what calls, references, imports,"
+                                   " decorates or extends a symbol"),
+                       ("callees", "what a symbol calls, references,"
+                                   " imports, is decorated by or extends")):
+        p = add(name, cmd_symbol_edges, help=what)
+        p.add_argument("symbol", help="an id (file::qualname or"
+                                      " file::<module>), or a name that"
+                                      " is unique in the repo")
+        p.add_argument("--depth", type=int, default=1,
+                       help=f"follow resolved edges this many hops (max"
+                            f" {DEPTH_MAX})")
+        p.add_argument("--limit", type=int, default=SYMBOLS_LIMIT,
+                       help=f"rows, default {SYMBOLS_LIMIT}; 0 for all."
+                            " Resolved rows rank first; a cut sets"
+                            " `status` to TRUNCATED N of M")
+    p = add("extends", cmd_extends, help="a class's bases and subclasses")
+    p.add_argument("symbol")
+    p = add("flow", cmd_flow, help="the globals, tables, files, environment"
+                                   " variables and config keys a symbol"
+                                   " reads and writes, directly and through"
+                                   " the calls it makes")
+    p.add_argument("symbol")
+    p.add_argument("--depth", type=int, default=FLOW_DEPTH,
+                   help=f"call hops followed, default {FLOW_DEPTH}; 0 for"
+                        " the symbol's own accesses")
+    p.add_argument("--limit", type=int, default=SYMBOLS_LIMIT,
+                   help=f"rows, default {SYMBOLS_LIMIT}; 0 for all")
+    p = add("touches", cmd_touches, help="the symbols that read or write one"
+                                         " data node")
+    p.add_argument("node", help="kind:name (table:readings, env:HOME,"
+                                " file:out.txt, global:path.py::NAME,"
+                                " config:key) or a bare name")
+    p.add_argument("--limit", type=int, default=SYMBOLS_LIMIT,
+                   help=f"rows, default {SYMBOLS_LIMIT}; 0 for all")
 
     args = ap.parse_args(argv)
     out, err = sys.stdout, sys.stderr
@@ -5013,12 +7400,19 @@ def main(argv: list[str] | None = None) -> int:
     if not getattr(args, "json", False):
         sys.stdout = _SafeOut(out)
     try:
-        return args.fn(args)
+        rc = args.fn(args)
+        out.flush()
+        return rc
     except SystemExit as e:
         if isinstance(e.code, str):
             # The interpreter prints this after the streams are restored.
             raise SystemExit(_term_safe(e.code)) from None
         raise
+    except BrokenPipeError:
+        # The reader stopped early (`| head`). Point stdout at devnull so
+        # the interpreter's last flush cannot raise again, and exit quietly.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), out.fileno())
+        return 1
     finally:
         sys.stdout, sys.stderr = out, err
 

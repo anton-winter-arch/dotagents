@@ -986,10 +986,11 @@ class TestDocs(unittest.TestCase):
         self.assertEqual(
             [(m["doc"], m["heading_path"], m["line"], m["text"], m["symbol"])
              for m in got["mentions"]],
-            [("docs/reference.md", "Reference > Reading", 7, "parse_line",
-              "parse_line"),
-             ("docs/reference.md", "Reference > Reading", 9,
+            # The span that names the file outright ranks first.
+            [("docs/reference.md", "Reference > Reading", 9,
               "src/tidelog/reader.py:4-12", None),
+             ("docs/reference.md", "Reference > Reading", 7, "parse_line",
+              "parse_line"),
              ("docs/reference.md", "Reference > Reporting", 14,
               "tidelog.reader.parse_line", "parse_line")])
         # `read_day()` has two definitions, so it is not a mention of either.
@@ -1005,15 +1006,23 @@ class TestDocs(unittest.TestCase):
                 f"`reader.py:{i}`" for i in range(1, 1206)) + "\n",
             encoding="utf-8")
         self.index_vault()
-        got = self.json("docs", "src/tidelog/reader.py", "--mentions")
+        got = self.json("docs", "src/tidelog/reader.py", "--mentions",
+                        "--limit", "0")
         self.assertEqual(len(got["mentions"]), code_kg.MENTION_TEXTS)
         self.assertEqual(len(got["missing"]), 1)
         self.assertIn("208 of 1208", got["missing"][0])
+        cut = self.json("docs", "src/tidelog/reader.py", "--mentions")
+        self.assertEqual(len(cut["mentions"]), code_kg.DOCS_LIMIT)
+        self.assertEqual(cut["status"], f"TRUNCATED mentions"
+                         f" {code_kg.DOCS_LIMIT} of {code_kg.MENTION_TEXTS}")
 
     def test_docs_without_the_flag_is_as_before(self):
+        # As before, plus the `status` every capped answer carries.
         self.index_vault()
-        self.assertEqual(sorted(self.json("docs", "src/tidelog/reader.py")),
-                         ["doc_links", "file", "missing", "sections"])
+        got = self.json("docs", "src/tidelog/reader.py")
+        self.assertEqual(sorted(got),
+                         ["doc_links", "file", "missing", "sections", "status"])
+        self.assertEqual(got["status"], "COMPLETE")
 
     def test_docs_mentions_agree_with_the_vault_side(self):
         """Every name the vault side resolves into a file is a mention the
@@ -1082,6 +1091,28 @@ class TestDocs(unittest.TestCase):
         self.assertIn("docs/guide.md:8", out)
         self.assertEqual(sum("markdown-kg" in ln for ln in out.splitlines()),
                          1)
+
+
+class ClosedPipeTests(unittest.TestCase):
+    """A reader that stops early (`| head`) gets no traceback on stderr."""
+
+    def test_read_into_a_closed_pipe_is_quiet(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        # About 150 KB of output, well past a 64 KB pipe buffer.
+        (tmp / "big.py").write_text("".join(
+            f"def f_{i:05d}():\n    return {i}\n" for i in range(6000)))
+        engine = str(SKILL_DIR / "scripts" / "code_kg.py")
+        subprocess.run([sys.executable, engine, "ingest", str(tmp)],
+                       capture_output=True, check=True, timeout=120)
+        p = subprocess.Popen([sys.executable, engine, "read", str(tmp), "big.py"],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        p.stdout.read(64)
+        p.stdout.close()
+        err = p.stderr.read().decode()
+        p.stderr.close()
+        p.wait(timeout=120)
+        self.assertEqual(err, "")
 
 
 if __name__ == "__main__":

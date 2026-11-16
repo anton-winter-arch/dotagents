@@ -127,11 +127,6 @@ class WikilinkScanTests(unittest.TestCase):
              ("Note", "Part", "embed"), ("", "Local", "link"),
              ("folder/Note", "H", "link")])
 
-    def test_note_level_view_is_unchanged(self):
-        text = "[[A#x]] [[#only-anchor]] ![[B]] `[[C]]`\n"
-        self.assertEqual([(t, k) for t, k, _ in kg.extract_wikilinks(text)],
-                         [("A", "link"), ("B", "embed")])
-
 
 class MarkdownLinkScanTests(unittest.TestCase):
     def scan(self, text: str) -> list:
@@ -164,11 +159,6 @@ class MarkdownLinkScanTests(unittest.TestCase):
         text = ("`[a](one.md)`\n\n```\n[b](two.md)\n[c]: three.md\n```\n\n"
                 "~~~\n[d][c]\n~~~\n")
         self.assertEqual(self.scan(text), [])
-
-    def test_note_level_view_is_unchanged(self):
-        text = "[a](one.md#x) [b](#local) [c][ref]\n\n[ref]: two.md\n"
-        self.assertEqual([t for t, _ in kg.extract_md_links(text)],
-                         ["one.md"])
 
 
 class TermSafeTests(unittest.TestCase):
@@ -1799,13 +1789,75 @@ class LopsidedCountTests(LinkedCase):
         (self.repo / "NOTES.md").write_text(
             "# Notes\n\nStart at [m00](src/pkg/m00.py).\n", encoding="utf-8")
         run("ingest", str(self.repo))
-        got = self.docs("src/pkg/m00.py")
+        # 51 sections in all, past the default limit of 50.
+        got = self.docs("src/pkg/m00.py", "--limit", "0")
         by_vault = {}
         for s in got["sections"]:
             by_vault[s["vault"]] = by_vault.get(s["vault"], 0) + 1
         self.assertEqual(by_vault, {"docs": 1 + self.fan_sections,
                                     ".": 2 + self.fan_sections})
         self.assertEqual(self.docs("src/pkg/m39.py")["sections"], [])
+
+    # ---- default output limits, ranked before the cut
+    def add_fillers(self) -> None:
+        # 60 one-section spans that sort before `unique_fn_00()`, so a cut
+        # by name would drop the roll call's span.
+        self.note("filler.md", "# Filler\n\n" + "\n".join(
+            f"## F{i}\n\nSee `filler_{i:02d}`.\n" for i in range(60)))
+        run("ingest", str(self.vault))
+
+    def test_spans_listing_is_cut_by_section_count(self):
+        self.add_fillers()
+        # 14 spans in the fixture docs, 23 from the name notes, 60 fillers.
+        everything = self.json("spans", "--limit", "0")
+        self.assertEqual(len(everything), 97)
+        rc, out, err = run("spans", str(self.vault), "--json")
+        self.assertEqual(rc, 0)
+        got = json.loads(out)
+        self.assertEqual(len(got), 50)
+        self.assertEqual([r["text"] for r in got[:3]],
+                         ["m00.py", "shared_helper", "unique_fn_00"])
+        self.assertEqual([r["sections"] for r in got[:3]], [21, 21, 21])
+        self.assertIn("TRUNCATED 50 of 97", err)
+        self.assertIn("--limit 0", err)
+        rc, out, _ = run("spans", str(self.vault))
+        self.assertIn("TRUNCATED 50 of 97", out)
+        self.assertIn("--limit 0", out)
+
+    def test_spans_for_given_texts_put_primary_docs_first(self):
+        for rel in ("archive/old.md", "notes/x.md", "README.md"):
+            self.note(rel, f"# {rel}\n\nCall `ranked_name`.\n")
+        run("ingest", str(self.vault))
+        got = self.json("spans", "ranked_name")
+        self.assertEqual([r["note_path"] for r in got],
+                         ["README.md", "notes/x.md", "archive/old.md"])
+        self.assertEqual(len(self.json("spans", "ranked_name", "--limit", "1")), 1)
+
+    def test_mentions_still_see_every_span_past_the_spans_limit(self):
+        self.add_fillers()
+        m00 = self.docs("src/pkg/m00.py", "--mentions", "--limit", "0")
+        texts = [m["text"] for m in m00["mentions"]]
+        self.assertEqual({t: texts.count(t) for t in set(texts)},
+                         {"unique_fn_00": 21, "unique_fn_00()": 1,
+                          "m00.py": 21})
+        self.assertEqual(m00["status"], "COMPLETE")
+
+    def test_docs_mentions_rank_exact_then_corroborated(self):
+        got = self.docs("src/pkg/m00.py", "--mentions", "--limit", "0")
+        texts = [m["text"] for m in got["mentions"]]
+        # The file named outright, then corroborated symbol mentions, then
+        # the roll call's lone uncorroborated one.
+        self.assertEqual(texts, ["m00.py"] * 21 + ["unique_fn_00"] * 21
+                         + ["unique_fn_00()"])
+        cut = self.docs("src/pkg/m00.py", "--mentions", "--limit", "5")
+        self.assertEqual([m["text"] for m in cut["mentions"]], ["m00.py"] * 5)
+        self.assertEqual(cut["status"], "TRUNCATED sections 5 of 25,"
+                         " doc_links 5 of 25, mentions 5 of 43")
+        self.assertEqual(len(cut["sections"]), 5)
+        self.assertEqual(len(cut["doc_links"]), 5)
+        whole = self.docs("src/pkg/m00.py")
+        self.assertEqual(len(whole["sections"]), 1 + self.fan_sections)
+        self.assertEqual(whole["status"], "COMPLETE")
 
 
 class CodeSpanScanTests(unittest.TestCase):
@@ -2011,6 +2063,27 @@ class RootVaultCodeTests(LinkedCase):
         cli = self.files("README")["src/tidelog/cli.py"]
         self.assertEqual((cli["repo_path"], cli["role"], cli["tier"]),
                          ("src/tidelog/cli.py", "source", "live"))
+
+
+class ClosedPipeTests(unittest.TestCase):
+    """A reader that stops early (`| head`) gets no traceback on stderr."""
+
+    def test_spans_into_a_closed_pipe_is_quiet(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        # About 150 KB of output, well past a 64 KB pipe buffer.
+        (tmp / "big.md").write_text("# Big\n\n" + "".join(
+            f"- `span_name_{i:05d}`\n" for i in range(6000)))
+        self.assertEqual(run("ingest", str(tmp))[0], 0)
+        p = subprocess.Popen(
+            [sys.executable, kg.__file__, "spans", str(tmp)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        p.stdout.read(64)
+        p.stdout.close()
+        err = p.stderr.read().decode()
+        p.stderr.close()
+        p.wait(timeout=120)
+        self.assertEqual(err, "")
 
 
 if __name__ == "__main__":

@@ -124,7 +124,11 @@ class CodeStrippingTests(unittest.TestCase):
 
 class LinkExtractionTests(unittest.TestCase):
     def targets(self, text):
-        return [(t, k) for t, k, _ in markdown_kg.extract_wikilinks(text)]
+        return [(t, k) for t, _, k, _ in markdown_kg.scan_wikilinks(text) if t]
+
+    def md_targets(self, text):
+        return [t for t, _, style, _ in markdown_kg.scan_md_links(text)
+                if t and style == "inline"]
 
     def test_wikilink_forms(self):
         text = ("[[Plain]] ![[Embedded]] [[Target#Heading]] "
@@ -137,14 +141,11 @@ class LinkExtractionTests(unittest.TestCase):
     def test_md_links_skip_images_and_external(self):
         text = ("[a](sub/a.md) [ext](https://example.org/x) ![img](pic.png) "
                 '[t](b.md "a title") [frag](c.md#sec)')
-        self.assertEqual([t for t, _ in markdown_kg.extract_md_links(text)],
-                         ["sub/a.md", "b.md", "c.md"])
+        self.assertEqual(self.md_targets(text), ["sub/a.md", "b.md", "c.md"])
 
     def test_md_link_with_space_in_path(self):
-        self.assertEqual(
-            [t for t, _ in markdown_kg.extract_md_links(
-                "[p](plans/Garden Plan.md)")],
-            ["plans/Garden Plan.md"])
+        self.assertEqual(self.md_targets("[p](plans/Garden Plan.md)"),
+                         ["plans/Garden Plan.md"])
 
 
 class HeadingTests(unittest.TestCase):
@@ -296,6 +297,27 @@ class GlobTests(unittest.TestCase):
 
     def test_bare_pattern_matches_basename(self):
         self.assertTrue(markdown_kg.glob_match("deep/journal.md", "journal.md"))
+
+    def test_leading_dot_is_part_of_the_name(self):
+        self.assertTrue(markdown_kg.glob_match(".obsidian/x.md", ".obsidian/**"))
+        self.assertFalse(markdown_kg.glob_match("obsidian/x.md", ".obsidian/**"))
+        self.assertTrue(markdown_kg.glob_match("a.md", "./a.md"))
+
+    def test_bare_pattern_matches_any_folder_like_gitignore(self):
+        self.assertTrue(markdown_kg.glob_match("a/node_modules/x.md", "node_modules"))
+        self.assertTrue(markdown_kg.glob_match("a/drafts/x.md", "drafts/"))
+
+    def test_matches_code_kg_on_shared_cases(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "code-kg" / "scripts"))
+        import code_kg
+        cases = [(".obsidian/x.md", ".obsidian/**"), ("obsidian/x.md", ".obsidian/**"),
+                 ("a/node_modules/x.md", "node_modules"), ("a/dist/x.md", "dist/"),
+                 ("drafts/x.md", "drafts/"), ("deep/journal.md", "journal.md"),
+                 ("gen/deep/a.md", "gen/*.md"), ("archive/old/a.md", "archive/**"),
+                 ("a.md", "./a.md")]
+        for path, pat in cases:
+            self.assertEqual(markdown_kg.glob_match(path, pat),
+                             code_kg.glob_match(path, pat), (path, pat))
 
 
 class LogLikelihoodTests(unittest.TestCase):

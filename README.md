@@ -107,7 +107,7 @@ Each entry's own file is authoritative: a skill's frontmatter `description` is i
 | Skill | What it does |
 |---|---|
 | `markdown-kg` | Offline section-level knowledge graph over any markdown corpus. |
-| `code-kg` | Offline symbol-level knowledge graph over a codebase: imports, liveness, subsystems, coupling hotspots. |
+| `code-kg` | Offline symbol-level knowledge graph over a codebase: imports, python call edges (callers, callees, inheritance), file and symbol liveness, subsystems, coupling hotspots. |
 | `obsidian` | Obsidian markdown standard plus a per-vault authoring workflow. |
 | `project-knowledge-vault` | Seeds, finds and lints a flat project vault and its deliverables folder: the contract, a scaffolder, a linter, and the BRD, solution design, ADR and knowledge-base entry templates. |
 | `gather-learnings` | Sweeps a vault's dated notes and the running session into its learnings file, and keeps its question register current. |
