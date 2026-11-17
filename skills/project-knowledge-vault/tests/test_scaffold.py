@@ -371,8 +371,10 @@ class TestGraph(Base):
         vault = self.tmp / "PROJECTS" / "T"
         shipped = json.loads(re.search(r"```json\n(.*?)```", PROFILES.read_text(), re.S).group(1))
         rows = config_rows(vault)
-        for key in ("ignore", "profiles"):
-            self.assertLessEqual({r["path"] for r in shipped[key]}, {r["path"] for r in rows[key]}, key)
+        self.assertLessEqual({r["path"] for r in shipped["profiles"]}, {r["path"] for r in rows["profiles"]})
+        self.assertNotIn("ignore", rows)
+        kgignore = (vault / ".kgignore").read_text().splitlines()
+        self.assertLessEqual({r["path"] for r in shipped["ignore"]}, set(kgignore))
         found = subprocess.run([sys.executable, str(KG), "search", str(vault), "learning sweep", "--json"],
                                capture_output=True, text=True)
         self.assertEqual(found.returncode, 0, found.stderr)
@@ -435,7 +437,7 @@ class TestGraph(Base):
     def test_malformed_config_fails_cleanly_and_is_left_intact(self) -> None:
         run("--target", str(self.tmp), "--name", "T", graph=True)
         config = self.tmp / "PROJECTS" / "T" / ".kg" / "markdown-kg-config.json"
-        for bad in ('["not", "an", "object"]', '{"profiles": ["not-a-row"]}', '{"ignore": {"path": "x"}}',
+        for bad in ('["not", "an", "object"]', '{"profiles": ["not-a-row"]}', '{"profiles": {"path": "x"}}',
                     "```json\n{}\n```\n"):
             with self.subTest(config=bad):
                 text = bad

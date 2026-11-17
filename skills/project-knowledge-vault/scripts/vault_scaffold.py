@@ -182,8 +182,26 @@ def kg(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, str(KG), *args], capture_output=True, text=True, timeout=900)
 
 
+def add_ignore_rows(folder: Path, rows: list[dict]) -> int:
+    """Append the shipped ignore rows the folder's .kgignore lacks, each under its reason as a
+    comment. Returns patterns added."""
+    path = folder / ".kgignore"
+    if path.is_symlink():
+        raise OSError(f"{path} is a symlink; refusing to write through it")
+    have = {ln.strip() for ln in path.read_text(encoding="utf-8").splitlines()} \
+        if path.is_file() else set()
+    new = [r for r in rows if r["path"] not in have]
+    if new:
+        text = path.read_text(encoding="utf-8") if path.is_file() else ""
+        lead = "\n" if text and not text.endswith("\n") else ""
+        lines = [ln for r in new for ln in (f"# {r['reason']}", r["path"])]
+        replace_file(path, text + lead + "\n".join(lines) + "\n")
+    return len(new)
+
+
 def merge_profiles(config: Path, replace_detected: bool = False) -> int:
-    """Add the shipped ignore and profile rows whose path the config lacks. Returns rows added.
+    """Add the shipped profile rows whose path the config lacks, and the shipped ignore rows to the
+    folder's .kgignore. Returns rows added.
 
     With replace_detected, which is set only when this run's `init` wrote the config, a profile row
     that a shipped row covers is dropped first. init writes exact-path rows for the dated notes it
@@ -198,9 +216,11 @@ def merge_profiles(config: Path, replace_detected: bool = False) -> int:
     data = json.loads(text) if text.strip() else {}
     if not isinstance(data, dict):
         raise ValueError(f"{config}: the config is not a json object")
+    shipped_rows = json.loads(shipped.group(1))
+    ignore_added = add_ignore_rows(config.parent.parent, shipped_rows.pop("ignore"))
     added = 0
     replaced = False
-    for key, rows in json.loads(shipped.group(1)).items():
+    for key, rows in shipped_rows.items():
         existing = data.setdefault(key, [])
         if not isinstance(existing, list) or not all(isinstance(r, dict) for r in existing):
             raise ValueError(f"{config}: '{key}' is not a list of objects")
@@ -216,7 +236,7 @@ def merge_profiles(config: Path, replace_detected: bool = False) -> int:
                 added += 1
     if added or replaced:
         replace_file(config, json.dumps(data, indent=2) + "\n")
-    return added
+    return added + ignore_added
 
 
 def replace_file(path: Path, text: str) -> None:

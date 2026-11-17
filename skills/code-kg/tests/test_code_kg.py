@@ -946,18 +946,25 @@ class TestEngineFolder(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
-    def legacy(self):
+    def legacy(self, cfg=None):
         old = self.repo / ".code-kg"
         old.mkdir()
         (old / "config.json").write_text(
-            json.dumps({"ignore": ["b.py"]}), encoding="utf-8")
+            json.dumps(cfg or {"entry_points": ["b.py"]}), encoding="utf-8")
         return old
 
-    def files(self):
+    def rows(self, sql):
         con = code_kg.connect(self.repo, must_exist=True)
-        got = {r[0] for r in con.execute("SELECT id FROM files")}
+        got = {r[0] for r in con.execute(sql)}
         con.close()
         return got
+
+    def files(self):
+        return self.rows("SELECT id FROM files")
+
+    def entries(self):
+        return self.rows("SELECT file_id FROM entry_points"
+                         " WHERE kind='config'")
 
     def test_legacy_folder_is_read_and_written_in_place(self):
         old = self.legacy()
@@ -966,7 +973,7 @@ class TestEngineFolder(unittest.TestCase):
         code_kg.ingest(self.repo, keep_previous=True)
         self.assertTrue((old / "code-kg.db").exists())
         self.assertTrue((old / "code-kg-prev.db").exists())
-        self.assertEqual(self.files(), {"a.py"})     # the legacy config's rule
+        self.assertEqual(self.entries(), {"b.py"})   # the legacy config's row
         self.assertFalse((self.repo / ".kg").exists())
 
     def test_a_kg_folder_holding_only_markdown_kg_leaves_the_legacy_in_use(self):
@@ -980,11 +987,12 @@ class TestEngineFolder(unittest.TestCase):
         self.legacy()
         (self.repo / ".kg").mkdir()
         (self.repo / ".kg" / "code-kg-config.json").write_text(
-            json.dumps({"ignore": ["a.py"]}), encoding="utf-8")
+            json.dumps({"entry_points": ["a.py"]}), encoding="utf-8")
         code_kg.ingest(self.repo)
         self.assertTrue((self.repo / ".kg" / "code-kg.db").exists())
         self.assertFalse((self.repo / ".code-kg" / "code-kg.db").exists())
-        self.assertEqual(self.files(), {"b.py"})
+        self.assertEqual(self.entries(), {"a.py"})
+        self.assertEqual(self.files(), {"a.py", "b.py"})
 
     def test_migrate_moves_the_graph_into_kg_unchanged(self):
         old = self.legacy()
@@ -1000,8 +1008,19 @@ class TestEngineFolder(unittest.TestCase):
         self.assertEqual((kg / "code-kg.db").read_bytes(), db_bytes)
         self.assertTrue((kg / "code-kg-prev.db").exists())
         self.assertTrue((kg / ".gitignore").exists())
-        self.assertEqual(self.files(), {"a.py"})
+        self.assertEqual(self.entries(), {"b.py"})
         self.assertIsNone(code_kg.migrate(self.repo)["from"])
+
+    def test_migrate_moves_ignore_rows_to_kgignore(self):
+        self.legacy({"ignore": ["b.py"], "profile": "generic"})
+        with self.assertRaises(SystemExit) as cm:
+            code_kg.load_config(self.repo)          # never silently dropped
+        self.assertIn("migrate", str(cm.exception.code))
+        code_kg.migrate(self.repo)
+        self.assertEqual((self.repo / ".kgignore").read_text(), "b.py\n")
+        self.assertEqual(code_kg.load_config(self.repo)["profile"], "generic")
+        code_kg.ingest(self.repo)
+        self.assertEqual(self.files(), {"a.py"})
 
     def test_migrate_keeps_a_legacy_folder_holding_unknown_files(self):
         old = self.legacy()
@@ -1277,19 +1296,42 @@ class TestScanSafety(unittest.TestCase):
         con.close()
         self.assertEqual(rule, ("symlink-or-escape",))
 
-    def test_config_ignore(self):
-        code_kg.kg_dir(self.repo).mkdir(exist_ok=True)
-        code_kg.config_path(self.repo).write_text(json.dumps(
-            {**code_kg.DEFAULT_CONFIG, "ignore": ["web/**"]}))
+    def test_kgignore_excludes_and_gitignore_is_not_read(self):
+        (self.repo / ".kgignore").write_text("web/\n*.json\n!package.json\n")
+        (self.repo / ".gitignore").write_text("*.py\n")   # never read
         code_kg.ingest(self.repo)
         con = code_kg.connect(self.repo, must_exist=True)
-        n = con.execute("SELECT count(*) FROM files WHERE id LIKE"
-                        " 'web/%'").fetchone()[0]
-        rules = {r[0] for r in con.execute(
-            "SELECT rule FROM ignored WHERE path LIKE 'web/%'")}
+        ids = {r[0] for r in con.execute("SELECT id FROM files")}
+        rules = dict(con.execute("SELECT path, rule FROM ignored"))
         con.close()
-        self.assertEqual(n, 0)
-        self.assertEqual(rules, {"config:web/**"})
+        self.assertFalse([i for i in ids if i.startswith("web/")])
+        self.assertEqual(rules["web/"], ".kgignore: web/")
+        self.assertIn("package.json", ids)          # re-included by `!`
+        self.assertFalse([i for i in ids if i.endswith(".json")
+                          and i != "package.json"])
+        self.assertTrue([i for i in ids if i.endswith(".py")])
+
+    def test_path_filters_search_and_query(self):
+        for rel in ("one/zebrafish.py", "two/zebrafish.py"):
+            (self.repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / rel).write_text("def zebrafish():\n    pass\n")
+        code_kg.ingest(self.repo)
+        hits = code_kg.search(self.repo, "zebrafish", path="one/**")
+        self.assertEqual({h["file"] for h in hits["results"]},
+                         {"one/zebrafish.py"})
+        r = subprocess.run([sys.executable, str(ENGINE), "query",
+                            str(self.repo), "zebrafish", "--path", "two/**",
+                            "--json"], capture_output=True, text=True,
+                           timeout=120)
+        self.assertEqual([h["file"] for h in json.loads(r.stdout)],
+                         ["two/zebrafish.py"])
+
+    def test_a_config_ignore_row_is_refused_not_dropped(self):
+        code_kg.kg_dir(self.repo).mkdir(exist_ok=True)
+        code_kg.config_path(self.repo).write_text('{"ignore": ["web/**"]}')
+        with self.assertRaises(SystemExit) as cm:
+            code_kg.load_config(self.repo)
+        self.assertIn(".kgignore", str(cm.exception.code))
 
     def test_drift_reingest(self):
         code_kg.ingest(self.repo)

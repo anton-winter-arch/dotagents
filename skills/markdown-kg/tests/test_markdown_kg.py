@@ -841,16 +841,16 @@ class IgnoreTests(VaultCase):
 
     def setUp(self):
         super().setUp()
+        with (self.vault / ".kgignore").open("a", encoding="utf-8") as fh:
+            fh.write("private.md\n")
         markdown_kg.ingest(self.vault)
 
-    def test_all_three_mechanisms_exclude(self):
+    def test_kgignore_excludes_and_names_the_rule(self):
         rules = dict(self.rows("SELECT path, rule FROM ignored"))
-        self.assertIn("archive/superseded.md", rules)
-        self.assertIn("drafts/scratch.md", rules)
-        self.assertIn("private.md", rules)
-        self.assertIn("config ignore", rules["archive/superseded.md"])
-        self.assertIn(".kgignore", rules["drafts/scratch.md"])
-        self.assertIn("frontmatter", rules["private.md"])
+        self.assertEqual(rules["archive/superseded.md"],
+                         ".kgignore: archive/**")
+        self.assertEqual(rules["drafts/scratch.md"], ".kgignore: drafts/")
+        self.assertEqual(rules["private.md"], ".kgignore: private.md")
 
     def test_ignored_files_are_not_indexed(self):
         for token in ("bygone", "halfbaked", "nevermind"):
@@ -1038,24 +1038,53 @@ class UntrustedVaultTests(VaultCase):
 
 
 class EnumerationTests(VaultCase):
-    """Graph membership is presence in the vault minus the engine's own
-    ignore rules, never git visibility: git decides what ships, not what
-    the local graph may know."""
+    """Membership is the walk minus the .kgignore rules at or below the graph
+    root, in git's syntax; nothing above the root and no .gitignore is read."""
 
-    def test_gitignored_and_nested_repo_notes_are_enumerated(self):
-        (self.vault / ".git").mkdir()   # the walk never consults git
-        (self.vault / ".gitignore").write_text("private.md\nnested/\n",
+    def note(self, rel):
+        p = self.vault / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(f"# {p.stem}\n\nbody\n", encoding="utf-8")
+
+    def rels(self, root=None):
+        return {p.relative_to(root or self.vault).as_posix()
+                for p in markdown_kg.walk_vault(root or self.vault)}
+
+    def test_git_syntax_at_every_level(self):
+        (self.vault / ".kgignore").write_text(
+            "# comment\n*.tmp.md\n/top.md\nbuild/\n!keep.tmp.md\n",
+            encoding="utf-8")
+        (self.vault / "sub").mkdir()
+        (self.vault / "sub" / ".kgignore").write_text("local.md\n",
+                                                      encoding="utf-8")
+        # Git's ignore file is never read: the graph may need what git skips.
+        (self.vault / ".gitignore").write_text("gitignored.md\n",
                                                encoding="utf-8")
-        (self.vault / "private.md").write_text("# Private\n\nheld back\n",
-                                               encoding="utf-8")
-        nested = self.vault / "nested"
-        (nested / ".git").mkdir(parents=True)   # a nested work tree
-        (nested / "inner.md").write_text("# Inner\n\nnested note\n",
-                                         encoding="utf-8")
-        rels = {p.relative_to(self.vault).as_posix()
-                for p in markdown_kg.walk_vault(self.vault)}
-        self.assertIn("private.md", rels)
-        self.assertIn("nested/inner.md", rels)
+        for rel in ("a.tmp.md", "keep.tmp.md", "top.md", "sub/top.md",
+                    "build/x.md", "sub/build/y.md", "sub/local.md",
+                    "local.md", "gitignored.md"):
+            self.note(rel)
+        got = self.rels()
+        self.assertTrue({"keep.tmp.md", "sub/top.md", "local.md",
+                         "gitignored.md"} <= got)
+        self.assertFalse({"a.tmp.md", "top.md", "build/x.md",
+                          "sub/build/y.md", "sub/local.md"} & got)
+
+    def test_path_filters_search_and_query(self):
+        for rel in ("one/a.md", "two/b.md"):
+            p = self.vault / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("# Zebrafish\n\nzebrafish notes\n", encoding="utf-8")
+        markdown_kg.ingest(self.vault)
+        got = markdown_kg.search(self.vault, "zebrafish", path="one/**")
+        self.assertEqual({h["note_id"] for h in got["results"]}, {"one/a"})
+        got = markdown_kg.query(self.vault, "zebrafish", path="two/**")
+        self.assertEqual({h["note_id"] for h in got}, {"two/b"})
+
+    def test_rules_above_the_root_are_never_read(self):
+        (self.vault / ".kgignore").write_text("inner/\n", encoding="utf-8")
+        self.note("inner/note.md")
+        self.assertEqual(self.rels(self.vault / "inner"), {"note.md"})
 
 
 class RobustnessTests(VaultCase):
@@ -3306,6 +3335,23 @@ class FolderNameTests(VaultCase):
         self.assertEqual(code, 0)
         self.assertIn("nothing to move", out)
 
+    def test_migrate_moves_ignore_rows_to_kgignore(self):
+        cfg = self.legacy() / "vault-kg-config.md"
+        cfg.write_text('```json\n{"ignore": [{"path": "journal.md", "reason":'
+                       ' "old log"}, {"path": "hub.md"}]}\n```\n',
+                       encoding="utf-8")
+        with self.assertRaises(SystemExit) as cm:
+            markdown_kg.load_config(self.vault)   # never silently dropped
+        self.assertIn("migrate", str(cm.exception.code))
+        markdown_kg.migrate(self.vault)
+        self.assertEqual((self.vault / ".kgignore").read_text(),
+                         "# gitignore syntax; one pattern per line\ndrafts/\n"
+                         "# superseded copies\narchive/**\n"
+                         "# old log\njournal.md\nhub.md\n")
+        self.assertEqual(markdown_kg.load_config(self.vault)["profiles"], [])
+        markdown_kg.ingest(self.vault)
+        self.assertFalse({"journal", "hub"} & self._note_ids())
+
     def test_migrate_refuses_a_malformed_config_and_moves_nothing(self):
         (self.legacy() / "vault-kg-config.md").write_text(
             "# c\n\n```JSON\n{}\n```\n", encoding="utf-8")
@@ -3344,6 +3390,28 @@ class FolderNameTests(VaultCase):
         self.assertTrue((self.vault / ".kg" / "markdown-kg.db").exists())
         self.assertFalse((self.vault / "markdown-kg").exists())
         self.assertFalse((self.vault / "vault-kg").exists())
+
+
+class EnvFileTests(VaultCase):
+    """No environment-file value reaches the graph, in any table, index or
+    sidecar, whatever command runs."""
+
+    MARK = "VALUE-MUST-NOT-LEAK"
+
+    def test_no_value_reaches_any_graph_file(self):
+        for rel in (".env", ".env.local", "config/prod.env", "notes/.envrc"):
+            p = self.vault / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(f"KEY={self.MARK}\n", encoding="utf-8")
+        markdown_kg.ingest(self.vault, keep_previous=True)
+        markdown_kg.ingest(self.vault, keep_previous=True)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            markdown_kg.main(["tree", str(self.vault)])
+        self.assertNotIn(self.MARK, buf.getvalue())
+        self.assertFalse(markdown_kg.search(self.vault, self.MARK)["results"])
+        for f in markdown_kg.kg_dir(self.vault).iterdir():
+            self.assertNotIn(self.MARK.encode(), f.read_bytes(), f.name)
 
 
 class GraphCase(VaultCase):
@@ -3508,11 +3576,13 @@ class IncrementalIngest(GraphCase):
         self.count_section_writes()
         self.assertEqual(self.ingest(), self.cold())
 
-    def test_a_config_edit_equals_a_cold_build(self):
+    def test_a_config_or_ignore_edit_equals_a_cold_build(self):
         self.ingest()
         markdown_kg.config_path(self.vault).write_text(
-            '{"ignore": [{"path": "Scratch.md", "reason": "test"}], "profiles": [], "markers": [],'
+            '{"profiles": [], "markers": [],'
             ' "entities": [{"canonical": "Spring", "aliases": ["spring"]}]}\n')
+        self.assertEqual(self.ingest(), self.cold())
+        (self.vault / ".kgignore").write_text("Scratch.md\n")
         self.assertEqual(self.ingest(), self.cold())
 
 

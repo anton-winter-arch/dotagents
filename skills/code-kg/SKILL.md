@@ -11,9 +11,15 @@ never reimplement its parsing inline. Storage is `<repo>/.kg/`, shared with
 markdown-kg (`code-kg-config.json` + a rebuildable `code-kg.db`; the folder's
 own `.gitignore` of `*`, written when none exists, keeps all of it out of git,
 and `git add -f` shares a config). A repo with a legacy `.code-kg/` keeps
-using it in place until `migrate <repo>` moves its files into `.kg/`
-unchanged. Every read command re-ingests
+using it in place until `migrate <repo>` moves its files into `.kg/` and any
+config `ignore` patterns into `.kgignore`. Every read command re-ingests
 on drift, so answers track the live tree without you managing freshness.
+
+The graph holds every file under the repo root except build and dependency
+folders and what a `.kgignore` at or below the root excludes, in git's syntax.
+`.gitignore` is not read, and rules above the root are never read. Environment files are never read for values: the graph
+knows each exists and the variable names it defines. `search` and `query`
+take `--path GLOB` to keep only files under a folder.
 
 The parsers cover python (AST-exact), javascript/typescript, bash, go, rust,
 c/c++, java, c#/msbuild, powershell, sql, terraform, dockerfile, compose,

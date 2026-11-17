@@ -106,9 +106,8 @@ def test_stats_fixture_vault(vault_client):
 
 def test_stats_adversarial_vault(vault_client):
     client, _ = vault_client("adversarial-vault")
-    # 11 files = 15 md minus drafts/scratch.md (.kgignore), archive/
-    # superseded.md (config ignore archive/**), private.md (frontmatter
-    # kg-ignore: true), and vault-kg/vault-kg-config.md (engine dir)
+    # 11 files = 15 md minus drafts/scratch.md, archive/superseded.md and
+    # private.md (all .kgignore), and vault-kg/vault-kg-config.md (engine dir)
     assert client.get("/kb/stats").json() == {
         "files": 11, "sections": 31, "edges": 7, "unresolved": 1, "tags": 2,
         "missing_from_graph": []}

@@ -963,14 +963,12 @@ class ConfigCommandTests(VaultCase):
 
     def test_rows_that_match_nothing(self):
         cfg = self.config()
-        cfg["ignore"].append({"path": "attic/**"})
         cfg["profiles"].append({"path": "journal.md", "profile": "log-dated"})
         cfg["entities"].append({"canonical": "Nobody Mentioned"})
         cfg["entity_sources"].append({"path": "people/*.md"})
         self.write_config(cfg)
         warnings = self.json("config")["warnings"]
-        for want in ("ignore row matched nothing: attic/**",
-                     "profiles row matched nothing: journal.md",
+        for want in ("profiles row matched nothing: journal.md",
                      "entity is never mentioned: Nobody Mentioned",
                      "entity_sources row matched nothing: people/*.md"):
             self.assertIn(want, warnings)

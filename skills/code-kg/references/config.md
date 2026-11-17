@@ -6,7 +6,6 @@ empty. Edit the file directly.
 
 ```json
 {
-  "ignore": ["generated/**", "*.pb.py"],
   "roots": ["backend/src"],
   "entry_points": ["tools/nightly_job.py", "jobs/**/handler.py"],
   "aliases": {"@/*": "src/*"},
@@ -15,13 +14,27 @@ empty. Edit the file directly.
 }
 ```
 
+## Ignoring files: .kgignore
+
+Exclusion is not in this config. A file stays out of the graph when a rule in
+a `.kgignore` at or below the repo root matches it, in git's syntax (`!`
+re-includes, a trailing `/` matches folders only, a leading or inner `/`
+anchors to the file's folder, last match wins). `.gitignore` is not read, since
+the graph may need what git leaves out of a commit, and rules above the root
+are never read, so the graph is the same on every machine. Use `.kgignore` for
+generated code, third-party trees, fixtures that would pollute liveness. Build
+output and dependency folders (`node_modules`, `dist`, `build`, `target` and
+the like) are never walked at all. Every excluded
+folder or file is recorded in the `ignored` table with the file and line that
+matched. A config that still has an `ignore` array is refused with an error;
+`migrate` moves a legacy config's patterns into `.kgignore`.
+
+Environment files (`.env`, `.env.*`, `.envrc`, `*.env`) are never indexed.
+The graph records only that each exists and the variable names it defines, as
+`data_edges` rows of kind `write` and node kind `env`; no value is stored.
+
 ## Fields
 
-- **ignore** - glob patterns (same dialect as .gitignore's common core: `*`
-  within a segment, `**` across segments, bare names match any path part).
-  Matched files are recorded in the `ignored` table with the rule that
-  excluded them, so an ignore is always auditable. Use for generated code,
-  third-party trees, and fixtures that would pollute liveness.
 - **roots** - extra Python import roots besides the repo root. `src/` is
   auto-detected; add others (`backend/`, `services/api/`) when absolute
   imports resolve from somewhere deeper. A wrong root shows up as a burst of

@@ -634,17 +634,24 @@ def load_config(vault: Path) -> dict:
     engine works with no config at all."""
     cfg_file = config_path(vault)
     if not cfg_file.exists():
-        return {"ignore": [], "profiles": [], "entities": [], "markers": []}
+        return {"profiles": [], "entities": [], "markers": []}
     text = config_json_text(cfg_file)
     if not text.strip():
-        return {"ignore": [], "profiles": [], "entities": [], "markers": []}
+        return {"profiles": [], "entities": [], "markers": []}
     try:
         cfg = json.loads(text)
     except json.JSONDecodeError as e:
         sys.exit(f"error: {cfg_file} has invalid json: {e}")
     if not isinstance(cfg, dict):
         sys.exit(f"error: {cfg_file} json block must be an object")
-    for key in ("ignore", "profiles", "entities", "markers"):
+    if cfg.pop("ignore", None):
+        # Exclusions live in .kgignore now; dropping these silently would
+        # index what the vault meant to keep out.
+        sys.exit(f"error: {cfg_file} has 'ignore' rows - "
+                 + ("run `migrate`, which moves them to .kgignore"
+                    if cfg_file.suffix == ".md" else
+                    "move them to .kgignore (gitignore syntax)"))
+    for key in ("profiles", "entities", "markers"):
         cfg.setdefault(key, [])
         if not isinstance(cfg[key], list):
             sys.exit(f"error: {cfg_file}: '{key}' must be a list")
@@ -753,8 +760,6 @@ def dump_config(cfg: dict) -> str:
     """Deterministic serialization: fixed key order, entities sorted by
     canonical, so a one-entity change is a one-line diff."""
     out = {
-        "ignore": sorted(cfg.get("ignore", []),
-                         key=lambda r: str(r.get("path", ""))),
         "profiles": sorted(cfg.get("profiles", []),
                            key=lambda r: str(r.get("path", ""))),
         "entities": sorted(cfg.get("entities", []),
@@ -908,39 +913,94 @@ def glob_match(rel_path: str, pattern: str) -> bool:
     return False
 
 
-def load_kgignore(vault: Path) -> list[str]:
-    f = vault / ".kgignore"
-    if not f.exists():
-        return []
-    out = []
-    for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            out.append(line)
-    return out
+# ---------- membership: .kgignore ----------
+# The three functions below are the one membership rule both engines share;
+# code-kg has the same bodies, keep the two identical. A file is in the graph
+# unless a rule in a .kgignore at or below the graph root excludes it. Git's
+# ignore files are not read: what git leaves out of a commit, gitignored notes
+# and .env files among them, the graph may still need to know. Rules above the
+# root are never read, so a tree indexes the same everywhere.
+IGNORE_FILES = (".kgignore",)
+IGNORE_LINES_MAX = 5000
 
 
-def ignore_rule(rel_path: str, meta: dict, cfg: dict,
-                kgignore: list[str]) -> str | None:
-    """Return the rule that excludes this file, or None. Precedence matches
-    profiles: frontmatter, then config, then .kgignore."""
-    val = meta.get("kg-ignore")
-    if isinstance(val, str) and val.strip().lower() in ("true", "yes"):
-        return "frontmatter kg-ignore"
-    if val is True:
-        return "frontmatter kg-ignore"
-    for row in cfg.get("ignore", []):
-        pat = str(row.get("path", ""))
-        if pat and glob_match(rel_path, pat):
-            reason = str(row.get("reason", "")).strip()
-            return f"config ignore {pat}" + (f" ({reason})" if reason else "")
-    for pat in kgignore:
-        neg = pat.startswith("!")
-        if neg:
+def read_ignore_rules(folder: Path, base: str) -> list[tuple]:
+    """The rules in `folder`'s ignore files, in git's syntax: `#` comments,
+    `!` negation, a trailing `/` for folders only, and a leading or inner `/`
+    anchoring the pattern to `folder`, whose path from the root is `base`.
+    Patterns match with `*`, `?` and `**`, never a regex."""
+    rules = []
+    for name in IGNORE_FILES:
+        f = folder / name
+        if f.is_symlink() or not f.is_file():
             continue
-        if glob_match(rel_path, pat):
-            return f".kgignore {pat}"
-    return None
+        src = f"{base}/{name}" if base else name
+        lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+        for raw in lines[:IGNORE_LINES_MAX]:
+            line = raw.rstrip()
+            if not line or line.startswith("#") or len(line) > GLOB_MAX_LEN:
+                continue
+            neg = line.startswith("!")
+            line = line[1:] if neg or line.startswith("\\") else line
+            dirs_only = line.endswith("/")
+            line = line.rstrip("/")
+            anchored = "/" in line
+            pats = [p for p in line.split("/") if p]
+            if pats:
+                rules.append((base, pats, neg, dirs_only, anchored,
+                              f"{src}: {raw.strip()}"))
+    return rules
+
+
+def ignored_by(rel: str, is_dir: bool, rules: list[tuple]) -> str | None:
+    """The rule that ignores `rel`, or None: the last matching rule decides,
+    as in git. The walk never enters an ignored folder, so a rule only has to
+    match the path itself."""
+    hit = None
+    for base, pats, neg, dirs_only, anchored, src in rules:
+        if dirs_only and not is_dir:
+            continue
+        if base and not rel.startswith(base + "/"):
+            continue
+        sub = rel[len(base) + 1:] if base else rel
+        if (_match_segments(sub.split("/"), pats) if anchored
+                else _match_segment(sub.rsplit("/", 1)[-1], pats[0])):
+            hit = None if neg else src
+    return hit
+
+
+def walk_tree(root: Path, skip_dir, list_ignored: bool = False) \
+        -> tuple[list[Path], list[tuple[str, str]]]:
+    """Every file under `root` no ignore rule excludes, and (path, rule) for
+    what one does. `skip_dir(rel)` names folders never entered at all. An
+    ignored folder is one row, unless `list_ignored` walks it to report each
+    file inside under the rule that ignored the folder."""
+    files, ignored = [], []
+    state = {root: read_ignore_rules(root, "")}   # rules, or the folder's rule
+    for d, dirs, names in os.walk(root):
+        here = Path(d)
+        rules = state.pop(here, [])
+        prefix = "" if here == root else here.relative_to(root).as_posix() + "/"
+        keep = []
+        for name in sorted(dirs):
+            rel = prefix + name
+            if skip_dir(rel):
+                continue
+            why = rules if isinstance(rules, str) else ignored_by(rel, True, rules)
+            if why and not list_ignored:
+                ignored.append((rel + "/", why))
+                continue
+            state[here / name] = why or rules + read_ignore_rules(here / name, rel)
+            keep.append(name)
+        dirs[:] = keep
+        for name in sorted(names):
+            rel = prefix + name
+            why = rules if isinstance(rules, str) else ignored_by(rel, False, rules)
+            if why:
+                ignored.append((rel, why))
+            else:
+                files.append(here / name)
+    return files, ignored
 
 
 # ---------- parsing (deterministic, stdlib) ----------
@@ -2150,23 +2210,20 @@ def _add_members(sections: list[dict], text: str, row: dict) -> None:
 
 # ---------- vault walking (dot folders excluded) ----------
 def scan_vault(vault: Path, every: bool = False) \
-        -> tuple[list[Path], list[str]]:
+        -> tuple[list[Path], list[str], list[tuple[str, str]]]:
     """All vault .md files (with `every`, all files: the inventory `tree`
-    tallies), sorted for determinism, plus the paths that were
-    refused for pointing outside the vault. Enumeration is a filesystem walk:
-    graph membership is presence in the vault minus the engine's own ignore
-    rules (.kgignore, config, frontmatter), never git's. Git ignore rules
-    decide what ships, not what the local graph may know, and a git-based
-    enumeration silently drops gitignored notes and anything inside a nested
-    work tree. Dot folders/files, SKIP_FOLDERS and the engine's own folder,
-    under either of its names (KG_DIRS), are always excluded."""
-    files: list[Path] = []
-    for root, dirs, names in os.walk(vault):
-        dirs[:] = [d for d in dirs
-                   if d not in SKIP_FOLDERS and not d.startswith(".")
-                   and not (Path(root) == vault and d in KG_DIRS)]
-        files.extend(Path(root) / n for n in names
-                     if every or n.endswith(".md"))
+    tallies), sorted for determinism, the paths refused for pointing outside
+    the vault, and (path, rule) for each one an ignore file excludes
+    (`walk_tree`). Dot folders and files, SKIP_FOLDERS and the engine's
+    folders are never part of it."""
+    def keep(rel: str) -> bool:
+        return every or rel.endswith(".md")
+
+    found, ignored = walk_tree(
+        vault, lambda rel: rel in KG_DIRS or rel.rsplit("/", 1)[-1] in
+        SKIP_FOLDERS or rel.rsplit("/", 1)[-1].startswith("."),
+        list_ignored=True)
+    files = [p for p in found if keep(p.name) and not p.name.startswith(".")]
     result = []
     escapes = []
     for p in files:
@@ -2181,16 +2238,6 @@ def scan_vault(vault: Path, every: bool = False) \
         if not p.is_file():
             continue
         try:
-            rel = p.relative_to(vault)
-        except ValueError:
-            continue
-        if any(part.startswith(".") for part in rel.parts):
-            continue
-        if any(part in SKIP_FOLDERS for part in rel.parts):
-            continue
-        if rel.parts and rel.parts[0] in KG_DIRS:
-            continue
-        try:
             if not p.resolve().is_relative_to(vault.resolve()):
                 escapes.append(p)
                 continue
@@ -2198,21 +2245,13 @@ def scan_vault(vault: Path, every: bool = False) \
             escapes.append(p)   # broken or cyclic link
             continue
         result.append(p)
-    return sorted(set(result)), sorted(
-        {p.relative_to(vault).as_posix() for p in escapes
-         if _under(p, vault)})
+    return (sorted(result),
+            sorted(p.relative_to(vault).as_posix() for p in escapes),
+            [(rel, why) for rel, why in ignored if keep(rel)])
 
 
 def walk_vault(vault: Path) -> list[Path]:
     return scan_vault(vault)[0]
-
-
-def _under(p: Path, vault: Path) -> bool:
-    try:
-        p.relative_to(vault)
-        return True
-    except ValueError:
-        return False
 
 
 def manifest(vault: Path) -> str:
@@ -2466,7 +2505,6 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
     con = connect(vault)
     memo = ParseCache(con)
     cfg = load_config(vault)
-    kgignore = load_kgignore(vault)
     report = {"notes": 0, "sections": 0, "resolved": 0, "unresolved": 0,
               "ambiguous": 0, "ignored_files": 0, "ignored_links": 0,
               "skipped_assets": 0, "entities": 0, "mentions": 0,
@@ -2476,18 +2514,13 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
     cand_counts: dict[tuple, int] = {}
 
     parsed: dict[str, dict] = {}
-    ignored: list[tuple[str, str]] = []
-    files, escaped = scan_vault(vault)
+    files, escaped, ignored = scan_vault(vault)
     for rel in escaped:
         ignored.append((rel, "symlink or path outside the vault"))
     for f in files:
         rel = f.relative_to(vault).as_posix()
         text = f.read_text(encoding="utf-8", errors="replace")
         meta, _ = parse_frontmatter(text)
-        rule = ignore_rule(rel, meta, cfg, kgignore)
-        if rule:
-            ignored.append((rel, rule))
-            continue
         if str(meta.get("auto-generated", "")).strip().lower() == "true":
             ignored.append((rel, "auto-generated index"))
             continue
@@ -2506,13 +2539,13 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
         for alias in _listify(parsed[nid]["meta"].get("aliases", [])):
             by_alias.setdefault(alias.lower(), []).append(nid)
 
-    # Incremental: when the engine, config and ignore rules match the last ingest,
+    # Incremental: when the engine and config match the last ingest,
     # only notes added, changed or removed are rewritten in the per-note tables.
     # The cross-note tables (links, anchors, mentions, candidates) are rebuilt in
     # full every time, since a change in one note reaches them through the others;
     # they come from the parse cache, so that stays cheap.
     basis = hashlib.sha256(json.dumps(
-        [engine_fingerprint(), cfg, kgignore, link_mode(vault, cfg)],
+        [engine_fingerprint(), cfg, link_mode(vault, cfg)],
         sort_keys=True, default=str).encode()).hexdigest()
     prev = con.execute("SELECT value FROM meta WHERE key = 'ingest_basis'").fetchone()
     counts = con.execute("SELECT value FROM meta WHERE key = 'per_note_counts'").fetchone()
@@ -3385,9 +3418,35 @@ def section_tier(tiers: dict[str, dict[str, float]], note_id: str,
     return tiers.get(note_id, {}).get(doc_date, 1.0)
 
 
+def append_kgignore(root: Path, lines: list[str]) -> None:
+    """Add `lines` to the end of the root's .kgignore, creating it, never
+    through a link. code-kg's `append_kgignore` has the same body; keep
+    the two identical."""
+    fd = os.open(root / ".kgignore", os.O_RDWR | os.O_CREAT | os.O_APPEND
+                 | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, "a+", encoding="utf-8") as fh:
+        fh.seek(0)
+        lead = "\n" if fh.read()[-1:] not in ("", "\n") else ""
+        fh.write(lead + "\n".join(lines) + "\n")
+
+
+def path_filter(con: sqlite3.Connection, pattern: str | None,
+                column: str) -> str:
+    """SQL keeping only rows whose `column` matches the `--path` glob, or ''.
+    It runs inside the query, before any row cap. code-kg's `path_filter`
+    has the same body; keep the two identical."""
+    if not pattern:
+        return ""
+    con.create_function("kg_path_match", 1,
+                        lambda p: glob_match(p or "", pattern),
+                        deterministic=True)
+    return f" AND kg_path_match({column})"
+
+
 def search(vault: Path, question: str, limit: int = 10,
            per_note: int = 3, budget: int | None = None,
-           slot: str | None = None, recency_k: float | None = None) -> dict:
+           slot: str | None = None, recency_k: float | None = None,
+           path: str | None = None) -> dict:
     con = open_fresh(vault)
     if recency_k is None:
         recency_k = load_config(vault).get("recency_k", RECENCY_K)
@@ -3405,7 +3464,8 @@ def search(vault: Path, question: str, limit: int = 10,
     # copied book, a quotes file), and a long generated section of a journal
     # ranked past the cap among all matches was dropped before the filter
     # could keep it.
-    slot_sql = " AND s.slot = ?" if slot else ""
+    slot_sql = (" AND s.slot = ?" if slot else "") + path_filter(con, path,
+                                                                 "n.path")
     for name, expr in search_rungs(phrases, terms):
         params = (expr, slot) if slot else (expr,)
         try:
@@ -4368,7 +4428,7 @@ def cmd_init(args: argparse.Namespace) -> int:
                  f"pass --force to rewrite the scaffold")
     ingest(vault)
     found = detect(vault)
-    cfg = {"ignore": [], "profiles": [], "entities": []}
+    cfg = {"profiles": [], "entities": []}
     for row in found["dated_logs"]:
         cfg["profiles"].append({"path": row["path"], "profile": "log-dated",
                                 "date_from": "heading",
@@ -4388,24 +4448,40 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def migrate(vault: Path) -> dict:
     """Move a legacy folder's files into .kg/ under the current names. The
-    config is rewritten from its json block to plain json with every key
-    kept, and it moves first, so an interrupted run never leaves a database
-    in .kg/ without its ignore rules. The databases move as they are: they
-    hold coverage ledgers, extractions and conflicts no ingest rebuilds. The
-    legacy folder is removed once only its .gitignore is left. Run it while
-    no other command is using the graph."""
+    config's `ignore` rows go to the vault's .kgignore first, each reason as
+    a comment, then the config moves as plain json with every other key kept,
+    so an interrupted run never leaves a database in .kg/ without its ignore
+    rules. The databases move as they are: they hold coverage ledgers,
+    extractions and conflicts no ingest rebuilds. The legacy folder is
+    removed once only its .gitignore is left. Run it while no other command
+    is using the graph."""
     old = kg_dir(vault)
     if old.name not in LEGACY_LAYOUTS:
         return {"from": None, "to": KG_DIR, "moved": [], "removed": False,
                 "left": []}
     new = vault / KG_DIR
     names = LEGACY_LAYOUTS[old.name]
-    for folder, db in ((old, old / names[DB_NAME]), (new, new / DB_NAME)):
+    for folder, db in ((old, old / names[DB_NAME]),
+                       (new, new / DB_NAME), (vault, vault / ".kgignore")):
         refused = linked_store(vault, folder, db)
         if refused:
             sys.exit(f"error: {refused}")
-    load_config(vault)                  # exits loudly on a malformed config
-    moves = [(old / names[CONFIG_NAME], new / CONFIG_NAME)]
+    cfg_src = old / names[CONFIG_NAME]
+    data: dict = {}
+    if cfg_src.is_file() and not cfg_src.is_symlink():
+        text = config_json_text(cfg_src)   # exits on a missing json block
+        try:
+            data = json.loads(text) if text.strip() else {}
+        except json.JSONDecodeError as e:
+            sys.exit(f"error: {cfg_src} has invalid json: {e}")
+        if not isinstance(data, dict):
+            sys.exit(f"error: {cfg_src} json block must be an object")
+    lines = []
+    for row in data.pop("ignore", None) or []:
+        row = row if isinstance(row, dict) else {"path": row}
+        reason = str(row.get("reason", "")).strip()
+        lines += [f"# {reason}"] * bool(reason) + [str(row.get("path", ""))]
+    moves = [(cfg_src, new / CONFIG_NAME)]
     moves += [(old / (names[n] + s), new / (n + s))
               for n in (DB_NAME, PREV_DB_NAME)
               for s in ("", "-wal", "-shm", "-journal")]
@@ -4414,18 +4490,20 @@ def migrate(vault: Path) -> dict:
     for _, dst in moves:
         if os.path.lexists(dst):
             sys.exit(f"error: {dst} already exists; refusing to overwrite it")
+    moved = []
+    if lines:
+        append_kgignore(vault, lines)
+        moved.append([f"{cfg_src.relative_to(vault).as_posix()} ignore rows",
+                      ".kgignore"])
     new.mkdir(exist_ok=True)
     seed_gitignore(new)
-    moved = []
     for src, dst in moves:
-        if src.name == names[CONFIG_NAME]:
-            text = config_json_text(src)
-            body = json.dumps(json.loads(text) if text.strip() else {},
-                              indent=2, ensure_ascii=False, sort_keys=True)
+        if src == cfg_src:
             fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL
                          | os.O_NOFOLLOW, 0o644)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(body + "\n")
+                fh.write(json.dumps(data, indent=2, ensure_ascii=False,
+                                    sort_keys=True) + "\n")
             src.unlink()
         else:
             os.replace(src, dst)
@@ -4478,7 +4556,7 @@ def cmd_profile(args: argparse.Namespace) -> int:
 def cmd_query(args: argparse.Namespace) -> int:
     vault = vault_dir(args.vault)
     try:
-        rows = query(vault, args.fts_query, args.limit)
+        rows = query(vault, args.fts_query, args.limit, args.path)
     except ValueError as e:
         sys.exit(f"error: {e}")
     payload = [{"section_id": r["section_id"], "note_id": r["note_id"],
@@ -4497,7 +4575,8 @@ def cmd_query(args: argparse.Namespace) -> int:
     return emit(args, payload, render)
 
 
-def query(vault: Path, q: str, limit: int = 20) -> list[dict]:
+def query(vault: Path, q: str, limit: int = 20,
+          path: str | None = None) -> list[dict]:
     """Library entry point for raw FTS5 search over sections."""
     con = open_fresh(vault)
     try:
@@ -4505,7 +4584,9 @@ def query(vault: Path, q: str, limit: int = 20) -> list[dict]:
             "SELECT s.id, s.note_id, s.heading_path, s.line_start, s.line_end,"
             " snippet(sections_fts, 2, '[', ']', ' ... ', 14)"
             " FROM sections_fts JOIN sections s ON s.rowid = sections_fts.rowid"
-            " WHERE sections_fts MATCH ? ORDER BY bm25(sections_fts) LIMIT ?",
+            " JOIN notes n ON n.id = s.note_id"
+            " WHERE sections_fts MATCH ?" + path_filter(con, path, "n.path")
+            + " ORDER BY bm25(sections_fts) LIMIT ?",
             (q, limit)).fetchall()
     except sqlite3.OperationalError as e:
         con.close()
@@ -4519,7 +4600,8 @@ def query(vault: Path, q: str, limit: int = 20) -> list[dict]:
 def cmd_search(args: argparse.Namespace) -> int:
     vault = vault_dir(args.vault)
     payload = search(vault, args.question, args.limit,
-                     args.per_note, args.budget, args.slot, args.recency_k)
+                     args.per_note, args.budget, args.slot, args.recency_k,
+                     args.path)
     record_session_reads(vault, args.session,
                          [h["section_id"] for h in payload["results"]],
                          "search")
@@ -5883,7 +5965,6 @@ def config_report(vault: Path) -> dict:
                         " ORDER BY id").fetchall()
     kg_types = {nid: str(v).strip().lower() for nid, v in con.execute(
         "SELECT note_id, value FROM properties WHERE key='kg-type'")}
-    ignored = con.execute("SELECT path, rule FROM ignored").fetchall()
     mention_counts = dict(con.execute(
         "SELECT canonical, count(*) FROM mentions GROUP BY canonical"))
     derived = con.execute(
@@ -5897,16 +5978,6 @@ def config_report(vault: Path) -> dict:
         "SELECT field, count(*) FROM link_fields GROUP BY field"))
     con.close()
     warnings: list[str] = []
-
-    ignore_rows = []
-    for row in cfg.get("ignore", []):
-        pat = str(row.get("path", "")) if isinstance(row, dict) else ""
-        base = f"config ignore {pat}"
-        n = sum(1 for _, rule in ignored
-                if rule == base or rule.startswith(base + " ("))
-        ignore_rows.append({"path": pat, "matched": n})
-        if not n:
-            warnings.append(f"ignore row matched nothing: {pat}")
 
     profile_rows = []
     for row in cfg.get("profiles", []):
@@ -5978,7 +6049,7 @@ def config_report(vault: Path) -> dict:
         "exists": cfg_file.exists(),
         "status": "WARNINGS" if warnings else "OK", "warnings": warnings,
         "link_resolution": {"mode": mode, "source": mode_source},
-        "ignore": ignore_rows, "profiles": profile_rows,
+        "profiles": profile_rows,
         "entities": entity_rows, "entity_sources": source_rows,
         "derived_entities": len(derived),
         "skipped": [{"note": n, "name": name, "reason": why}
@@ -6004,8 +6075,6 @@ def cmd_config(args: argparse.Namespace) -> int:
             print(f"  warning: {w}")
         print(f"  markdown links: {p['link_resolution']['mode']}"
               f" ({p['link_resolution']['source']})")
-        for r in p["ignore"]:
-            print(f"  ignore {r['path']}: {r['matched']} files")
         for r in p["profiles"]:
             print(f"  profile {r['profile']} on {r['match']}:"
                   f" {r['matched']} notes")
@@ -6590,14 +6659,17 @@ def main(argv: list[str] | None = None) -> int:
 
     session_help = ("append returned section ids to this coverage session's"
                     " ledger (report with `coverage`)")
+    path_help = "only notes whose path matches this glob, e.g. 'docs/**'"
 
     p = add("query", cmd_query, "raw FTS5 search over sections")
     p.add_argument("fts_query")
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--session", default=None, metavar="ID", help=session_help)
+    p.add_argument("--path", default=None, metavar="GLOB", help=path_help)
 
     p = add("search", cmd_search, "natural-language section search")
     p.add_argument("question")
+    p.add_argument("--path", default=None, metavar="GLOB", help=path_help)
     p.add_argument("--session", default=None, metavar="ID", help=session_help)
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--per-note", type=int, default=3,

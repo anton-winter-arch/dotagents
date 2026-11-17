@@ -4,9 +4,6 @@
     {"canonical": "drip irrigation", "type": "method", "time": "evolving", "aliases": ["drip"]},
     {"canonical": "Season Review", "type": "event", "time": "2026-06-10..2026-06-20"}
   ],
-  "ignore": [
-    {"path": "archive/**", "reason": "superseded copies"}
-  ],
   "profiles": [
     {"path": "journal.md", "profile": "log-dated", "date_from": "heading",
      "slots": {"Reflection": "authored", "Synthesis": "generated", "Metrics": "instrument"}},

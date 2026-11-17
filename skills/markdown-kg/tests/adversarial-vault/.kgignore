@@ -1,2 +1,4 @@
 # gitignore syntax; one pattern per line
 drafts/
+# superseded copies
+archive/**

@@ -1,6 +1,6 @@
 # markdown-kg-config rows for a project knowledge vault and its deliverables
 
-`vault_scaffold.py` runs `markdown_kg.py init` on a new vault and on its deliverables folder, and merges these rows into the `profiles` and `ignore` arrays of each one's `.kg/markdown-kg-config.json`, adding only rows whose `path` the config does not already have. For a vault seeded without the graph, run `init` by hand and merge them the same way. Config has no CLI write path; the file is edited directly. Longest matching glob wins.
+`vault_scaffold.py` runs `markdown_kg.py init` on a new vault and on its deliverables folder, and merges the `profiles` rows into each one's `.kg/markdown-kg-config.json` and the `ignore` rows into its `.kgignore` (gitignore syntax, each reason as a comment), adding only rows whose `path` is not already there. For a vault seeded without the graph, run `init` by hand and merge them the same way. Config has no CLI write path; the file is edited directly. Longest matching glob wins.
 
 ```json
 {

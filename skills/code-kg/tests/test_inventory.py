@@ -97,6 +97,59 @@ class TestSecretNames(unittest.TestCase):
         self.assertEqual(code_kg.language_of("tsconfig.json"), "json")
 
 
+# Every value below carries the marker; none may reach the graph, in any
+# table, index or sidecar, while every name and the file it came from does.
+MARK = "VALUE-MUST-NOT-LEAK"
+ENV_FILES = {
+    ".env": f"SECRET_TOKEN={MARK}-1\n"
+            f"export DB_URL=\"{MARK}-2 quoted\"\n"
+            f"# COMMENTED={MARK}-3\n"
+            f"  SPACED = {MARK}-4\n"
+            f"MULTI=\"{MARK}-5\n{MARK}-6\"\n"
+            # Continuation lines shaped like NAME= are value, never names.
+            f"PEM=\"{MARK}-10\nTAILNAME==\ninner_name=1\n\"\n",
+    ".env.local": f"LOCAL_ONLY={MARK}-7\n",
+    ".envrc": f"export DIRENV_KEY={MARK}-8\n",
+    "config/prod.env": f"PROD_KEY={MARK}-9\n",
+    "app.py": "import os\nTOKEN = os.environ.get('SECRET_TOKEN')\n",
+}
+
+
+class TestEnvFiles(unittest.TestCase):
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp(prefix="ckg-env-")).resolve()
+        self.addCleanup(shutil.rmtree, self.repo, ignore_errors=True)
+        for rel, text in ENV_FILES.items():
+            p = self.repo / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text, encoding="utf-8")
+        for argv in (("ingest", "--keep-previous"), ("ingest",
+                     "--keep-previous"), ("data",), ("search", MARK),
+                     ("query", MARK), ("tree",)):
+            rc, out, err = run(argv[0], str(self.repo), *argv[1:])
+            self.assertNotIn(MARK, out + err, argv)
+
+    def test_no_value_reaches_any_graph_file(self):
+        stored = list(code_kg.kg_dir(self.repo).iterdir())
+        self.assertTrue(stored)
+        for f in stored:
+            self.assertNotIn(MARK.encode(), f.read_bytes(), f.name)
+
+    def test_names_are_known_with_the_file_they_come_from(self):
+        con = sqlite3.connect(code_kg.db_path(self.repo))
+        got = set(con.execute(
+            "SELECT src_file, node FROM data_edges WHERE node_kind='env'"
+            " AND kind='write'"))
+        con.close()
+        self.assertLessEqual({
+            (".env", "SECRET_TOKEN"), (".env", "DB_URL"), (".env", "SPACED"),
+            (".env", "MULTI"), (".env.local", "LOCAL_ONLY"),
+            (".envrc", "DIRENV_KEY"), ("config/prod.env", "PROD_KEY")}, got)
+        self.assertNotIn((".env", "COMMENTED"), got)
+        self.assertIn((".env", "PEM"), got)
+        self.assertFalse({n for _, n in got} & {"TAILNAME", "inner_name"})
+
+
 class TestTree(InventoryCase):
     def test_folders_tally_every_file(self):
         got = self.json("tree", "--limit", "0")

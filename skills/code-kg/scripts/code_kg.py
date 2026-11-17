@@ -737,7 +737,7 @@ class _SafeOut:
 
 
 # ---------- config ----------
-DEFAULT_CONFIG = {"ignore": [], "roots": [], "entry_points": [],
+DEFAULT_CONFIG = {"roots": [], "entry_points": [],
                   "aliases": {}, "profile": "", "test_command": "",
                   "deps": "none"}
 # Kept out of DEFAULT_CONFIG so `init` scaffolds the same file it always did;
@@ -758,8 +758,15 @@ def load_config(repo: Path) -> dict:
         sys.exit(f"error: {cfg_file} has invalid json: {e}")
     if not isinstance(cfg, dict):
         sys.exit(f"error: {cfg_file} must hold a json object")
+    if cfg.get("ignore"):
+        # Exclusions live in .kgignore now; dropping these silently would
+        # index what the repo meant to keep out.
+        sys.exit(f"error: {cfg_file} has 'ignore' rows - "
+                 + ("run `migrate`, which moves them to .kgignore"
+                    if cfg_file.parent.name == LEGACY_KG_DIR else
+                    "move them to .kgignore (gitignore syntax)"))
     out = dict(DEFAULT_CONFIG)
-    for key in ("ignore", "roots", "entry_points"):
+    for key in ("roots", "entry_points"):
         val = cfg.get(key, [])
         if not isinstance(val, list):
             sys.exit(f"error: {cfg_file}: '{key}' must be a list")
@@ -950,11 +957,119 @@ def glob_match(rel_path: str, pattern: str) -> bool:
     return False
 
 
-def ignore_rule(rel: str, cfg: dict) -> str | None:
-    for pat in cfg.get("ignore", []):
-        if glob_match(rel, pat):
-            return f"config:{pat}"
-    return None
+# ---------- membership: .kgignore ----------
+# The three functions below are the one membership rule both engines share;
+# markdown-kg has the same bodies, keep the two identical. A file is in the
+# graph unless a rule in a .kgignore at or below the graph root excludes it.
+# Git's ignore files are not read: what git leaves out of a commit, gitignored
+# notes and .env files among them, the graph may still need to know. Rules
+# above the root are never read, so a tree indexes the same everywhere.
+IGNORE_FILES = (".kgignore",)
+IGNORE_LINES_MAX = 5000
+
+
+def read_ignore_rules(folder: Path, base: str) -> list[tuple]:
+    """The rules in `folder`'s ignore files, in git's syntax: `#` comments,
+    `!` negation, a trailing `/` for folders only, and a leading or inner `/`
+    anchoring the pattern to `folder`, whose path from the root is `base`.
+    Patterns match with `*`, `?` and `**`, never a regex."""
+    rules = []
+    for name in IGNORE_FILES:
+        f = folder / name
+        if f.is_symlink() or not f.is_file():
+            continue
+        src = f"{base}/{name}" if base else name
+        lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+        for raw in lines[:IGNORE_LINES_MAX]:
+            line = raw.rstrip()
+            if not line or line.startswith("#") or len(line) > GLOB_MAX_LEN:
+                continue
+            neg = line.startswith("!")
+            line = line[1:] if neg or line.startswith("\\") else line
+            dirs_only = line.endswith("/")
+            line = line.rstrip("/")
+            anchored = "/" in line
+            pats = [p for p in line.split("/") if p]
+            if pats:
+                rules.append((base, pats, neg, dirs_only, anchored,
+                              f"{src}: {raw.strip()}"))
+    return rules
+
+
+def ignored_by(rel: str, is_dir: bool, rules: list[tuple]) -> str | None:
+    """The rule that ignores `rel`, or None: the last matching rule decides,
+    as in git. The walk never enters an ignored folder, so a rule only has to
+    match the path itself."""
+    hit = None
+    for base, pats, neg, dirs_only, anchored, src in rules:
+        if dirs_only and not is_dir:
+            continue
+        if base and not rel.startswith(base + "/"):
+            continue
+        sub = rel[len(base) + 1:] if base else rel
+        if (_match_segments(sub.split("/"), pats) if anchored
+                else _match_segment(sub.rsplit("/", 1)[-1], pats[0])):
+            hit = None if neg else src
+    return hit
+
+
+def walk_tree(root: Path, skip_dir, list_ignored: bool = False) \
+        -> tuple[list[Path], list[tuple[str, str]]]:
+    """Every file under `root` no ignore rule excludes, and (path, rule) for
+    what one does. `skip_dir(rel)` names folders never entered at all. An
+    ignored folder is one row, unless `list_ignored` walks it to report each
+    file inside under the rule that ignored the folder."""
+    files, ignored = [], []
+    state = {root: read_ignore_rules(root, "")}   # rules, or the folder's rule
+    for d, dirs, names in os.walk(root):
+        here = Path(d)
+        rules = state.pop(here, [])
+        prefix = "" if here == root else here.relative_to(root).as_posix() + "/"
+        keep = []
+        for name in sorted(dirs):
+            rel = prefix + name
+            if skip_dir(rel):
+                continue
+            why = rules if isinstance(rules, str) else ignored_by(rel, True, rules)
+            if why and not list_ignored:
+                ignored.append((rel + "/", why))
+                continue
+            state[here / name] = why or rules + read_ignore_rules(here / name, rel)
+            keep.append(name)
+        dirs[:] = keep
+        for name in sorted(names):
+            rel = prefix + name
+            why = rules if isinstance(rules, str) else ignored_by(rel, False, rules)
+            if why:
+                ignored.append((rel, why))
+            else:
+                files.append(here / name)
+    return files, ignored
+
+
+def append_kgignore(root: Path, lines: list[str]) -> None:
+    """Add `lines` to the end of the root's .kgignore, creating it, never
+    through a link. markdown-kg's `append_kgignore` has the same body; keep
+    the two identical."""
+    fd = os.open(root / ".kgignore", os.O_RDWR | os.O_CREAT | os.O_APPEND
+                 | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, "a+", encoding="utf-8") as fh:
+        fh.seek(0)
+        lead = "\n" if fh.read()[-1:] not in ("", "\n") else ""
+        fh.write(lead + "\n".join(lines) + "\n")
+
+
+def path_filter(con: sqlite3.Connection, pattern: str | None,
+                column: str) -> str:
+    """SQL keeping only rows whose `column` matches the `--path` glob, or ''.
+    It runs inside the query, before any row cap. markdown-kg's
+    `path_filter` has the same body; keep the two identical."""
+    if not pattern:
+        return ""
+    con.create_function("kg_path_match", 1,
+                        lambda p: glob_match(p or "", pattern),
+                        deterministic=True)
+    return f" AND kg_path_match({column})"
 
 
 # ---------- repo walking (git parity, symlink refusal) ----------
@@ -962,6 +1077,40 @@ SECRETISH_RE = re.compile(
     r"^\.env(rc|\.|$)|^\.(netrc|npmrc|pypirc|pgpass|git-credentials)$"
     r"|^id_(rsa|dsa|ecdsa|ed25519)$|^credentials$"
     r"|^secrets?\.(ya?ml|json|toml)$|\.tfvars(\.json)?$", re.IGNORECASE)
+
+
+# Environment files: the graph knows each one exists and the names it
+# defines, never a value. A line is matched up to its `=` and no further.
+ENV_FILE_RE = re.compile(r"^\.env(rc|\..+)?$|\.env$", re.IGNORECASE)
+ENV_NAME_RE = re.compile(
+    r"[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]{0,200})[ \t]*=")
+
+
+def env_file_rows(path: Path, rel: str) -> list[tuple]:
+    """data_edges rows for the names an environment file defines."""
+    try:
+        if path.stat().st_size > SIZE_CAP:
+            return []
+        lines = path.read_text(encoding="utf-8",
+                               errors="replace").splitlines()
+    except OSError:
+        return []
+    rows, quote = [], ""
+    for n, line in enumerate(lines, 1):
+        if quote:
+            # Inside a quoted value that spans lines: value, never a name.
+            if line.count(quote) % 2:
+                quote = ""
+            continue
+        m = ENV_NAME_RE.match(line)
+        if not m:
+            continue
+        rows.append((rel, f"{rel}::<module>", "write", "env", m.group(1), n,
+                     "resolved", "env-file"))
+        rest = line[m.end():].lstrip()
+        if rest[:1] in ("'", '"') and rest.count(rest[0]) % 2:
+            quote = rest[0]
+    return rows
 
 
 def language_of(rel: str) -> str | None:
@@ -1029,38 +1178,24 @@ def other_reason(rel: str) -> str:
     return "no-parser"
 
 
-def scan_repo(repo: Path) -> tuple[list[Path], list[str]]:
-    """Every file under the repo, sorted for determinism, plus paths refused
-    for being symlinks or resolving outside the repo. In a git repo,
-    enumerate via `git ls-files`; otherwise a skip-folder walk. Whether a
+# Agent-tooling folders are the dot folders the walk enters: instructions
+# and automation that operate ON the codebase, a topology layer.
+AGENT_DIRS = (".github", ".claude", ".agents", ".cursor")
+
+
+def skip_dir(rel: str) -> bool:
+    """Folders the walk never enters, as a path from the repo root."""
+    name = rel.rsplit("/", 1)[-1]
+    return (name in SKIP_FOLDERS or rel in KG_DIRS
+            or (name.startswith(".") and name not in AGENT_DIRS))
+
+
+def scan_repo(repo: Path) -> tuple[list[Path], list[str], list[tuple]]:
+    """Every file under the repo, sorted for determinism, the paths refused
+    for being symlinks or resolving outside the repo, and (path, rule) for
+    each folder or file an ignore file excludes (`walk_tree`). Whether a
     file is parsed or only listed is decided at ingest."""
-    files: list[Path] | None = None
-    try:
-        # `-c core.fsmonitor=` because a repo is untrusted content: a repo
-        # whose .git/config sets fsmonitor would otherwise run that command
-        # here. ls-files itself runs no hooks. No shell, fixed argv.
-        out = subprocess.run(
-            ["git", "-c", "core.fsmonitor=", "--no-optional-locks",
-             "-C", str(repo), "ls-files", "-z",
-             "--cached", "--others", "--exclude-standard"],
-            capture_output=True, encoding="utf-8", errors="replace",
-            timeout=30)
-        if out.returncode == 0:
-            cands = [ln for ln in out.stdout.split("\0") if ln]
-            if cands:
-                files = [repo / ln for ln in cands]
-    except Exception:
-        files = None
-    if files is None:
-        files = []
-        for root, dirs, names in os.walk(repo):
-            dirs[:] = [d for d in dirs
-                       if d not in SKIP_FOLDERS
-                       and (not d.startswith(".")
-                            or d in (".github", ".claude", ".agents",
-                                     ".cursor"))
-                       and not (Path(root) == repo and d in KG_DIRS)]
-            files.extend(Path(root) / n for n in names)
+    files, ignored = walk_tree(repo, skip_dir)
     result, escapes = [], []
     for p in files:
         # A repo is untrusted content. A symlink named like source pointing at
@@ -1073,22 +1208,6 @@ def scan_repo(repo: Path) -> tuple[list[Path], list[str]]:
         if not p.is_file():
             continue
         try:
-            rel = p.relative_to(repo)
-        except ValueError:
-            continue
-        parts = rel.parts
-        if any(part in SKIP_FOLDERS for part in parts):
-            continue
-        # Agent-tooling dirs are the allowlisted exception: instructions
-        # and automation that operate ON the codebase - a topology layer,
-        # not hidden noise.
-        if any(part.startswith(".") and part not in
-               (".github", ".claude", ".agents", ".cursor")
-               for part in parts[:-1]):
-            continue
-        if parts and parts[0] in KG_DIRS:
-            continue
-        try:
             if not p.resolve().is_relative_to(repo.resolve()):
                 escapes.append(p)
                 continue
@@ -1096,8 +1215,8 @@ def scan_repo(repo: Path) -> tuple[list[Path], list[str]]:
             escapes.append(p)
             continue
         result.append(p)
-    rels = sorted({p.relative_to(repo).as_posix() for p in escapes})
-    return sorted(set(result)), rels
+    return (sorted(result),
+            sorted(p.relative_to(repo).as_posix() for p in escapes), ignored)
 
 
 def manifest(repo: Path) -> str:
@@ -5309,22 +5428,21 @@ def ingest(repo: Path, keep_previous: bool = False) -> dict:
             with gi.open("a", encoding="utf-8") as fh:
                 fh.write(f"\n{PREV_DB_NAME}\n")
     cfg = load_config(repo)
-    paths, escapes = scan_repo(repo)
+    paths, escapes, ignored = scan_repo(repo)
+    ignored += [(e, "symlink-or-escape") for e in escapes]
     files: list[dict] = []
-    ignored: list[tuple[str, str]] = [(e, "symlink-or-escape") for e in escapes]
     others: list[tuple] = []     # files listed, never read: the inventory
+    env_rows: list[tuple] = []   # names environment files define
     for p in paths:
         rel = p.relative_to(repo).as_posix()
-        rule = ignore_rule(rel, cfg)
         lang = language_of(rel) or sniff_language(p, rel)
         if lang is None:
-            if not rule:
-                ext = posixpath.splitext(posixpath.basename(rel))[1]
-                others.append((rel, ext.lower(), p.stat().st_size,
-                               other_reason(rel)))
-            continue
-        if rule:
-            ignored.append((rel, rule))
+            name = posixpath.basename(rel)
+            ext = posixpath.splitext(name)[1]
+            others.append((rel, ext.lower(), p.stat().st_size,
+                           other_reason(rel)))
+            if ENV_FILE_RE.search(name):
+                env_rows += env_file_rows(p, rel)
             continue
         size = p.stat().st_size
         if size > SIZE_CAP:
@@ -5544,7 +5662,7 @@ def ingest(repo: Path, keep_previous: bool = False) -> dict:
         more_rows, more_data = LineSymbols(files, resolver,
                                            all_symbols).run()
         sym_rows += more_rows
-        data_rows += more_data
+        data_rows += more_data + env_rows
         con.executemany(
             "INSERT INTO symbol_edges(src_file, src, dst, target, kind, line,"
             " status, candidates) VALUES (?,?,?,?,?,?,?,?)", sym_rows)
@@ -5741,7 +5859,7 @@ def _children(con: sqlite3.Connection, unit: str) -> list:
 
 def search(repo: Path, question: str, limit: int = 10,
            include_deps: bool = False, per_file: int = 0,
-           budget: int | None = None) -> dict:
+           budget: int | None = None, path: str | None = None) -> dict:
     con = open_fresh(repo)
     phrases, terms = tokenize(question)
     if not phrases and not terms:
@@ -5759,13 +5877,16 @@ def search(repo: Path, question: str, limit: int = 10,
     rung_used, scope = "", ""
     seen_ids: set[str] = set()
     collected: list[tuple[str, float, str, str]] = []
-    for scope_name, table, id_col in (("symbols", "symbols_fts", "id"),
-                                      ("files", "files_fts", "id")):
+    # A symbol id is `<file>::<qualname>`; the path filter reads the file.
+    for scope_name, table, file_col in (
+            ("symbols", "symbols_fts", "substr(id, 1, instr(id, '::') - 1)"),
+            ("files", "files_fts", "id")):
+        where = path_filter(con, path, file_col)
         for rung_name, q in search_rungs(phrases, terms):
             try:
                 rows = con.execute(
-                    f"SELECT {id_col}, bm25({table}) FROM {table}"
-                    f" WHERE {table} MATCH ? ORDER BY bm25({table})"
+                    f"SELECT id, bm25({table}) FROM {table}"
+                    f" WHERE {table} MATCH ?{where} ORDER BY bm25({table})"
                     f" LIMIT ?", (q, limit * 3)).fetchall()
             except sqlite3.OperationalError:
                 continue
@@ -6362,8 +6483,6 @@ def config_report(repo: Path) -> dict:
     con = open_fresh(repo)
     file_ids = [r[0] for r in con.execute(
         "SELECT id FROM files WHERE origin='project' ORDER BY id")]
-    ignored_by = dict(con.execute(
-        "SELECT rule, count(*) FROM ignored GROUP BY rule"))
     entry_rows = con.execute(
         "SELECT file_id, detail FROM entry_points WHERE kind='config'"
     ).fetchall()
@@ -6380,8 +6499,6 @@ def config_report(repo: Path) -> dict:
     def matched(pattern: str) -> int:
         return sum(1 for fid in file_ids if glob_match(fid, pattern))
 
-    ignore = [{"pattern": pat, "matched": ignored_by.get(f"config:{pat}", 0)}
-              for pat in cfg.get("ignore", [])]
     def root_exists(rel: str) -> bool:
         # Confined to the repo: a config row must not turn this report into
         # a probe for folders elsewhere on the machine.
@@ -6416,10 +6533,6 @@ def config_report(repo: Path) -> dict:
         if not srcs or not dsts:
             warnings.append(f"links row matched nothing: {row['from']}"
                             f" -> {row['to']}")
-    for row in ignore:
-        if not row["matched"]:
-            warnings.append(f"ignore pattern matched nothing:"
-                            f" {row['pattern']}")
     for row in roots:
         if not row["exists"]:
             warnings.append(f"root is not a folder: {row['root']}")
@@ -6431,7 +6544,7 @@ def config_report(repo: Path) -> dict:
         "path": cfg_file.relative_to(repo).as_posix(),
         "exists": cfg_file.exists(),
         "status": "WARNINGS" if warnings else "OK", "warnings": warnings,
-        "ignore": ignore, "roots": roots, "entry_points": entries,
+        "roots": roots, "entry_points": entries,
         "aliases": len(cfg.get("aliases", {})),
         "profile": cfg.get("profile", ""), "deps": cfg.get("deps", "none"),
         "components": components, "links": links,
@@ -7131,22 +7244,33 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def migrate(repo: Path) -> dict:
     """Move a legacy .code-kg/ folder's files into .kg/ under the current
-    names, as they are. The config moves first, so an interrupted run never
-    leaves a database in .kg/ without its ignore rules; the databases move
-    rather than rebuild, keeping the coverage runs and session reads no
-    ingest recreates. The legacy folder is removed once only its .gitignore
-    is left. Run it while no other command is using the graph."""
+    names. The config's `ignore` patterns go to the repo's .kgignore first,
+    then the config moves, so an interrupted run never leaves a database in
+    .kg/ without its ignore rules; the databases move rather than rebuild,
+    keeping the coverage runs and session reads no ingest recreates. The
+    legacy folder is removed once only its .gitignore is left. Run it while
+    no other command is using the graph."""
     old = kg_dir(repo)
     if old.name != LEGACY_KG_DIR:
         return {"from": None, "to": KG_DIR, "moved": [], "removed": False,
                 "left": []}
     new = repo / KG_DIR
-    for folder, db in ((old, old / DB_NAME), (new, new / DB_NAME)):
+    for folder, db in ((old, old / DB_NAME), (new, new / DB_NAME),
+                       (repo, repo / ".kgignore")):
         refused = linked_store(repo, folder, db)
         if refused:
             sys.exit(f"error: {refused}")
-    load_config(repo)                   # exits loudly on a malformed config
-    moves = [(old / LEGACY_NAMES[CONFIG_NAME], new / CONFIG_NAME)]
+    cfg_src = old / LEGACY_NAMES[CONFIG_NAME]
+    data: dict = {}
+    if cfg_src.is_file() and not cfg_src.is_symlink():
+        try:
+            data = json.loads(cfg_src.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            sys.exit(f"error: {cfg_src} has invalid json: {e}")
+        if not isinstance(data, dict):
+            sys.exit(f"error: {cfg_src} must hold a json object")
+    lines = [str(p) for p in data.pop("ignore", None) or []]
+    moves = [(cfg_src, new / CONFIG_NAME)]
     moves += [(old / (n + s), new / (n + s))
               for n in (DB_NAME, PREV_DB_NAME)
               for s in ("", "-wal", "-shm", "-journal")]
@@ -7155,11 +7279,22 @@ def migrate(repo: Path) -> dict:
     for _, dst in moves:
         if os.path.lexists(dst):
             sys.exit(f"error: {dst} already exists; refusing to overwrite it")
+    moved = []
+    if lines:
+        append_kgignore(repo, lines)
+        moved.append([f"{cfg_src.relative_to(repo).as_posix()} ignore rows",
+                      ".kgignore"])
     new.mkdir(exist_ok=True)
     seed_gitignore(new)
-    moved = []
     for src, dst in moves:
-        os.replace(src, dst)
+        if src == cfg_src and lines:
+            fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | os.O_NOFOLLOW, 0o644)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(data, indent=2, sort_keys=True) + "\n")
+            src.unlink()
+        else:
+            os.replace(src, dst)
         moved.append([src.relative_to(repo).as_posix(),
                       dst.relative_to(repo).as_posix()])
     left = sorted(p.name for p in old.iterdir() if p.name != ".gitignore")
@@ -7236,6 +7371,7 @@ def cmd_search(args: argparse.Namespace) -> int:
     repo = repo_dir(args.repo)
     result = search(repo, args.question, limit=args.limit,
                     include_deps=args.deps, per_file=args.per_file,
+                    path=args.path,
                     budget=args.budget)
     record_reads(repo, args.session, [h.get("symbol", h["file"])
                                       for h in result["results"]], "search")
@@ -7264,8 +7400,9 @@ def cmd_search(args: argparse.Namespace) -> int:
 def cmd_query(args: argparse.Namespace) -> int:
     repo = repo_dir(args.repo)
     con = open_fresh(repo)
-    origin_clause = "" if args.deps else \
-        " AND id IN (SELECT id FROM files WHERE origin='project')"
+    origin_clause = ("" if args.deps else
+                     " AND id IN (SELECT id FROM files WHERE origin='project')"
+                     ) + path_filter(con, args.path, "id")
     try:
         rows = con.execute(
             "SELECT id, bm25(files_fts) FROM files_fts WHERE files_fts"
@@ -7654,8 +7791,6 @@ def cmd_config(args: argparse.Namespace) -> int:
         print(f"{p['path']}{state}: {p['status']}")
         for w in p["warnings"]:
             print(f"  warning: {w}")
-        for row in p["ignore"]:
-            print(f"  ignore {row['pattern']}: {row['matched']} files")
         for row in p["roots"]:
             print(f"  root {row['root']}: "
                   + ("present" if row["exists"] else "missing"))
@@ -7807,13 +7942,11 @@ def _scan_store_files(repo: Path) -> dict:
     stores: list[tuple[str, str, str]] = []
     data_files: dict[str, dict[str, int]] = {}
     seen = 0
+    # Ignore files are not applied here: a gitignored local database is
+    # exactly what this inventory is for.
     for root, dirs, names in os.walk(repo):
-        dirs[:] = [d for d in dirs
-                   if d not in SKIP_FOLDERS
-                   and (not d.startswith(".")
-                        or d in (".github", ".claude", ".agents",
-                                 ".cursor"))
-                   and not (Path(root) == repo and d in KG_DIRS)]
+        dirs[:] = [d for d in dirs if not skip_dir(
+            (Path(root) / d).relative_to(repo).as_posix())]
         for d in dirs:
             ext = Path(d).suffix.lower()
             if ext in STORE_DIR_EXTS:
@@ -9440,6 +9573,7 @@ def main(argv: list[str] | None = None) -> int:
                         f" {PREV_DB_NAME} from `ingest --keep-previous`)")
     session_help = ("append what this command returns to this session's"
                     " read ledger (report with `reads`)")
+    path_help = "only files whose path matches this glob, e.g. 'src/**'"
     p = add("search", cmd_search)
     p.add_argument("question")
     p.add_argument("--limit", type=int, default=10)
@@ -9453,12 +9587,14 @@ def main(argv: list[str] | None = None) -> int:
                         " estimated tokens; a unit too big gives the units"
                         " inside it that fit")
     p.add_argument("--session", metavar="ID", help=session_help)
+    p.add_argument("--path", metavar="GLOB", help=path_help)
     p = add("query", cmd_query)
     p.add_argument("fts")
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--deps", action="store_true",
                    help="include indexed dependency code in results")
     p.add_argument("--session", metavar="ID", help=session_help)
+    p.add_argument("--path", metavar="GLOB", help=path_help)
     p = add("related", cmd_related,
             help="files, or symbols, ranked by graph proximity to one:"
                  " personalized PageRank, not content similarity")

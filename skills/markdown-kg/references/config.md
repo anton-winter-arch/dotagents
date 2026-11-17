@@ -12,9 +12,6 @@ never happens.
 
 ```json
 {
-  "ignore": [
-    {"path": "archive/**", "reason": "superseded copies"}
-  ],
   "profiles": [
     {"path": "journal.md", "profile": "log-dated", "date_from": "heading",
      "slots": {"Reflection": "authored", "Synthesis": "generated",
@@ -45,26 +42,26 @@ A config written before they existed loads exactly as it did.
 
 ## Checking an edit
 
-`config <vault>` reports what each row matched: files per `ignore` row, notes per `profiles` row, sections per entity, notes and derived entities per `entity_sources` row, links per `relations` field, and annotations per custom marker.
+`config <vault>` reports what each row matched: notes per `profiles` row, sections per entity, notes and derived entities per `entity_sources` row, links per `relations` field, and annotations per custom marker.
 A row that matched nothing is a warning, never an error, because the config is allowed to be ahead of the corpus.
 The command writes nothing, and it exits nonzero only when the file itself is malformed.
 
-## ignore
+## Ignoring files: .kgignore
 
-| key | meaning |
-|---|---|
-| `path` | glob. `**` spans path segments, `*` stops at `/`, a pattern with no `/` also matches on basename |
-| `reason` | free text, shown by `stats` |
-
-Two other mechanisms do the same job, in this precedence order:
-
-1. `kg-ignore: true` in a note's frontmatter
-2. this `ignore` array
-3. a root `.kgignore` file, one gitignore-style pattern per line
+Exclusion is not in this config. Both engines keep a file out of the graph when
+a rule in a `.kgignore` at or below the vault root matches it, in git's syntax:
+`#` comments, `!` re-includes, a trailing `/` matches folders only, a leading or
+inner `/` anchors the pattern to its file's folder, `*` stops at `/` and `**`
+spans folders. The last matching rule wins. `.gitignore` is not read, since the
+graph may need what git leaves out of a commit, and rules above the root are
+never read, so the graph is the same on every machine. Put a reason on the line
+above a pattern as a `#` comment.
 
 An ignored file is not read, chunked, indexed or counted, and `stats` reports
-which rule matched. A link pointing at one gets status `ignored`, not
-`unresolved`, so it does not pollute the broken-link worklist.
+which file and line matched. A link pointing at one gets status `ignored`, not
+`unresolved`, so it does not pollute the broken-link worklist. A config that
+still has an `ignore` array is refused with an error, never half-read;
+`migrate` moves a legacy config's rows into `.kgignore`.
 
 Exclusion is the cheapest quality lever there is. Indexing an archived snapshot
 beside its live note means every search returns each answer twice, and the stale
@@ -78,7 +75,7 @@ row), then `reference`.
 
 | key | applies to | meaning |
 |---|---|---|
-| `path` | all | glob, same syntax as `ignore`. A row takes `path` or `kg_type`, never both |
+| `path` | all | glob: `**` spans folders, `*` stops at `/`, a pattern with no `/` also matches on basename. A row takes `path` or `kg_type`, never both |
 | `kg_type` | all | matches notes whose frontmatter `kg-type:` equals this value (case-insensitive). Demotion-only: `weight` must be `<= 1.0`, enforced loudly, because `kg-type` is corpus content and frontmatter never buys rank. Resolved after every `path` row, and only `profile`, `weight` and `description` are honored on such a row - a note self-selects into it, so it must not carry slot or date machinery |
 | `profile` | all | `log-dated`, `reference`, `dimension`, `list`, `generated`, `hub`, `freeform` |
 | `weight` | all | ranking multiplier, default `1.0` (`generated` defaults to `0.2`) |
@@ -198,7 +195,7 @@ One row covers a whole folder, so the registry tracks the vault's pages without 
 
 | key | meaning |
 |---|---|
-| `path` | glob, same syntax as `ignore`. A row takes `path` or `kg_type`, exactly one |
+| `path` | glob, same syntax as a `profiles` path. A row takes `path` or `kg_type`, exactly one |
 | `kg_type` | matches notes whose frontmatter `kg-type:` equals this value (case-insensitive) |
 | `type` | copied to each derived entity's `type` |
 | `time` | `static` (default) or `evolving`. A span belongs in a hand-written `entities` row |

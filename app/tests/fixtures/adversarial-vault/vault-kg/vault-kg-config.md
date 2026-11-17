@@ -6,12 +6,6 @@ structure. Edit this file directly.
 
 ```json
 {
-  "ignore": [
-    {
-      "path": "archive/**",
-      "reason": "superseded copies"
-    }
-  ],
   "profiles": [
     {
       "date_from": "heading",

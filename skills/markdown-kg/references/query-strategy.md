@@ -13,7 +13,7 @@ the wrong instrument at the wrong class wastes a search. The four that recur:
 |---|---|---|
 | append-only dated log (journal, incident log, changelog) | `log-dated` | `search` for content, `themes`/`trends` for aggregates, `trajectory` for "is this recurring", `timeline` for a registered entity |
 | regenerated synthesis notes (agent- or template-written) | `generated` | retrievable through `search` but down-weighted and never counted as authored; treat hits as pointers back to the source material |
-| mechanically flattened source material (a repo or export dumped into one huge note) | `freeform`, or `ignore` it | `sections` to locate the file's heading, then a line-range read. Full-text search over a megabyte of source returns noise |
+| mechanically flattened source material (a repo or export dumped into one huge note) | `freeform`, or list it in `.kgignore` | `sections` to locate the file's heading, then a line-range read. Full-text search over a megabyte of source returns noise |
 | registers and rosters (tables or lists pretending to be prose) | `dimension` / `list` | `sections` then `read`. The group headings are entity seeds; `search` inside them mostly restates the heading |
 
 A mixed corpus is normal; profile the dated files and leave the rest on

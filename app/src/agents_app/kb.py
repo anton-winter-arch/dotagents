@@ -6,7 +6,6 @@ stale index; the engine re-ingests on manifest drift by itself.
 """
 
 import importlib.util
-import os
 from pathlib import Path
 
 from agents_app import config
@@ -75,33 +74,20 @@ def file_text(path: str, vault: Path | None = None) -> str:
 
 
 def parity(vault: Path | None = None) -> list[str]:
-    """Notes on disk that the engine's enumeration misses.
-
-    Graph membership is vault-contents-minus-.kgignore; git is a
-    publishing boundary, never a knowledge boundary. But the engine
-    enumerates via git when the vault is inside a repo, which silently
-    skips notes git hides: gitignored files, and anything inside a
-    nested repo. Until that is fixed at the engine's source, this makes
-    the drop loud instead of silent. Same walk filters as the engine's
-    own non-git path (dot folders, SKIP_FOLDERS, KG_DIRS, symlinks),
-    so every path reported here is one the graph WOULD serve if the
-    enumeration could see it."""
+    """Notes the engine's walk keeps that the graph does not hold and no
+    rule excluded. Membership (the walk minus .kgignore) is
+    the engine's; this only makes a gap between walk and graph loud."""
     vault = vault or config.vault_path()
-    seen = {p.resolve() for p in engine.walk_vault(vault)}
-    missing = []
-    for root, dirs, names in os.walk(vault):
-        dirs[:] = [d for d in dirs
-                   if d not in engine.SKIP_FOLDERS and not d.startswith(".")
-                   and not (Path(root) == vault and d in engine.KG_DIRS)]
-        for name in names:
-            if not name.endswith(".md"):
-                continue
-            path = Path(root) / name
-            if path.is_symlink():
-                continue
-            if path.resolve() not in seen:
-                missing.append(path.relative_to(vault).as_posix())
-    return sorted(missing)
+    if not engine.db_path(vault).exists():
+        engine.ingest(vault)
+    con = engine.connect(vault, must_exist=True)
+    try:
+        held = {r[0] for r in con.execute(
+            "SELECT path FROM notes UNION SELECT path FROM ignored")}
+    finally:
+        con.close()
+    return sorted(rel for p in engine.walk_vault(vault)
+                  if (rel := p.relative_to(vault).as_posix()) not in held)
 
 
 def stats(vault: Path | None = None) -> dict:

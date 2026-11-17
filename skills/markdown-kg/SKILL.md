@@ -27,16 +27,21 @@ Two things make it worth reaching for over `grep` or `Read`:
 ```
 <vault>/.kg/                 shared with code-kg; each file carries its engine's name
     .gitignore               `*`: the whole folder stays out of git
-    markdown-kg-config.json  ignore rules, profiles, entities - one file
+    markdown-kg-config.json  profiles, entities, markers - one file
     markdown-kg.db           SQLite + FTS5, rebuildable
     markdown-kg-prev.db      diff checkpoint from `ingest --keep-previous`
 ```
 
 The engine writes the `.gitignore` when the folder has none, and never rewrites one that exists. To share a config across machines, `git add -f` it.
 
+**What gets indexed:** every note under the vault root except dot folders and what a `.kgignore` at or below the root excludes, in git's syntax. `.gitignore` is not read, so gitignored notes stay searchable, and rules above the root are never read. An environment file (`.env`, `*.env`) is never read.
+
+`search` and `query` take `--path GLOB` to keep only notes under a folder, such as `--path 'docs/**'`.
+
 A vault built earlier has its graph in a legacy `markdown-kg/` or `vault-kg/` folder, with a markdown config holding one fenced `json` block.
 Until `.kg/` holds a markdown-kg database or config, the engine reads and writes the legacy folder in place, never creates one, and `init` refuses to run there.
-`migrate <vault>` moves the legacy files into `.kg/`: the config becomes plain json with every key kept, the databases move unchanged, and the empty legacy folder is removed.
+`migrate <vault>` moves the legacy files into `.kg/`: its `ignore` rows go to `.kgignore`, the config becomes plain json with every other key kept, the databases move unchanged, and the empty legacy folder is removed.
+Until then, a legacy config with `ignore` rows is refused rather than half-read.
 Run it while no other command is using the graph.
 
 The config is plain json. **Edit it directly**
@@ -373,7 +378,7 @@ one up is about structure and edges instead:
 | set `hub` on every index or MOC note | otherwise their edges swamp the degree prior and a two-hop `neighbors` walk returns everything |
 | set `dimension` on any note that is a grouped list | it is the cheapest entity seed there is, and those group headings are usually the subjects the rest of the corpus discusses |
 | lean on `entities` harder than a dated corpus needs to | with no dates, `timeline` supersession and alias resolution are the main way related material connects |
-| use `ignore` aggressively on archived or duplicated trees | a stale copy indexed beside its live note returns every answer twice and sometimes outranks it |
+| list archived or duplicated trees in `.kgignore` aggressively | a stale copy indexed beside its live note returns every answer twice and sometimes outranks it |
 
 Date-free and fully available on this shape: `search`, `query`, `sections`, `read`,
 `coverage`, `backlinks`, `links`, `neighbors`, `path`, `stats`, `index`. `timeline`,

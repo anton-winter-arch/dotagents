@@ -32,10 +32,10 @@ When code-kg has indexed the same root, its `code-kg.db` sits in the same `.kg/`
 
 One row per ingested markdown file.
 Dot folders such as `.obsidian`, `.git` and `.trash`, the folders in `SKIP_FOLDERS` and the engine's legacy folders (`markdown-kg/` and `vault-kg/`) are never ingested; `.kg/` is a dot folder.
-Enumeration is a filesystem walk, so gitignored notes and notes
-inside a nested git repo are ingested like any other; exclusion belongs to
-the engine's own ignore rules. Files excluded by an ignore rule are not here
-at all; see [ignored](#ignored).
+Enumeration is a filesystem walk that applies the `.kgignore` files at or
+below the vault root and never git, so gitignored notes and notes inside a
+nested git repo are ingested like any other. Files excluded by an ignore rule
+are not here at all; see [ignored](#ignored).
 
 | column | meaning |
 |---|---|

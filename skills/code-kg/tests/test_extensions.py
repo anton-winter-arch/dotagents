@@ -400,9 +400,9 @@ class TestConfigValidation(RepoCase):
         self.assertIn(fragment, err)
 
     def test_config_without_extension_keys_loads_as_before(self):
-        self.write_config({"ignore": ["web/**"]})
+        self.write_config({"roots": ["web"]})
         cfg = code_kg.load_config(self.repo)
-        self.assertEqual(cfg["ignore"], ["web/**"])
+        self.assertEqual(cfg["roots"], ["web"])
         for key in code_kg.EXTENSION_KEYS:
             self.assertEqual(cfg[key], [])
 
@@ -715,15 +715,14 @@ class TestConfigCommand(RepoCase):
                       got["warnings"])
 
     def test_clean_config_is_ok(self):
-        self.write_config({"ignore": ["web/**"]})
+        self.write_config({"roots": ["web"]})
         got = self.json("config")
         self.assertEqual(got["status"], "OK")
-        self.assertEqual(got["ignore"], [{"pattern": "web/**", "matched": 2}])
+        self.assertEqual(got["roots"], [{"root": "web", "exists": True}])
 
     def test_control_characters_never_reach_the_terminal(self):
         hostile = "\u001b]0;x\u0007\u001b[2Jr"
-        self.write_config({"roots": [hostile], "ignore": [hostile],
-                           "entry_points": [hostile]})
+        self.write_config({"roots": [hostile], "entry_points": [hostile]})
         rc, out, _ = run("config", str(self.repo))
         self.assertEqual(rc, 0)
         self.assertNotIn("\u001b", out)
