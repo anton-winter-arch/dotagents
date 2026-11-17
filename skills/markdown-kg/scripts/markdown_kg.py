@@ -2267,12 +2267,32 @@ def _json_dec(value):
     return value
 
 
+def engine_fingerprint() -> str:
+    """This engine's source, the Python version and the current value of every
+    module constant (a test or a flag may lower SIZE_CEILING): whatever can change
+    what an ingest produces from the same notes and config."""
+    def stable(v):
+        # Sets iterate in hash order, which changes per process; sort them.
+        if isinstance(v, (set, frozenset)):
+            return repr(sorted(map(stable, v)))
+        if isinstance(v, dict):
+            return repr(sorted((stable(k), stable(x)) for k, x in v.items()))
+        if isinstance(v, (list, tuple)):
+            return repr([stable(x) for x in v])
+        return repr(v)
+    # A snapshot: another thread may set a module global while this runs.
+    constants = sorted((k, stable(v)) for k, v in list(globals().items())
+                       if k.isupper() and isinstance(
+                           v, (int, float, str, tuple, list, set, frozenset, dict)))
+    return hashlib.sha256(Path(__file__).read_bytes() + sys.version.encode()
+                          + repr(constants).encode()).hexdigest()
+
+
 class ParseCache:
     """Results of the pure per-note and per-section work, kept in the graph's
     own database between ingests so an unchanged note is never parsed again.
-    The key is this engine's source, the Python version, the current value of
-    every module constant (a test or a flag may lower SIZE_CEILING) and the
-    inputs, so any engine change starts cold. Values are JSON, never pickle: the database can
+    The key is the engine fingerprint, a station salt and the inputs, so any
+    engine change starts cold. Values are JSON, never pickle: the database can
     arrive with a synced vault. A value that does not survive the JSON round
     trip exactly is computed every time and never stored. Keys not used by an
     ingest are dropped at its end, so the cache holds one generation."""
@@ -2286,27 +2306,12 @@ class ParseCache:
             # The station salt keeps the keys unguessable: a db that arrives with
             # a synced vault can carry planted rows, and without it anyone who
             # can write the vault could compute a key and have its value trusted.
-            salt = _station_salt()
-            ParseCache._source = (None if salt is None else
-                                  salt + Path(__file__).read_bytes() + sys.version.encode())
+            ParseCache._source = _station_salt()
         self.off = ParseCache._source is None
-        if self.off:
-            self.con, self.used, self.new = con, set(), []
-            return
-        def stable(v):
-            # Sets iterate in hash order, which changes per process; sort them.
-            if isinstance(v, (set, frozenset)):
-                return repr(sorted(map(stable, v)))
-            if isinstance(v, dict):
-                return repr(sorted((stable(k), stable(x)) for k, x in v.items()))
-            if isinstance(v, (list, tuple)):
-                return repr([stable(x) for x in v])
-            return repr(v)
-        constants = sorted((k, stable(v)) for k, v in globals().items()
-                           if k.isupper() and isinstance(
-                               v, (int, float, str, tuple, list, set, frozenset, dict)))
-        self._engine = hashlib.sha256(ParseCache._source + repr(constants).encode()).hexdigest()
         self.con, self.used, self.new = con, set(), []
+        if not self.off:
+            self._engine = hashlib.sha256(
+                ParseCache._source + engine_fingerprint().encode()).hexdigest()
 
     def get(self, name: str, key_parts: list, compute, pack=None, unpack=None):
         """`compute()` through the cache. `pack` shrinks a value before it is stored
@@ -2381,6 +2386,32 @@ def _first_h1(text: str) -> str | None:
     return next((n.heading for n in parse_headings(text) if n.level == 1), None)
 
 
+# Tables whose rows belong to one note, keyed by its id: an incremental ingest
+# rewrites them only for notes added, changed or removed.
+PER_NOTE_TABLES = {"notes": "id", "properties": "note_id", "tags": "note_id",
+                   "aliases": "note_id", "sections": "note_id", "members": "note_id",
+                   "annotations": "note_id", "inline_tags": "note_id",
+                   "code_spans": "note_id"}
+
+
+def _table_columns(con: sqlite3.Connection) -> dict:
+    return {t: tuple(r[1] for r in con.execute(f'PRAGMA table_info("{t}")'))
+            for t in PER_NOTE_TABLES}
+
+
+def _row_counts(con: sqlite3.Connection) -> str:
+    """Row counts of the per-note tables plus a hash of the section row ids. The
+    search index is tied to those ids, which a VACUUM or a dump and reload can
+    renumber; an incremental update over renumbered rows would corrupt it."""
+    state = {t: con.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0]
+             for t in sorted(PER_NOTE_TABLES)}
+    digest = hashlib.sha256()
+    for rowid, sid in con.execute("SELECT rowid, id FROM sections ORDER BY rowid"):
+        digest.update(f"{rowid}\0{sid}\n".encode())
+    state["section rowids"] = digest.hexdigest()
+    return json.dumps(state)
+
+
 def ingest(vault: Path, keep_previous: bool = False) -> dict:
     checkpoint = None
     refused = linked_store(vault, kg_dir(vault), db_path(vault))
@@ -2395,6 +2426,19 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
             # checkpoint name or at a predictable temp name beside it.
             write_checkpoint(live, prev_db_path(vault))
             checkpoint = str(prev_db_path(vault))
+    # The per-note tables as the last ingest left them, read before connect()
+    # runs the schema script: a table it creates or migrates holds none of the
+    # unchanged notes' rows, so that ingest has to be a full one.
+    prior_columns = None
+    if db_path(vault).exists():
+        try:
+            ro = _ro_connect(str(db_path(vault)))
+            try:
+                prior_columns = _table_columns(ro)
+            finally:
+                ro.close()
+        except sqlite3.DatabaseError:
+            prior_columns = None
     con = connect(vault)
     memo = ParseCache(con)
     cfg = load_config(vault)
@@ -2425,7 +2469,8 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
             continue
         row = profile_for(rel[: -len(".md")], rel, meta, cfg)
         parsed[rel[: -len(".md")]] = {"rel": rel, "text": text, "meta": meta,
-                                      "row": row}
+                                      "row": row,
+                                      "hash": hashlib.sha256(text.encode()).hexdigest()}
     report["ignored_files"] = len(ignored)
 
     ids = sorted(parsed)
@@ -2437,19 +2482,49 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
         for alias in _listify(parsed[nid]["meta"].get("aliases", [])):
             by_alias.setdefault(alias.lower(), []).append(nid)
 
-    for table in ("notes", "properties", "tags", "aliases", "edges", "sections",
-                  "members", "entities", "entity_aliases", "mentions",
-                  "ignored", "annotations", "annotation_candidates", "meta",
-                  "anchors", "link_fields", "inline_tags", "entity_skips",
-                  "file_links", "code_spans", "other_files"):
+    # Incremental: when the engine, config and ignore rules match the last ingest,
+    # only notes added, changed or removed are rewritten in the per-note tables.
+    # The cross-note tables (links, anchors, mentions, candidates) are rebuilt in
+    # full every time, since a change in one note reaches them through the others;
+    # they come from the parse cache, so that stays cheap.
+    basis = hashlib.sha256(json.dumps(
+        [engine_fingerprint(), cfg, kgignore, link_mode(vault, cfg)],
+        sort_keys=True, default=str).encode()).hexdigest()
+    prev = con.execute("SELECT value FROM meta WHERE key = 'ingest_basis'").fetchone()
+    counts = con.execute("SELECT value FROM meta WHERE key = 'per_note_counts'").fetchone()
+    old = dict(con.execute("SELECT id, content_hash FROM notes"))
+    # The last ingest's row counts must still hold: a table something else dropped,
+    # recreated or edited since then cannot pass as up to date.
+    incremental = (prev is not None and prev[0] == basis
+                   and prior_columns == _table_columns(con)
+                   and counts is not None and counts[0] == _row_counts(con))
+    dirty = ({nid for nid in ids if old.get(nid) != parsed[nid]["hash"]} | (set(old) - set(ids))
+             if incremental else set(ids) | set(old))
+    per_note = PER_NOTE_TABLES
+    for table in ("edges", "entities", "entity_aliases", "mentions", "ignored",
+                  "annotation_candidates", "meta", "anchors", "link_fields",
+                  "entity_skips", "file_links", "other_files"):
         con.execute(f"DELETE FROM {table}")
+    con.execute("CREATE TEMP TABLE IF NOT EXISTS dirty_notes(id TEXT PRIMARY KEY)")
+    con.execute("DELETE FROM dirty_notes")
+    con.executemany("INSERT INTO dirty_notes(id) VALUES (?)", [(n,) for n in dirty])
+    if incremental:
+        con.execute(
+            "INSERT INTO sections_fts(sections_fts, rowid, id, heading_path, body)"
+            " SELECT 'delete', rowid, id, heading_path, body FROM sections"
+            " WHERE note_id IN (SELECT id FROM dirty_notes)")
+        for table, col in per_note.items():
+            con.execute(f"DELETE FROM {table} WHERE {col} IN (SELECT id FROM dirty_notes)")
+    else:
+        for table in per_note:
+            con.execute(f"DELETE FROM {table}")
+        con.execute("INSERT INTO sections_fts(sections_fts) VALUES ('delete-all')")
     con.executemany(
         "INSERT INTO other_files(path, ext, size, reason) VALUES (?,?,?,?)",
         [(rel, posixpath.splitext(posixpath.basename(rel))[1].lower(),
           p.stat().st_size, "no-parser")
          for p in scan_vault(vault, every=True)[0]
          if not (rel := p.relative_to(vault).as_posix()).endswith(".md")])
-    con.execute("INSERT INTO sections_fts(sections_fts) VALUES ('delete-all')")
 
     for rel, rule in sorted(ignored):
         con.execute("INSERT INTO ignored(path, rule) VALUES (?,?)", (rel, rule))
@@ -2458,7 +2533,10 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
     for nid in ids:
         doc = parsed[nid]
         meta, text, row = doc["meta"], doc["text"], doc["row"]
-        doc["hash"] = text_hash = hashlib.sha256(text.encode()).hexdigest()
+        text_hash = doc["hash"]
+        # A clean note is still parsed (from the cache) for the cross-note tables,
+        # but its own rows are already in the database and are not written again.
+        put = con.execute if nid in dirty else (lambda *a: None)
         heading = memo.get("h1", [text_hash], lambda: _first_h1(text))
         title = str(meta.get("title") or heading or nid.rsplit("/", 1)[-1])
         tag_list = _listify(meta.get("tags", []))
@@ -2489,7 +2567,7 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
                         note_date = apply_order(shape, order)
                 if note_date:
                     break
-        con.execute(
+        put(
             "INSERT INTO notes(id, path, title, tags, aliases, content_hash,"
             " body, profile, weight, doc_date, status)"
             " VALUES (?,?,?,?,?,?,?,?,?,?, 'hot')",
@@ -2497,10 +2575,10 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
              text_hash, text, profile, weight, note_date))
         report["notes"] += 1
         for tag in sorted(set(tag_list)):
-            con.execute("INSERT INTO tags(note_id, tag) VALUES (?,?)",
+            put("INSERT INTO tags(note_id, tag) VALUES (?,?)",
                         (nid, tag))
         for alias in sorted(set(alias_list)):
-            con.execute("INSERT INTO aliases(note_id, alias) VALUES (?,?)",
+            put("INSERT INTO aliases(note_id, alias) VALUES (?,?)",
                         (nid, alias))
         for key in sorted(meta):
             val = meta[key]
@@ -2510,13 +2588,13 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
                 val = ", ".join(str(v) for v in val)
             elif isinstance(val, dict):
                 val = ", ".join(f"{k}={v}" for k, v in sorted(val.items()))
-            con.execute(
+            put(
                 "INSERT INTO properties(note_id, key, value) VALUES (?,?,?)",
                 (nid, key, str(val)))
 
         learned = memo.get("learn_note", [text_hash, row], lambda: learn_note(text, row))
         if learned.get("date_order"):
-            con.execute(
+            put(
                 "INSERT OR REPLACE INTO properties(note_id, key, value)"
                 " VALUES (?,?,?)",
                 (nid, "kg-date-order", order_label(learned["date_order"])))
@@ -2562,7 +2640,7 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
             w = 1.0 if sec["slot"] == "prep" else tiers.get(sec["doc_date"], 1.0)
             if sec["slot"] == "superseded":
                 w *= SUPERSEDED_WEIGHT
-            con.execute(
+            put(
                 "INSERT INTO sections(id, note_id, parent_id, heading,"
                 " heading_path, level, ord, char_start, char_end, line_start,"
                 " line_end, body, own_body, doc_date, slot, weight, words,"
@@ -2575,12 +2653,12 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
                  sec["doc_date"], sec["slot"], w, sec["words"], sec["is_unit"],
                  sec["oversize"], sec["section_hash"], sec.get("setext", 0)))
             for i, name in enumerate(sec.get("members", [])):
-                con.execute(
+                put(
                     "INSERT OR IGNORE INTO members(section_id, note_id,"
                     " group_name, name, ord) VALUES (?,?,?,?,?)",
                     (sec["id"], nid, sec["heading"], name, i))
         for ann in anns:
-            con.execute(
+            put(
                 "INSERT INTO annotations(note_id, section_id, line, marker,"
                 " payload, target, date) VALUES (?,?,?,?,?,?,?)",
                 (nid, ann["section_id"], ann["line"], ann["marker"],
@@ -2712,6 +2790,8 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
         for tag, off in memo.get("scan_inline_tags", [h], lambda: list(scan_inline_tags(text))):
             key_ = (_section_at(sections, off), tag)
             tag_counts[key_] = tag_counts.get(key_, 0) + 1
+        if nid not in dirty:
+            continue        # its inline tags and code spans are already stored
         con.executemany(
             "INSERT INTO inline_tags(note_id, section_id, tag, count)"
             " VALUES (?,?,?,?)",
@@ -2735,7 +2815,16 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
     report.update(ent_report)
     memo.flush()
 
-    con.execute("INSERT INTO sections_fts(sections_fts) VALUES ('rebuild')")
+    if incremental:
+        con.execute(
+            "INSERT INTO sections_fts(rowid, id, heading_path, body)"
+            " SELECT rowid, id, heading_path, body FROM sections"
+            " WHERE note_id IN (SELECT id FROM dirty_notes)")
+    else:
+        con.execute("INSERT INTO sections_fts(sections_fts) VALUES ('rebuild')")
+    con.execute("INSERT INTO meta(key, value) VALUES ('ingest_basis', ?)", (basis,))
+    con.execute("INSERT INTO meta(key, value) VALUES ('per_note_counts', ?)",
+                (_row_counts(con),))
     con.execute("INSERT INTO meta(key, value) VALUES ('ingested_at', ?)",
                 (now_utc(),))
     con.commit()

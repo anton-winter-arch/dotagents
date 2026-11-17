@@ -3274,9 +3274,10 @@ class FolderNameTests(VaultCase):
         self.assertFalse((self.vault / "vault-kg").exists())
 
 
-class ParseCacheEquivalence(VaultCase):
-    """The parse cache must never change the graph: a warm ingest, an ingest after
-    an edit, and an ingest over a tampered cache all equal a cold build."""
+class GraphCase(VaultCase):
+    """Base for ingests that must equal a cold build: `graph()` is every table
+    except meta and the parse cache, as sorted rows, and the salt points at a
+    test-owned state folder."""
 
     def setUp(self):
         super().setUp()
@@ -3297,26 +3298,24 @@ class ParseCacheEquivalence(VaultCase):
         con.close()
         return out
 
-    def test_a_cache_from_another_station_is_never_trusted(self):
-        # A synced vault brings its db along; rows keyed under another station's
-        # salt must all miss and be dropped, not feed the graph.
-        self.ingest()
-        theirs = self.keys()
-        self.station(self.tmp / "state-b")
-        con = self.db()
-        con.execute("UPDATE parse_cache SET value = '[\"planted\"]'")
-        con.commit()
-        con.close()
-        self.assertEqual(self.ingest(), self.cold())
-        self.assertFalse(theirs & self.keys())
-
     def graph(self):
         con = self.db()
         out = {}
         for (table,) in con.execute("SELECT name FROM sqlite_master WHERE type='table'"
                                     " AND name NOT LIKE 'sqlite_%'"):
-            if table not in ("meta", "parse_cache"):
+            # The FTS shadow tables hold the index in a layout that differs between
+            # an incremental update and a rebuild; their content is compared below.
+            if table not in ("meta", "parse_cache", "section_writes") \
+                    and not table.startswith("sections_fts"):
                 out[table] = sorted(map(repr, con.execute(f'SELECT * FROM "{table}"')))
+        # The index must agree with its content table, and hold the same terms at the
+        # same places in the same sections (row ids may differ, section ids may not).
+        con.execute("INSERT INTO sections_fts(sections_fts, rank) VALUES ('integrity-check', 1)")
+        con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS temp.fts_terms"
+                    " USING fts5vocab(main, sections_fts, 'instance')")
+        out["fts terms"] = sorted(map(repr, con.execute(
+            "SELECT v.term, s.id, v.col, v.offset FROM temp.fts_terms v"
+            " JOIN sections s ON s.rowid = v.doc")))
         con.close()
         return out
 
@@ -3331,6 +3330,24 @@ class ParseCacheEquivalence(VaultCase):
             markdown_kg.ingest(self.vault)
         return self.graph()
 
+
+class ParseCacheEquivalence(GraphCase):
+    """The parse cache must never change the graph: a warm ingest, an ingest after
+    an edit, and an ingest over a tampered cache all equal a cold build."""
+
+    def test_a_cache_from_another_station_is_never_trusted(self):
+        # A synced vault brings its db along; rows keyed under another station's
+        # salt must all miss and be dropped, not feed the graph.
+        self.ingest()
+        theirs = self.keys()
+        self.station(self.tmp / "state-b")
+        con = self.db()
+        con.execute("UPDATE parse_cache SET value = '[\"planted\"]'")
+        con.commit()
+        con.close()
+        self.assertEqual(self.ingest(), self.cold())
+        self.assertFalse(theirs & self.keys())
+
     def test_warm_edited_and_tampered_runs_equal_a_cold_build(self):
         self.ingest()
         self.assertEqual(self.ingest(), self.cold())
@@ -3343,6 +3360,87 @@ class ParseCacheEquivalence(VaultCase):
         con.execute("UPDATE parse_cache SET value = 'not json'")
         con.commit()
         con.close()
+        self.assertEqual(self.ingest(), self.cold())
+
+
+class IncrementalIngest(GraphCase):
+    """A re-ingest writes only the notes that changed, and the graph it leaves
+    equals a cold build after every kind of change, including the ones that
+    reach other notes: an alias another note links through, a heading another
+    note anchors to, a rename, a delete, and a config edit."""
+
+    def count_section_writes(self):
+        con = self.db()
+        con.executescript(
+            "CREATE TABLE IF NOT EXISTS section_writes(n INTEGER);"
+            "DELETE FROM section_writes; INSERT INTO section_writes VALUES (0);"
+            "CREATE TRIGGER IF NOT EXISTS count_section_writes AFTER INSERT ON sections"
+            " BEGIN UPDATE section_writes SET n = n + 1; END;")
+        con.close()
+
+    def section_writes(self):
+        return self.rows("SELECT n FROM section_writes")[0][0]
+
+    def test_only_the_edited_note_is_rewritten(self):
+        self.ingest()
+        self.count_section_writes()
+        note = self.vault / "plans" / "Watering Guide.md"
+        note.write_text(note.read_text() + "\n## Evening\n\nWater after sunset.\n")
+        self.ingest()
+        edited = self.rows("SELECT count(*) FROM sections WHERE note_id = ?",
+                           "plans/Watering Guide")[0][0]
+        self.assertEqual(self.section_writes(), edited)
+
+    def test_an_unchanged_vault_writes_no_sections(self):
+        self.ingest()
+        self.count_section_writes()
+        self.ingest()
+        self.assertEqual(self.section_writes(), 0)
+
+    def test_an_added_note_equals_a_cold_build(self):
+        self.ingest()
+        (self.vault / "plans" / "Compost.md").write_text(
+            "# Compost\n\nFeeds the [[Garden Plan]]; see [[Seed List#Spring]].\n")
+        self.assertEqual(self.ingest(), self.cold())
+
+    def test_a_deleted_note_equals_a_cold_build(self):
+        self.ingest()
+        (self.vault / "Seed List.md").unlink()
+        self.assertEqual(self.ingest(), self.cold())
+
+    def test_a_renamed_note_equals_a_cold_build(self):
+        self.ingest()
+        (self.vault / "plans" / "Watering Guide.md").rename(self.vault / "plans" / "Irrigation.md")
+        self.assertEqual(self.ingest(), self.cold())
+
+    def test_an_alias_change_reaches_links_in_other_notes(self):
+        self.ingest()
+        note = self.vault / "plans" / "Garden Plan.md"
+        note.write_text(note.read_text().replace("The Plan", "The Layout"))
+        self.assertEqual(self.ingest(), self.cold())
+
+    def test_a_heading_change_reaches_anchors_in_other_notes(self):
+        self.ingest()
+        note = self.vault / "Seed List.md"
+        note.write_text(note.read_text().replace("Spring", "Early Season"))
+        self.assertEqual(self.ingest(), self.cold())
+
+    def test_renumbered_section_rows_force_a_full_ingest(self):
+        # A VACUUM or a dump and reload can renumber section rows, which the
+        # search index is tied to; the next ingest must not update it in place.
+        self.ingest()
+        con = self.db()
+        con.execute("UPDATE sections SET rowid = rowid + 1000")
+        con.commit()
+        con.close()
+        self.count_section_writes()
+        self.assertEqual(self.ingest(), self.cold())
+
+    def test_a_config_edit_equals_a_cold_build(self):
+        self.ingest()
+        markdown_kg.config_path(self.vault).write_text(
+            '```json\n{"ignore": [{"path": "Scratch.md", "reason": "test"}], "profiles": [], "markers": [],'
+            ' "entities": [{"canonical": "Spring", "aliases": ["spring"]}]}\n```\n')
         self.assertEqual(self.ingest(), self.cold())
 
 

@@ -54,7 +54,7 @@ path and no submission protocol. Field reference: `references/config.md`.
    Then read the handful of structured files yourself and write their profile
    rows by hand. That is the job detection deliberately does not attempt.
 
-2. **Ingest.** Cheap, idempotent, a full rebuild every time:
+2. **Ingest.** Idempotent; after the first build it rewrites only the notes that changed, and the result always equals a full rebuild:
 
    ```bash
    python3 <skill-dir>/scripts/markdown_kg.py ingest <vault>

@@ -50,10 +50,10 @@ at all; see [ignored](#ignored).
 | `doc_date` | note-level date from frontmatter, if one was inferred |
 | `status` | `hot` |
 
-There is deliberately no `observed_at` here. The table is wiped and rebuilt
-every ingest, so a per-note timestamp would only restate `meta.ingested_at`
-while introducing a second value that differs between two ingests of unchanged
-bytes - and the determinism contract allows exactly one.
+There is deliberately no `observed_at` here. The graph is defined by the
+vault's bytes, not by when they were read: a per-note timestamp would differ
+between two builds of unchanged bytes, and the determinism contract allows
+exactly one value.
 
 ## sections
 
@@ -176,7 +176,7 @@ count)`. A tag is
 letters, digits, `_`, `-` and `/` after a `#` that starts a line or follows
 whitespace, with at least one letter. A `#` in code, in a comment or in
 frontmatter is never a tag. The `tags` table stays frontmatter-only, and
-`tags --inline` reads both. Every ingest wipes and rebuilds this table.
+`tags --inline` reads both. An ingest rewrites the rows of each note that changed.
 
 ## file_links
 
