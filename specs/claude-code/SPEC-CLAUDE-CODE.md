@@ -91,7 +91,7 @@ this table uses no others.
 | Subagents | `LINK` | `~/.claude/agents/` | same script; the only harness reading this tree natively, and Cursor's compatibility path |
 | Commands | `LINK` | `~/.claude/commands/` | markdown; does not port to any other harness |
 | Rules | `POINTER` | `~/.claude/CLAUDE.md` | from `CLAUDE.md.example`, byte parity; the single line `@~/.agents/AGENTS.md`, so the rules body is read from the repo and never copied |
-| Permissions and settings | `FRAGMENT` | `~/.claude/settings.json` | seeded keys ONLY: `permissions`, `env`, the `type` and `command` of `statusLine` and `subagentStatusLine` (a station's own extras in those blocks, such as `padding` or `refreshInterval`, are left alone), `enabledPlugins`, `extraKnownMarketplaces`, `disableRemoteControl`, `enableArtifact`, `deniedMcpServers`, `cleanupPeriodDays`, `attribution`, `autoUpdatesChannel`, plus the managed entries of `hooks`. Station-owned and never touched: `model`, `effortLevel`, `modelSettings`, `theme`, `tui`, `disableDeepLinkRegistration` |
+| Permissions and settings | `FRAGMENT` | `~/.claude/settings.json` | seeded keys ONLY: `permissions`, `env`, the `type` and `command` of `statusLine` and `subagentStatusLine` (a station's own extras in those blocks, such as `padding` or `refreshInterval`, are left alone), `enabledPlugins`, `extraKnownMarketplaces`, `disableRemoteControl`, `enableArtifact`, `deniedMcpServers`, `cleanupPeriodDays`, `idleCompaction`, `attribution`, `autoUpdatesChannel`, plus the managed entries of `hooks`. Station-owned and never touched: `model`, `effortLevel`, `modelSettings`, `theme`, `tui`, `disableDeepLinkRegistration` |
 | Hooks | `COPY` | `~/.claude/hooks/` | scripts from the repository's `hooks/` and this folder's `hooks/`, flat; parity per file, seeded by `seed_hooks.py` |
 | Status lines | `COPY` | `~/.claude/statusline.sh`, `subagent-statusline.sh` | parity |
 | Keybindings | `COPY` | `~/.claude/keybindings.json` | parity |
@@ -349,6 +349,7 @@ The principles each block enforces:
    It also drops the claude.ai Claude Docs connector, which creates and edits documents hosted on the claude.ai account.
    `enableArtifact: false` turns off the Artifact tool, which publishes pages built in a session to that same account.
    The build's own text says the setting also keeps the Claude Docs server from connecting (read from the 2.1.310 binary, not probed in a session).
+   `idleCompaction: false` stops Claude Code from compacting a long conversation while the session sits idle, in both its idle modes, so context is compacted only by auto-compact or a deliberate `/compact` (read from the 2.1.310 binary).
    `cleanupPeriodDays: 3650` keeps session transcripts instead of the 30-day default cleanup, because the user keeps them as training data for a later personal model.
    A secret pasted into a
    session therefore stays on disk under `~/.claude/projects/` until it is

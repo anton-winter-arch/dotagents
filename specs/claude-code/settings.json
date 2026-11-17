@@ -424,6 +424,7 @@
     }
   ],
   "cleanupPeriodDays": 3650,
+  "idleCompaction": false,
   "statusLine": {
     "type": "command",
     "command": "bash ~/.claude/statusline.sh"
