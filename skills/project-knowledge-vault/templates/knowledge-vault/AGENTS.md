@@ -10,7 +10,7 @@ Everything below is the contract. A skill or agent that reads a vault depends on
 
 One directory. No subfolders. The **filename prefix** is the category, and the **filename sort order** is the abstraction ladder.
 
-Link resolution, the knowledge-graph ingest and bulk upload all key on a single flat namespace, and a second folder reintroduces the path fragility that resolving by filename otherwise avoids. The one exception is tooling state: the knowledge-graph engine's `markdown-kg/` folder (`vault-kg/` under its legacy name) and any dot-folder are not notes and are not part of the vault.
+Link resolution, the knowledge-graph ingest and bulk upload all key on a single flat namespace, and a second folder reintroduces the path fragility that resolving by filename otherwise avoids. The one exception is tooling state: any dot-folder, the knowledge graph's `.kg/` among them, and the graph's legacy `markdown-kg/` and `vault-kg/` folders are not notes and are not part of the vault.
 
 ## Reading this vault: query the graph, then read the section
 
@@ -20,7 +20,7 @@ A vault grows by appending. Within a few months a `notes-*` file runs to thousan
 - **Map before reading.** `sections <vault> <note>` lists a note's headings with dates and line ranges, so a single dated entry can be read without the rest of the file.
 - **History has its own commands.** `timeline` follows a registered entity through the dated entries, `trajectory` shows when a term rose and faded, and `backlinks` shows every section that links to a note.
 - **Re-ingest after writing.** `markdown_kg.py ingest <vault>` after a session that changed notes, or the next query answers from the old text. `links <vault> --unresolved` is the broken-link worklist.
-- **The graph root is wherever the graph was built.** The seed initializes `markdown-kg/` inside this folder. If this vault is built into another folder, the graph lives with the build and every query points there.
+- **The graph root is wherever the graph was built.** The seed initializes `.kg/` inside this folder. If this vault is built into another folder, the graph lives with the build and every query points there.
 
 Everything in the header grammar below exists so that this works: one idea per heading, a date in every dated heading, and a marker on every superseded section.
 
@@ -218,4 +218,4 @@ As a family grows past what is useful to read, compact the oldest entries: fold 
 
 ## Nothing secret
 
-A vault travels further than the people who wrote it, and its history keeps what a later cleanup removes. No credentials of any kind, no connection strings, no hostnames, workspace URLs, account or workspace ids, and no personal data. People are named by the aliases in `01-north-star.md`. Where a real value is needed to make a note usable, name the place it is stored rather than the value. The graph database in `markdown-kg/` holds the full text of every note, so it stays out of git: `markdown-kg/.gitignore` holds a `*.db*` line, which the scaffolder writes and warns about when it is missing.
+A vault travels further than the people who wrote it, and its history keeps what a later cleanup removes. No credentials of any kind, no connection strings, no hostnames, workspace URLs, account or workspace ids, and no personal data. People are named by the aliases in `01-north-star.md`. Where a real value is needed to make a note usable, name the place it is stored rather than the value. The graph database in `.kg/` holds the full text of every note, so it stays out of git: `.kg/.gitignore` holds a `*` or `*.db*` line, which the graph engine writes and the scaffolder warns about when it is missing.

@@ -19,9 +19,9 @@ test      python3 -m unittest discover -s tests
 
 ## Where a vault lives
 
-Every new vault has one home, `<root>/PROJECTS/<NAME>/`, where `<root>` is the code repo or knowledge engine that holds it. Seed it with `--target <root> --name <NAME>`. Its graph is always `<vault>/markdown-kg/`, which the scaffolder builds; a `PROJECTS/` folder or a repo root is never ingested as one graph.
+Every new vault has one home, `<root>/PROJECTS/<NAME>/`, where `<root>` is the code repo or knowledge engine that holds it. Seed it with `--target <root> --name <NAME>`. Its graph is always `<vault>/.kg/`, which the scaffolder builds; a `PROJECTS/` folder or a repo root is never ingested as one graph.
 
-Beside every vault sits its deliverables folder, `<vault>-DELIVERABLES/`, such as `PROJECTS/<NAME>-DELIVERABLES/`. It holds the documents the project ships to the people who build and run the system: solution designs in `solution-designs/`, ADRs in `adrs/`, and guides and runbooks at its top level. It is not a vault. It mirrors the layout of a code repo's documentation folder so it can be copied there whole, its links are relative markdown links, its own `AGENTS.md` ships with it, and it has its own graph in `<vault>-DELIVERABLES/markdown-kg/`. Vault notes name its files in backticks.
+Beside every vault sits its deliverables folder, `<vault>-DELIVERABLES/`, such as `PROJECTS/<NAME>-DELIVERABLES/`. It holds the documents the project ships to the people who build and run the system: solution designs in `solution-designs/`, ADRs in `adrs/`, and guides and runbooks at its top level. It is not a vault. It mirrors the layout of a code repo's documentation folder so it can be copied there whole, its links are relative markdown links, its own `AGENTS.md` ships with it, and it has its own graph in `<vault>-DELIVERABLES/.kg/`. Vault notes name its files in backticks.
 
 `--into <folder>` seeds or fills a vault that already lives somewhere else, such as a repo's `docs/vault/` or `tasks/PROJECTS/<NAME>/`. Moving it into `PROJECTS/` is optional, because the linter and every dependent skill take the vault folder wherever it is. `--into` refuses a folder that has its own `AGENTS.md` or `CLAUDE.md`, because the vault's copies are its contract. Inside a code repo, the vault's `CLAUDE.md` loads the whole contract into a session's context the first time that session touches a file in the vault; that is by design, since every agent writing there needs it.
 
@@ -45,14 +45,14 @@ The scaffolder works in this order, and exits 1 when a file can be neither writt
 
 1. **Copies the seed:** `templates/knowledge-vault/`, plus `templates/templates/brd.md` as `00-brd.md`. It never overwrites, so a run against a part-built vault fills the gaps and reports the rest as skipped. A role held under an older filename (`user-stories-runsheet.md` or `user-stories-tasks.md` for the run sheet) is not given the new name as a second file. It resolves no dates, so two runs produce byte-identical notes.
 2. **Copies the deliverables seed** into `<vault>-DELIVERABLES/`: `templates/deliverables/`, the ADR and solution design templates into its `templates/`, and empty `adrs/` and `solution-designs/` folders. It never overwrites there either.
-3. **Seeds a graph in each folder**, `<vault>/markdown-kg/` and `<vault>-DELIVERABLES/markdown-kg/`. It runs markdown-kg's `init` when a folder has no graph config, and merges the rows in `templates/markdown-kg-profiles.md` that the config lacks. When this run's `init` wrote the config, the shipped rows also replace the rows `init` detected for the same files. It writes `markdown-kg/.gitignore` with `*.db*`, because the database holds every note's full text, and ingests when a note or a row was added. A vault with only a legacy `vault-kg/` is skipped with a rename instruction, and when markdown-kg is not installed beside this skill the step is reported and skipped.
+3. **Seeds a graph in each folder**, `<vault>/.kg/` and `<vault>-DELIVERABLES/.kg/`. It runs markdown-kg's `init` when a folder has no graph config, and merges the rows in `templates/markdown-kg-profiles.md` that the config lacks. When this run's `init` wrote the config, the shipped rows also replace the rows `init` detected for the same files. It checks `.kg/.gitignore` holds `*` or `*.db*`, because the database holds every note's full text, warns when it does not, and ingests when a note or a row was added. A vault whose graph is still in a legacy `markdown-kg/` or `vault-kg/` folder is skipped with an instruction to run markdown-kg's `migrate`, and when markdown-kg is not installed beside this skill the step is reported and skipped.
 4. **Prints the pointer line** described under "Where a vault lives".
 
 The linter is the anti-drift mechanism. Every check fires on positive evidence, and an unreadable file is a failure rather than a pass. Exit 0 clean, 1 on any finding.
 
 | check | fails on |
 |---|---|
-| `flat` | any subdirectory other than `markdown-kg/`, the legacy `vault-kg/` or a dot-folder |
+| `flat` | any subdirectory other than a dot-folder (the graph's `.kg/` among them) or the graph's legacy `markdown-kg/` and `vault-kg/` |
 | `frontmatter` | a note without parseable YAML carrying a non-empty `type` |
 | `family` | a `type` outside the family table for that prefix, or a prefix in no family; `user-runsheet.md` and the older `user-stories-*` run sheet names are both `user_story`; an alias learned from the vault's own `<alias>-NN-*` notes admits its unnumbered `<alias>-<slug>` notes |
 | `reserved` | `index.md` or `log.md` missing, or any frontmatter on either |

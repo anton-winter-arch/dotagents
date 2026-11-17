@@ -168,7 +168,7 @@ class LinkedStoreTests(DiffCase):
     def test_a_linked_engine_folder_is_refused(self):
         outside = self.tmp / "outside"
         outside.mkdir()
-        os.symlink(outside, self.repo / ".code-kg")
+        os.symlink(outside, self.repo / ".kg")
         for argv in (("ingest",), ("ingest", "--keep-previous")):
             rc, _, err = run(argv[0], str(self.repo), *argv[1:])
             self.assertNotEqual(rc, 0)

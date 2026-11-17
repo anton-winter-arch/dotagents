@@ -105,7 +105,8 @@ RULES: tuple[tuple[str, str], ...] = (
     ("*.sqlite", "local database"),
     ("*.sqlite3", "local database"),
     ("*.db", "local database"),
-    (".code-kg/", "code-kg index database"),
+    (".kg/", "code-kg and markdown-kg index databases"),
+    (".code-kg/", "code-kg index database (legacy folder)"),
     ("settings.local.json", "per-machine Claude Code settings"),
     ("docker-compose.override.yml", "local compose override"),
 )

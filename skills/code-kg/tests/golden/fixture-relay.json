@@ -231,7 +231,7 @@
  },
  "init <REPO>": {
   "err": "",
-  "out": "initialized <REPO>/.code-kg\n  2 aliases loaded from tsconfig.json\ningest: {\"alias_notes\": [\"2 aliases loaded from tsconfig.json\"], \"dep_files\": 0, \"edges\": 369, \"entry_points\": 16, \"entry_warnings\": [], \"files\": 63, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [], \"symbols\": 296}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
+  "out": "initialized <REPO>/.kg\n  2 aliases loaded from tsconfig.json\ningest: {\"alias_notes\": [\"2 aliases loaded from tsconfig.json\"], \"dep_files\": 0, \"edges\": 369, \"entry_points\": 16, \"entry_warnings\": [], \"files\": 63, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [], \"symbols\": 296}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
   "rc": 0
  },
  "neighbors <REPO> .github/workflows/ci.yml --depth 2 --json": {

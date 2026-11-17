@@ -120,7 +120,7 @@
   "rc": 0
  },
  "during <VAULT> Dana Okonjo --json": {
-  "err": "error: 'Dana Okonjo' has no bounded time span (set time to '<start>..<end>' in markdown-kg-config.md)",
+  "err": "error: 'Dana Okonjo' has no bounded time span (set time to '<start>..<end>' in .kg/markdown-kg-config.json)",
   "out": "",
   "rc": 1
  },
@@ -130,7 +130,7 @@
   "rc": 0
  },
  "during <VAULT> drip irrigation --json": {
-  "err": "error: 'drip irrigation' has no bounded time span (set time to '<start>..<end>' in markdown-kg-config.md)",
+  "err": "error: 'drip irrigation' has no bounded time span (set time to '<start>..<end>' in .kg/markdown-kg-config.json)",
   "out": "",
   "rc": 1
  },
@@ -342,7 +342,7 @@
  },
  "profile <VAULT>": {
   "err": "",
-  "out": "dated_logs:\n  {\"date_from\": \"heading\", \"date_level\": 2, \"date_order\": \"y-m-d\", \"path\": \"journal.md\", \"profile\": \"log-dated\"}\n  {\"date_from\": \"heading\", \"date_level\": 2, \"date_order\": \"y-m-d\", \"path\": \"monolith.md\", \"profile\": \"log-dated\"}\ngenerated:\n  {\"evidence\": \"frontmatter generator\", \"path\": \"generated/summary.md\", \"profile\": \"generated\", \"weight\": 0.2}\nhubs:\n  {\"degree\": 4, \"median_degree\": 0, \"path\": \"hub.md\", \"profile\": \"hub\"}\n\nNothing was written. Copy what is right into vault-kg/vault-kg-config.md.\n",
+  "out": "dated_logs:\n  {\"date_from\": \"heading\", \"date_level\": 2, \"date_order\": \"y-m-d\", \"path\": \"journal.md\", \"profile\": \"log-dated\"}\n  {\"date_from\": \"heading\", \"date_level\": 2, \"date_order\": \"y-m-d\", \"path\": \"monolith.md\", \"profile\": \"log-dated\"}\ngenerated:\n  {\"evidence\": \"frontmatter generator\", \"path\": \"generated/summary.md\", \"profile\": \"generated\", \"weight\": 0.2}\nhubs:\n  {\"degree\": 4, \"median_degree\": 0, \"path\": \"hub.md\", \"profile\": \"hub\"}\n\nNothing was written. Copy what is right into .kg/markdown-kg-config.json.\n",
   "rc": 0
  },
  "profile <VAULT> --json": {

@@ -5,8 +5,8 @@
 # ///
 """code_kg.py - turn any codebase into a queryable SQLite knowledge graph.
 
-Stdlib only, Python 3.9+. Storage is `<repo>/.code-kg/code-kg.db` (SQLite +
-FTS5) beside `<repo>/.code-kg/config.json`. The repo directory is always a CLI
+Stdlib only, Python 3.9+. Storage is `<repo>/.kg/code-kg.db` (SQLite +
+FTS5) beside `<repo>/.kg/code-kg-config.json`. The repo directory is always a CLI
 argument: nothing here is tied to any particular repo, machine, or agent, and
 nothing here ever sends repo text anywhere - the whole engine is offline. The
 one command that executes anything from the repo is `coverage run`, and it
@@ -29,7 +29,8 @@ Design goals (mirrored from markdown_kg.py, the markdown sibling):
                     to one repo lives in its config, never in code.
 
 Commands:
-  init <repo>                            scaffold .code-kg/ (config + gitignore)
+  init <repo>                            scaffold .kg/ (config + gitignore)
+  migrate <repo>                         move a legacy .code-kg/ graph into .kg/
   ingest <repo>                          full rebuild: files, symbols, edges
   search <repo> <question>               natural-language search, symbols first
   query <repo> <fts-query>               raw FTS5 over file text
@@ -74,10 +75,16 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-KG_DIR = ".code-kg"
+KG_DIR = ".kg"     # shared with markdown-kg; each file carries its engine's name
 DB_NAME = "code-kg.db"
 PREV_DB_NAME = "code-kg-prev.db"   # the checkpoint `diff` compares against
-CONFIG_NAME = "config.json"
+CONFIG_NAME = "code-kg-config.json"
+# The engine's earlier folder. A repo that has it and no code-kg files in
+# .kg/ is read and written there in place under its own names; nothing ever
+# creates it. Both names are the engine's and never corpus.
+LEGACY_KG_DIR = ".code-kg"
+LEGACY_NAMES = {CONFIG_NAME: "config.json"}
+KG_DIRS = (KG_DIR, LEGACY_KG_DIR)
 # Bump when a parser or schema change must re-index a repo whose files have
 # not changed. The manifest folds it in, so the next read command re-ingests
 # once instead of answering from tables the old engine never filled.
@@ -470,15 +477,31 @@ def repo_dir(arg: str) -> Path:
 
 
 def kg_dir(repo: Path) -> Path:
-    return repo / KG_DIR
+    """The one resolver for the engine's folder: `.kg/` when it holds a
+    code-kg database or config, else a legacy `.code-kg/` when that exists
+    (used in place), else `.kg/`, which is what a first write creates.
+    markdown-kg shares `.kg/`, so the folder alone decides nothing.
+    markdown-kg's `kg_dir` follows the same rule."""
+    current = repo / KG_DIR
+    if not any(os.path.lexists(current / n) for n in (DB_NAME, CONFIG_NAME)) \
+            and (repo / LEGACY_KG_DIR).is_dir():
+        return repo / LEGACY_KG_DIR
+    return current
+
+
+def _kg_file(repo: Path, name: str) -> Path:
+    """A file in the resolved folder, under that folder's own naming."""
+    folder = kg_dir(repo)
+    return folder / (LEGACY_NAMES.get(name, name)
+                     if folder.name == LEGACY_KG_DIR else name)
 
 
 def db_path(repo: Path) -> Path:
-    return kg_dir(repo) / DB_NAME
+    return _kg_file(repo, DB_NAME)
 
 
 def config_path(repo: Path) -> Path:
-    return kg_dir(repo) / CONFIG_NAME
+    return _kg_file(repo, CONFIG_NAME)
 
 
 def linked_store(root: Path, folder: Path, db: Path) -> str | None:
@@ -512,8 +535,8 @@ def seed_gitignore(folder: Path) -> None:
     except OSError:
         return
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write("# Local and rebuildable: the database, its checkpoint and this"
-                 " folder's config.\n*\n")
+        fh.write("# Local and rebuildable: knowledge-graph databases, their"
+                 " checkpoints and configs.\n*\n")
 
 
 def connect(repo: Path, must_exist: bool = False) -> sqlite3.Connection:
@@ -540,7 +563,7 @@ def connect(repo: Path, must_exist: bool = False) -> sqlite3.Connection:
 def prev_db_path(repo: Path) -> Path:
     """The one-deep checkpoint `ingest --keep-previous` writes and a bare
     `diff` compares against."""
-    return kg_dir(repo) / PREV_DB_NAME
+    return _kg_file(repo, PREV_DB_NAME)
 
 
 def write_checkpoint(live: Path, prev: Path) -> None:
@@ -1036,7 +1059,7 @@ def scan_repo(repo: Path) -> tuple[list[Path], list[str]]:
                        and (not d.startswith(".")
                             or d in (".github", ".claude", ".agents",
                                      ".cursor"))
-                       and not (Path(root) == repo and d == KG_DIR)]
+                       and not (Path(root) == repo and d in KG_DIRS)]
             files.extend(Path(root) / n for n in names)
     result, escapes = [], []
     for p in files:
@@ -1063,7 +1086,7 @@ def scan_repo(repo: Path) -> tuple[list[Path], list[str]]:
                (".github", ".claude", ".agents", ".cursor")
                for part in parts[:-1]):
             continue
-        if parts and parts[0] == KG_DIR:
+        if parts and parts[0] in KG_DIRS:
             continue
         try:
             if not p.resolve().is_relative_to(repo.resolve()):
@@ -6405,7 +6428,8 @@ def config_report(repo: Path) -> dict:
             warnings.append(f"entry_points row matched nothing:"
                             f" {row['entry']}")
     return {
-        "path": f"{KG_DIR}/{CONFIG_NAME}", "exists": cfg_file.exists(),
+        "path": cfg_file.relative_to(repo).as_posix(),
+        "exists": cfg_file.exists(),
         "status": "WARNINGS" if warnings else "OK", "warnings": warnings,
         "ignore": ignore, "roots": roots, "entry_points": entries,
         "aliases": len(cfg.get("aliases", {})),
@@ -6562,7 +6586,7 @@ def coverage_run(repo: Path, yes: bool, timeout: int = 900,
         cmd = traced_command(cmd)
     if not yes:
         # The refusal names the exact command, because a repo's own
-        # .code-kg/config.json may set test_command and consent must be to
+        # code-kg config may set test_command and consent must be to
         # what will actually run, not to a description of it.
         planned = (f"config test_command: {' '.join(cmd)}"
                    if cfg.get("test_command") else
@@ -7086,19 +7110,80 @@ def render_index(repo: Path) -> str:
 def cmd_init(args: argparse.Namespace) -> int:
     repo = repo_dir(args.repo)
     kg = kg_dir(repo)
-    kg.mkdir(parents=True, exist_ok=True)
     cfg_file = config_path(repo)
+    # Checked before anything is written: the config is written first.
+    refused = linked_store(repo, kg, cfg_file)
+    if refused:
+        sys.exit(f"error: {refused}")
+    kg.mkdir(parents=True, exist_ok=True)
     if not cfg_file.exists():
         cfg_file.write_text(json.dumps(DEFAULT_CONFIG, indent=2,
                                        sort_keys=True) + "\n",
                             encoding="utf-8")
-    counts = ingest(repo)      # connect() seeds .code-kg/.gitignore
+    counts = ingest(repo)      # connect() seeds .kg/.gitignore
     print(f"initialized {kg}")
     print_readout(repo, counts)
     print("ingest:", json.dumps(counts, sort_keys=True))
     print("next: try `search <repo> \"<question>\"` and"
           " `entrypoints <repo>`")
     return 0
+
+
+def migrate(repo: Path) -> dict:
+    """Move a legacy .code-kg/ folder's files into .kg/ under the current
+    names, as they are. The config moves first, so an interrupted run never
+    leaves a database in .kg/ without its ignore rules; the databases move
+    rather than rebuild, keeping the coverage runs and session reads no
+    ingest recreates. The legacy folder is removed once only its .gitignore
+    is left. Run it while no other command is using the graph."""
+    old = kg_dir(repo)
+    if old.name != LEGACY_KG_DIR:
+        return {"from": None, "to": KG_DIR, "moved": [], "removed": False,
+                "left": []}
+    new = repo / KG_DIR
+    for folder, db in ((old, old / DB_NAME), (new, new / DB_NAME)):
+        refused = linked_store(repo, folder, db)
+        if refused:
+            sys.exit(f"error: {refused}")
+    load_config(repo)                   # exits loudly on a malformed config
+    moves = [(old / LEGACY_NAMES[CONFIG_NAME], new / CONFIG_NAME)]
+    moves += [(old / (n + s), new / (n + s))
+              for n in (DB_NAME, PREV_DB_NAME)
+              for s in ("", "-wal", "-shm", "-journal")]
+    moves = [(src, dst) for src, dst in moves
+             if src.is_file() and not src.is_symlink()]
+    for _, dst in moves:
+        if os.path.lexists(dst):
+            sys.exit(f"error: {dst} already exists; refusing to overwrite it")
+    new.mkdir(exist_ok=True)
+    seed_gitignore(new)
+    moved = []
+    for src, dst in moves:
+        os.replace(src, dst)
+        moved.append([src.relative_to(repo).as_posix(),
+                      dst.relative_to(repo).as_posix()])
+    left = sorted(p.name for p in old.iterdir() if p.name != ".gitignore")
+    if not left:
+        (old / ".gitignore").unlink(missing_ok=True)
+        old.rmdir()
+    return {"from": old.name, "to": KG_DIR, "moved": moved,
+            "removed": not left, "left": left}
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    payload = migrate(repo_dir(args.repo))
+
+    def render(p):
+        if p["from"] is None:
+            print(f"migrate: nothing to move; the graph is in {KG_DIR}/"
+                  " already, or not built yet")
+            return 0
+        for src, dst in p["moved"]:
+            print(f"moved {src} -> {dst}")
+        print(f"removed {p['from']}/" if p["removed"] else
+              f"left {p['from']}/ in place, holding: {', '.join(p['left'])}")
+        return 0
+    return emit(args, payload, render)
 
 
 def print_readout(repo: Path, counts: dict) -> None:
@@ -7483,13 +7568,15 @@ def cmd_god_nodes(args: argparse.Namespace) -> int:
 
 
 def cmd_components(args: argparse.Namespace) -> int:
-    payload = components_report(repo_dir(args.repo), args.name)
+    repo = repo_dir(args.repo)
+    payload = components_report(repo, args.name)
 
     def render(p):
         lim = None if args.limit < 0 else args.limit
         if p["status"] == "NO_COMPONENTS":
             print(f"no components declared - add a `components` array to"
-                  f" {KG_DIR}/{CONFIG_NAME} (see references/config.md)")
+                  f" {config_path(repo).relative_to(repo).as_posix()}"
+                  " (see references/config.md)")
             return 0
         if "name" in p:
             print(f"{p['name']}  ({len(p['files'])} files)"
@@ -7726,7 +7813,7 @@ def _scan_store_files(repo: Path) -> dict:
                    and (not d.startswith(".")
                         or d in (".github", ".claude", ".agents",
                                  ".cursor"))
-                   and not (Path(root) == repo and d == KG_DIR)]
+                   and not (Path(root) == repo and d in KG_DIRS)]
         for d in dirs:
             ext = Path(d).suffix.lower()
             if ext in STORE_DIR_EXTS:
@@ -8133,7 +8220,8 @@ def cmd_resolve(args: argparse.Namespace) -> int:
 SIBLING_CLI = (Path(__file__).resolve().parent.parent.parent
                / "markdown-kg" / "scripts" / "markdown_kg.py")
 SIBLING_TIMEOUT = 120
-VAULT_KG_DBS = ("markdown-kg/markdown-kg.db", "vault-kg/vault-kg.db")
+VAULT_KG_DBS = (".kg/markdown-kg.db", "markdown-kg/markdown-kg.db",
+                "vault-kg/vault-kg.db")
 VAULT_CAP = 20          # vaults one `docs` call asks
 DOCS_LIMIT = 50         # rows per list `docs` prints unless told otherwise
 # Doc rank for capped lists: fixed names, never a config pattern.
@@ -9339,6 +9427,7 @@ def main(argv: list[str] | None = None) -> int:
         return p
 
     add("init", cmd_init)
+    add("migrate", cmd_migrate)
     p = add("ingest", cmd_ingest)
     p.add_argument("--keep-previous", action="store_true",
                    help=f"checkpoint the current db to {PREV_DB_NAME} first"

@@ -25,19 +25,21 @@ Two things make it worth reaching for over `grep` or `Read`:
 ## Layout
 
 ```
-<vault>/markdown-kg/
+<vault>/.kg/                 shared with code-kg; each file carries its engine's name
     .gitignore               `*`: the whole folder stays out of git
-    markdown-kg-config.md    ignore rules, profiles, entities - one file
+    markdown-kg-config.json  ignore rules, profiles, entities - one file
     markdown-kg.db           SQLite + FTS5, rebuildable
     markdown-kg-prev.db      diff checkpoint from `ingest --keep-previous`
 ```
 
 The engine writes the `.gitignore` when the folder has none, and never rewrites one that exists. To share a config across machines, `git add -f` it.
 
-A vault built before the folder was renamed has the legacy `vault-kg/` folder, with `vault-kg-*` file names.
-The engine reads and writes that folder in place, and it never creates a `vault-kg/` folder.
+A vault built earlier has its graph in a legacy `markdown-kg/` or `vault-kg/` folder, with a markdown config holding one fenced `json` block.
+Until `.kg/` holds a markdown-kg database or config, the engine reads and writes the legacy folder in place, never creates one, and `init` refuses to run there.
+`migrate <vault>` moves the legacy files into `.kg/`: the config becomes plain json with every key kept, the databases move unchanged, and the empty legacy folder is removed.
+Run it while no other command is using the graph.
 
-The config is one fenced `json` block in a markdown file. **Edit it directly**
+The config is plain json. **Edit it directly**
 whenever the user asks for a rule, a profile or an entity - there is no CLI write
 path and no submission protocol. Field reference: `references/config.md`.
 
@@ -432,7 +434,7 @@ brief as the author's own writing. A graph with no log-dated note returns
 ## When NOT to use
 
 - Not a document store or editor. It never writes to vault markdown except the
-  index file you explicitly ask for, and its own `markdown-kg/` folder.
+  index file you explicitly ask for, and its own files in `.kg/`.
 - Not for authoring or formatting Obsidian notes - that is the `obsidian` skill.
 - No semantic layer. FTS5 keyword search only, which means differently worded
   statements of the same idea do not connect. That is a known and accepted cost

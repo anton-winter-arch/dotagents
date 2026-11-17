@@ -237,7 +237,7 @@
  },
  "profile <VAULT>": {
   "err": "",
-  "out": "hubs:\n  {\"degree\": 6, \"median_degree\": 2, \"path\": \"plans/Garden Plan.md\", \"profile\": \"hub\"}\n\nNothing was written. Copy what is right into markdown-kg/markdown-kg-config.md.\n",
+  "out": "hubs:\n  {\"degree\": 6, \"median_degree\": 2, \"path\": \"plans/Garden Plan.md\", \"profile\": \"hub\"}\n\nNothing was written. Copy what is right into .kg/markdown-kg-config.json.\n",
   "rc": 0
  },
  "profile <VAULT> --json": {
@@ -905,7 +905,7 @@
  },
  "themes <VAULT>": {
   "err": "",
-  "out": "no log-dated notes in this graph, so there is nothing to aggregate - give a dated log the log-dated profile in markdown-kg-config.md\n",
+  "out": "no log-dated notes in this graph, so there is nothing to aggregate - give a dated log the log-dated profile in the vault's config\n",
   "rc": 0
  },
  "themes <VAULT> --json": {
@@ -940,7 +940,7 @@
  },
  "trends <VAULT> --by month": {
   "err": "",
-  "out": "no log-dated notes in this graph, so there is nothing to aggregate - give a dated log the log-dated profile in markdown-kg-config.md\n",
+  "out": "no log-dated notes in this graph, so there is nothing to aggregate - give a dated log the log-dated profile in the vault's config\n",
   "rc": 0
  },
  "trends <VAULT> --by month --json": {

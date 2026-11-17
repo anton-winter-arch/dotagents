@@ -1,0 +1,19 @@
+{
+  "entities": [
+    {"canonical": "Dana Okonjo", "type": "person", "note": "", "aliases": ["Dana"]},
+    {"canonical": "drip irrigation", "type": "method", "time": "evolving", "aliases": ["drip"]},
+    {"canonical": "Season Review", "type": "event", "time": "2026-06-10..2026-06-20"}
+  ],
+  "ignore": [
+    {"path": "archive/**", "reason": "superseded copies"}
+  ],
+  "profiles": [
+    {"path": "journal.md", "profile": "log-dated", "date_from": "heading",
+     "slots": {"Reflection": "authored", "Synthesis": "generated", "Metrics": "instrument"}},
+    {"path": "monolith.md", "profile": "log-dated"},
+    {"path": "sources.md", "profile": "dimension", "grain": "list-item", "group_by": "h2"},
+    {"path": "generated/*.md", "profile": "generated", "weight": 0.2},
+    {"path": "hub.md", "profile": "hub"},
+    {"path": "roster.md", "profile": "list"}
+  ]
+}

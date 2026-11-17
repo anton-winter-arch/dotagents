@@ -1,6 +1,9 @@
 # code-kg database schema
 
-SQLite + FTS5 at `<repo>/.code-kg/code-kg.db`. Every ingest rebuilds the db
+SQLite + FTS5 at `<repo>/.kg/code-kg.db` (a repo not yet migrated keeps it at
+the legacy `.code-kg/code-kg.db`, used in place). When markdown-kg has indexed
+the same root, its database sits beside this one, and one connection reads
+both after `ATTACH '.kg/markdown-kg.db' AS md`. Every ingest rebuilds the db
 whole except for two groups of tables. `coverage`, `runs` and the
 `observed_*` tables survive so execution evidence outlives a re-parse, and
 `session_reads`, `extractions` and `conflicts` survive because they hold

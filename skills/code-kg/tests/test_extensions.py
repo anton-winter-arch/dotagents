@@ -291,9 +291,9 @@ class TestTermSafe(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp(prefix="codekg-err-"))
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         (tmp / "a.py").write_text("x = 1\n", encoding="utf-8")
-        (tmp / ".code-kg").mkdir()
+        (tmp / ".kg").mkdir()
         esc, bel = chr(0x1B), chr(0x07)
-        (tmp / ".code-kg" / "config.json").write_text(json.dumps(
+        (tmp / ".kg" / "code-kg-config.json").write_text(json.dumps(
             {"profile": esc + "]52;c;eA==" + bel}), encoding="utf-8")
         rc, out, err = run("ingest", str(tmp))
         self.assertEqual(rc, 1)
@@ -306,15 +306,15 @@ class TestTermSafe(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp(prefix="codekg-cmd-"))
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         (tmp / "a.py").write_text("x = 1\n", encoding="utf-8")
-        (tmp / ".code-kg").mkdir()
+        (tmp / ".kg").mkdir()
         for hidden in (chr(0x1B) + "[2K\r", self.RLO, self.ZWSP):
-            (tmp / ".code-kg" / "config.json").write_text(json.dumps(
+            (tmp / ".kg" / "code-kg-config.json").write_text(json.dumps(
                 {"test_command": "sh -c 'echo hidden' " + hidden
                                  + "python3 -m pytest"}), encoding="utf-8")
             rc, out, err = run("coverage", str(tmp), "run")
             self.assertEqual(rc, 1)
             self.assertIn("'test_command' must be one line", err)
-        (tmp / ".code-kg" / "config.json").write_text(json.dumps(
+        (tmp / ".kg" / "code-kg-config.json").write_text(json.dumps(
             {"test_command": "python3 -m coverage run -m pytest -q"}),
             encoding="utf-8")
         self.assertEqual(code_kg.load_config(tmp)["test_command"],
@@ -366,7 +366,7 @@ class RepoCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.repo = self.tmp / "repo"
         copy_fixture(FIXTURE, self.repo)
-        self.cfg_file = self.repo / ".code-kg" / "config.json"
+        self.cfg_file = self.repo / ".kg" / "code-kg-config.json"
         # Read commands refuse to run without a database; after this, a
         # config edit is picked up by the drift check on the next read.
         run("ingest", str(self.repo))
@@ -901,7 +901,7 @@ class TestDocs(unittest.TestCase):
 
         def snapshot():
             return sorted((p.name, p.stat().st_size, p.stat().st_mtime_ns)
-                          for p in (self.repo / "docs" / "markdown-kg")
+                          for p in (self.repo / "docs" / ".kg")
                           .iterdir())
         before = snapshot()
         self.json("docs", "src/tidelog/reader.py")
@@ -1056,21 +1056,21 @@ class TestDocs(unittest.TestCase):
                           if f == "src/tidelog/station.py"}, {False})
 
     def test_a_vault_folder_without_a_database(self):
-        (self.repo / "docs" / "markdown-kg").mkdir()
+        (self.repo / "docs" / ".kg").mkdir()
         got = self.json("docs", "src/tidelog/reader.py")
         self.assertEqual(got["sections"], [])
         self.assertEqual(len(got["missing"]), 1)
         self.assertIn("ingest", got["missing"][0])
         self.assertEqual(
-            list((self.repo / "docs" / "markdown-kg").iterdir()), [])
+            list((self.repo / "docs" / ".kg").iterdir()), [])
 
     def test_a_symlinked_vault_folder_is_never_asked(self):
         """markdown-kg refreshes its database before it answers, so a link
         here would let the repo choose where that write lands."""
         self.index_vault()
         real = self.tmp / "elsewhere"
-        shutil.move(str(self.repo / "docs" / "markdown-kg"), str(real))
-        os.symlink(real, self.repo / "docs" / "markdown-kg")
+        shutil.move(str(self.repo / "docs" / ".kg"), str(real))
+        os.symlink(real, self.repo / "docs" / ".kg")
         (self.repo / "docs" / "added.md").write_text(
             "# Added\n\n[x](../src/tidelog/reader.py)\n", encoding="utf-8")
 

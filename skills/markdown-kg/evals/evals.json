@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "make my vault at ~/vault truly queryable - I want to search it and see what links where",
-      "expected_output": "Skill fires. init/ingest runs via scripts/markdown_kg.py, then queries answer from markdown-kg/markdown-kg.db; no inline reimplementation of parsing.",
+      "expected_output": "Skill fires. init/ingest runs via scripts/markdown_kg.py, then queries answer from .kg/markdown-kg.db; no inline reimplementation of parsing.",
       "expectations": [
         "scripts/markdown_kg.py is executed via Bash rather than the vault being parsed inline",
         "Search uses the engine's search or query subcommand, not raw grep over the vault",
@@ -69,7 +69,7 @@
     {
       "id": 7,
       "prompt": "this vault has a huge dated log file and searching it just returns the whole day every time",
-      "expected_output": "Skill fires. The fix is a log-dated profile row in markdown-kg-config.md so entries chunk per day with child headings indexed beneath them; the agent edits the config file directly.",
+      "expected_output": "Skill fires. The fix is a log-dated profile row in .kg/markdown-kg-config.json so entries chunk per day with child headings indexed beneath them; the agent edits the config file directly.",
       "expectations": [
         "The config file is edited directly, not through a CLI write path",
         "A log-dated profile row is added for the file in question",

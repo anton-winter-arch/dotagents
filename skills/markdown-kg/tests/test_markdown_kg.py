@@ -18,7 +18,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import markdown_kg
+from fixture_copy import copy_fixture
 
 HERE = Path(__file__).resolve().parent
 FIXTURE = HERE / "fixture-vault"
@@ -34,8 +36,7 @@ class VaultCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="mdkg-test-"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.vault = self.tmp / "vault"
-        shutil.copytree(self.fixture, self.vault)
+        self.vault = copy_fixture(self.fixture, self.tmp / "vault")
 
     def db(self):
         return sqlite3.connect(markdown_kg.db_path(self.vault))
@@ -407,10 +408,10 @@ class IngestTests(VaultCase):
         self.assertNotIn(".trash/Ghost", ids)
         self.assertFalse(any(r.startswith(".") for r in ids))
 
-    def test_db_lives_in_its_own_folder(self):
+    def test_db_lives_in_the_shared_kg_folder(self):
         markdown_kg.ingest(self.vault)
-        self.assertTrue(
-            (self.vault / "markdown-kg" / "markdown-kg.db").exists())
+        self.assertTrue((self.vault / ".kg" / "markdown-kg.db").exists())
+        self.assertFalse((self.vault / "markdown-kg").exists())
         self.assertFalse((self.vault / "vault-kg").exists())
 
     def test_properties_stored(self):
@@ -981,8 +982,7 @@ class UntrustedVaultTests(VaultCase):
         for row in cfg["profiles"]:
             if row.get("path") == "generated/*.md":
                 row["weight"] = 0
-        markdown_kg.config_path(self.vault).write_text(
-            markdown_kg.dump_config(cfg), encoding="utf-8")
+        markdown_kg.write_config(self.vault, cfg)
         markdown_kg.ingest(self.vault)
         self.assertEqual(
             self.rows("SELECT weight FROM notes WHERE id='generated/summary'"),
@@ -1031,8 +1031,7 @@ class UntrustedVaultTests(VaultCase):
         cfg = markdown_kg.load_config(self.vault)
         cfg["profiles"].append({"path": "setext.md", "profile": "reference",
                                 "weight": 1e9})
-        markdown_kg.config_path(self.vault).write_text(
-            markdown_kg.dump_config(cfg), encoding="utf-8")
+        markdown_kg.write_config(self.vault, cfg)
         markdown_kg.ingest(self.vault)
         self.assertEqual(
             self.rows("SELECT weight FROM notes WHERE id='setext'"), [(10.0,)])
@@ -1077,8 +1076,7 @@ class RobustnessTests(VaultCase):
     def test_an_unknown_profile_name_is_reported_not_swallowed(self):
         cfg = markdown_kg.load_config(self.vault)
         cfg["profiles"].append({"path": "setext.md", "profile": "log_dated"})
-        markdown_kg.config_path(self.vault).write_text(
-            markdown_kg.dump_config(cfg), encoding="utf-8")
+        markdown_kg.write_config(self.vault, cfg)
         report = markdown_kg.ingest(self.vault)
         self.assertEqual(report["bad_profiles"], ["setext.md: 'log_dated'"])
         self.assertEqual(
@@ -1259,8 +1257,7 @@ class SyntheticLogCase(VaultCase):
         cfg.update(extra)
         kg = markdown_kg.kg_dir(self.vault)
         kg.mkdir(exist_ok=True)
-        markdown_kg.config_path(self.vault).write_text(
-            markdown_kg.dump_config(cfg), encoding="utf-8")
+        markdown_kg.write_config(self.vault, cfg)
 
     def log_hits(self, **kw):
         res = markdown_kg.search(self.vault, self.TERM, limit=50, **kw)
@@ -1480,8 +1477,7 @@ class DiffTests(VaultCase):
     def test_child_rename_marks_child_renamed_and_unit_edited(self):
         cfg = {"ignore": [], "entities": [],
                "profiles": [{"path": "plan.md", "profile": "log-dated"}]}
-        markdown_kg.config_path(self.vault).write_text(
-            markdown_kg.dump_config(cfg), encoding="utf-8")
+        markdown_kg.write_config(self.vault, cfg)
         one = {"plan.md": ("# Plan\n\n## 2026-03-02\n\n### Route\n\nthe "
                            "chosen route follows the ridge line\n")}
         two = {"plan.md": ("# Plan\n\n## 2026-03-02\n\n### Route B\n\nthe "
@@ -1835,8 +1831,7 @@ class RegistryTests(VaultCase):
     def test_duplicate_canonical_and_doubly_claimed_alias_are_caught(self):
         cfg = markdown_kg.load_config(self.vault)
         cfg["entities"].append({"canonical": "Dana Rivers", "aliases": ["Dana"]})
-        markdown_kg.config_path(self.vault).write_text(
-            markdown_kg.dump_config(cfg), encoding="utf-8")
+        markdown_kg.write_config(self.vault, cfg)
         with self.assertRaises(SystemExit) as cm:
             markdown_kg.ingest(self.vault)
         self.assertIn("claimed by both", str(cm.exception.code))
@@ -2188,8 +2183,7 @@ class LifecycleTests(VaultCase):
         cfg = markdown_kg.load_config(self.vault)
         cfg["entities"].append({"canonical": "Northfield Seed",
                                 "type": "supplier"})
-        markdown_kg.config_path(self.vault).write_text(
-            markdown_kg.dump_config(cfg), encoding="utf-8")
+        markdown_kg.write_config(self.vault, cfg)
         got = markdown_kg.entity(self.vault, "Northfield Seed")
         self.assertEqual(got["canonical"], "Northfield Seed")
 
@@ -2202,8 +2196,7 @@ class ConfigTests(VaultCase):
         once = markdown_kg.dump_config(cfg)
         twice = markdown_kg.dump_config(markdown_kg.load_config(self.vault))
         self.assertEqual(once, twice)
-        block = json.loads(once.split("```json\n", 1)[1].rsplit("\n```", 1)[0])
-        canonicals = [e["canonical"] for e in block["entities"]]
+        canonicals = [e["canonical"] for e in json.loads(once)["entities"]]
         self.assertEqual(canonicals, sorted(canonicals))
 
     def test_a_vault_with_no_config_still_works(self):
@@ -2214,8 +2207,8 @@ class ConfigTests(VaultCase):
         self.assertTrue(markdown_kg.search(self.vault, "manifold")["results"])
 
     def test_invalid_json_fails_loudly(self):
-        markdown_kg.config_path(self.vault).write_text(
-            "# c\n\n```json\n{not json}\n```\n", encoding="utf-8")
+        markdown_kg.config_path(self.vault).write_text("{not json}\n",
+                                                       encoding="utf-8")
         with self.assertRaises(SystemExit) as cm:
             markdown_kg.load_config(self.vault)
         self.assertIn("invalid json", str(cm.exception.code))
@@ -2381,11 +2374,10 @@ class AnnotationConfigTests(VaultCase):
     """SPEC-KG-ANNOTATIONS AC7: the config `markers` array."""
 
     def _config(self, obj):
-        d = self.vault / "markdown-kg"
+        d = self.vault / ".kg"
         d.mkdir(exist_ok=True)
-        (d / "markdown-kg-config.md").write_text(
-            "# markdown-kg-config\n\n```json\n" + json.dumps(obj) + "\n```\n",
-            encoding="utf-8")
+        (d / "markdown-kg-config.json").write_text(json.dumps(obj),
+                                                   encoding="utf-8")
 
     def test_custom_marker_registers_end_to_end(self):
         self._config({"markers": [
@@ -2655,11 +2647,10 @@ class KgTypeTests(VaultCase):
              " ordinary full text strength for a fair ranking comparison.")
 
     def _config(self, obj):
-        d = self.vault / "markdown-kg"
+        d = self.vault / ".kg"
         d.mkdir(exist_ok=True)
-        (d / "markdown-kg-config.md").write_text(
-            "# markdown-kg-config\n\n```json\n" + json.dumps(obj) + "\n```\n",
-            encoding="utf-8")
+        (d / "markdown-kg-config.json").write_text(json.dumps(obj),
+                                                   encoding="utf-8")
 
     def test_props_lists_kg_type(self):
         (self.vault / "Sop.md").write_text(
@@ -2787,14 +2778,9 @@ class AnnotationRobustnessTests(VaultCase):
         self.assertEqual(rows, [("NOTE",)])
 
     def test_annotation_in_dated_entry_attaches_to_that_entry(self):
-        d = self.vault / "markdown-kg"
-        d.mkdir(exist_ok=True)
-        (d / "markdown-kg-config.md").write_text(
-            "# markdown-kg-config\n\n```json\n"
-            + json.dumps({"profiles": [
-                {"path": "Log.md", "profile": "log-dated",
-                 "date_from": "heading"}]})
-            + "\n```\n", encoding="utf-8")
+        markdown_kg.write_config(self.vault, {"profiles": [
+            {"path": "Log.md", "profile": "log-dated",
+             "date_from": "heading"}]})
         (self.vault / "Log.md").write_text(
             "# Log\n\n"
             "## 2026-08-20\n\nfirst entry words padding out the record\n\n"
@@ -3217,11 +3203,23 @@ class CoverageOversizeTests(VaultCase):
 
 
 class FolderNameTests(VaultCase):
-    """The engine's folder is markdown-kg/. A legacy vault-kg/ is read and
-    written in place under its own file names and never created. The
-    adversarial fixture is the one that keeps vault-kg/."""
+    """The engine's files live in .kg/, shared with code-kg. A legacy
+    markdown-kg/ or vault-kg/ is read and written in place under its own file
+    names, never created, and moved into .kg/ by `migrate`."""
 
     fixture = ADVERSARIAL
+
+    def legacy(self, name="vault-kg"):
+        """Turn the copied fixture's .kg/ config into a legacy folder's
+        markdown config, the layout an unmigrated vault has."""
+        kg, old = self.vault / ".kg", self.vault / name
+        text = (kg / "markdown-kg-config.json").read_text(encoding="utf-8")
+        old.mkdir()
+        (old / markdown_kg.LEGACY_LAYOUTS[name][markdown_kg.CONFIG_NAME]) \
+            .write_text("# config\n\n```json\n" + text + "```\n",
+                        encoding="utf-8")
+        shutil.rmtree(kg)
+        return old
 
     def _cli(self, *argv):
         buf = io.StringIO()
@@ -3232,45 +3230,119 @@ class FolderNameTests(VaultCase):
     def _note_ids(self):
         return {r[0] for r in self.rows("SELECT id FROM notes")}
 
-    def test_legacy_folder_is_read_and_written_in_place(self):
-        legacy = self.vault / "vault-kg"
-        self.assertEqual(markdown_kg.kg_dir(self.vault), legacy)
-        self.assertEqual(markdown_kg.config_path(self.vault),
-                         legacy / "vault-kg-config.md")
-        markdown_kg.ingest(self.vault, keep_previous=True)
-        markdown_kg.ingest(self.vault, keep_previous=True)
-        self.assertTrue((legacy / "vault-kg.db").exists())
-        self.assertTrue((legacy / "vault-kg-prev.db").exists())
+    def test_each_legacy_folder_is_read_and_written_in_place(self):
+        for name, names in markdown_kg.LEGACY_LAYOUTS.items():
+            with self.subTest(name):
+                self.vault = copy_fixture(ADVERSARIAL, self.tmp / name)
+                old = self.legacy(name)
+                self.assertEqual(markdown_kg.config_path(self.vault),
+                                 old / names[markdown_kg.CONFIG_NAME])
+                markdown_kg.ingest(self.vault, keep_previous=True)
+                markdown_kg.ingest(self.vault, keep_previous=True)
+                self.assertTrue((old / names[markdown_kg.DB_NAME]).exists())
+                self.assertTrue(
+                    (old / names[markdown_kg.PREV_DB_NAME]).exists())
+                ids = self._note_ids()
+                self.assertNotIn("archive/superseded", ids)  # legacy rule
+                self.assertFalse(any(i.split("/")[0] in markdown_kg.KG_DIRS
+                                     for i in ids))
+                # A config write there would strand the database: migrate.
+                with self.assertRaises(SystemExit) as cm:
+                    self._cli("init", str(self.vault), "--force")
+                self.assertIn("migrate", str(cm.exception.code))
+                self.assertFalse((self.vault / ".kg").exists())
+
+    def test_a_legacy_config_without_a_json_block_fails_loudly(self):
+        # Returning an empty config here would drop every ignore rule and
+        # index what the vault meant to keep out.
+        (self.legacy() / "vault-kg-config.md").write_text(
+            "# c\n\n```JSON\n{}\n```\n", encoding="utf-8")
+        with self.assertRaises(SystemExit) as cm:
+            markdown_kg.load_config(self.vault)
+        self.assertIn("no ```json block", str(cm.exception.code))
+
+    def test_a_kg_folder_holding_only_code_kg_leaves_the_legacy_in_use(self):
+        # code-kg shares .kg/, so the folder existing decides nothing.
+        old = self.legacy()
+        (self.vault / ".kg").mkdir()
+        (self.vault / ".kg" / "code-kg.db").write_bytes(b"")
+        self.assertEqual(markdown_kg.kg_dir(self.vault), old)
+
+    def test_current_files_win_and_no_engine_folder_is_corpus(self):
+        for name in markdown_kg.LEGACY_LAYOUTS:
+            (self.vault / name).mkdir()
+            (self.vault / name / "stray.md").write_text(
+                "# Stray\n\nnot a note\n", encoding="utf-8")
+        self.assertEqual(markdown_kg.kg_dir(self.vault), self.vault / ".kg")
+        markdown_kg.ingest(self.vault)
+        self.assertTrue((self.vault / ".kg" / "markdown-kg.db").exists())
         ids = self._note_ids()
-        self.assertNotIn("archive/superseded", ids)   # the legacy config's rule
-        self.assertIn("journal", ids)
+        self.assertNotIn("archive/superseded", ids)
         self.assertFalse(any(i.split("/")[0] in markdown_kg.KG_DIRS
                              for i in ids))
-        code, _ = self._cli("init", str(self.vault), "--force")
-        self.assertEqual(code, 0)
-        self.assertTrue((legacy / "vault-kg-config.md").read_text(
-            encoding="utf-8").startswith("# markdown-kg-config"))
-        self.assertFalse((self.vault / "markdown-kg").exists())
 
-    def test_current_name_wins_and_neither_folder_is_corpus(self):
-        current = self.vault / "markdown-kg"
-        current.mkdir()
-        (current / "stray.md").write_text("# Stray\n\nnot a note\n",
-                                          encoding="utf-8")
-        self.assertEqual(markdown_kg.kg_dir(self.vault), current)
+    def test_migrate_moves_the_graph_into_kg_unchanged(self):
+        legacy = self.legacy()
+        markdown_kg.ingest(self.vault, keep_previous=True)
+        markdown_kg.ingest(self.vault, keep_previous=True)
+        ids = self._note_ids()
+        db_bytes = (legacy / "vault-kg.db").read_bytes()
+        block = json.loads(markdown_kg.config_json_text(
+            legacy / "vault-kg-config.md"))
+        code, _ = self._cli("migrate", str(self.vault))
+        self.assertEqual(code, 0)
+        kg = self.vault / ".kg"
+        self.assertFalse(legacy.exists())
+        self.assertEqual(markdown_kg.kg_dir(self.vault), kg)
+        self.assertEqual(json.loads((kg / "markdown-kg-config.json")
+                                    .read_text(encoding="utf-8")), block)
+        # Moved, never rebuilt: the db holds state no ingest recreates.
+        self.assertEqual((kg / "markdown-kg.db").read_bytes(), db_bytes)
+        self.assertTrue((kg / "markdown-kg-prev.db").exists())
+        self.assertTrue((kg / ".gitignore").exists())
         markdown_kg.ingest(self.vault)
-        self.assertTrue((current / "markdown-kg.db").exists())
-        self.assertFalse((self.vault / "vault-kg" / "vault-kg.db").exists())
-        self.assertFalse(any(i.split("/")[0] in markdown_kg.KG_DIRS
-                             for i in self._note_ids()))
+        self.assertEqual(self._note_ids(), ids)
+        code, out = self._cli("migrate", str(self.vault))
+        self.assertEqual(code, 0)
+        self.assertIn("nothing to move", out)
+
+    def test_migrate_refuses_a_malformed_config_and_moves_nothing(self):
+        (self.legacy() / "vault-kg-config.md").write_text(
+            "# c\n\n```JSON\n{}\n```\n", encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            markdown_kg.migrate(self.vault)
+        self.assertFalse((self.vault / ".kg").exists())
+        self.assertTrue(
+            (self.vault / "vault-kg" / "vault-kg-config.md").exists())
+
+    def test_migrate_keeps_a_legacy_folder_holding_unknown_files(self):
+        (self.legacy() / "notes.txt").write_text(
+            "mine\n", encoding="utf-8")
+        got = markdown_kg.migrate(self.vault)
+        self.assertFalse(got["removed"])
+        self.assertEqual(got["left"], ["notes.txt"])
+        self.assertTrue((self.vault / "vault-kg" / "notes.txt").exists())
+        self.assertEqual(markdown_kg.kg_dir(self.vault), self.vault / ".kg")
+
+    def test_init_refuses_a_linked_config(self):
+        outside = self.tmp / "outside"
+        cfg = self.vault / ".kg" / "markdown-kg-config.json"
+        cfg.unlink()
+        os.symlink(outside / "planted.json", cfg)
+        with self.assertRaises(SystemExit) as cm:
+            self._cli("init", str(self.vault), "--force")
+        self.assertIn("symbolic link", str(cm.exception.code))
+        self.assertFalse(outside.exists())
 
     def test_init_creates_only_the_current_folder(self):
-        shutil.rmtree(self.vault / "vault-kg")
+        shutil.rmtree(self.vault / ".kg")
         code, _ = self._cli("init", str(self.vault))
         self.assertEqual(code, 0)
-        self.assertTrue(
-            (self.vault / "markdown-kg" / "markdown-kg-config.md").exists())
-        self.assertTrue((self.vault / "markdown-kg" / "markdown-kg.db").exists())
+        cfg = self.vault / ".kg" / "markdown-kg-config.json"
+        self.assertIsInstance(json.loads(cfg.read_text(encoding="utf-8")),
+                              dict)
+        self.assertTrue((self.vault / ".kg" / "markdown-kg.db").exists())
+        self.assertFalse((self.vault / "markdown-kg").exists())
         self.assertFalse((self.vault / "vault-kg").exists())
 
 
@@ -3439,8 +3511,8 @@ class IncrementalIngest(GraphCase):
     def test_a_config_edit_equals_a_cold_build(self):
         self.ingest()
         markdown_kg.config_path(self.vault).write_text(
-            '```json\n{"ignore": [{"path": "Scratch.md", "reason": "test"}], "profiles": [], "markers": [],'
-            ' "entities": [{"canonical": "Spring", "aliases": ["spring"]}]}\n```\n')
+            '{"ignore": [{"path": "Scratch.md", "reason": "test"}], "profiles": [], "markers": [],'
+            ' "entities": [{"canonical": "Spring", "aliases": ["spring"]}]}\n')
         self.assertEqual(self.ingest(), self.cold())
 
 

@@ -231,7 +231,7 @@
  },
  "init <REPO>": {
   "err": "",
-  "out": "initialized <REPO>/.code-kg\n  profile: django\n  data stores: postgres, redis (details: `data`)\ningest: {\"alias_notes\": [], \"dep_files\": 0, \"edges\": 224, \"entry_points\": 22, \"entry_warnings\": [], \"files\": 59, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [\"django\"], \"symbols\": 210}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
+  "out": "initialized <REPO>/.kg\n  profile: django\n  data stores: postgres, redis (details: `data`)\ningest: {\"alias_notes\": [], \"dep_files\": 0, \"edges\": 224, \"entry_points\": 22, \"entry_warnings\": [], \"files\": 59, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [\"django\"], \"symbols\": 210}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
   "rc": 0
  },
  "neighbors <REPO> AGENTS.md --depth 2 --json": {

@@ -11,12 +11,12 @@ already exists is skipped and reported, so a run against a partly built vault fi
 gaps and touches nothing else. Placeholders stay as placeholders: no date is resolved,
 so two runs on different days produce byte-identical notes.
 
-Then seeds the vault's knowledge graph, because that is how a grown vault is read: runs
-markdown-kg's `init` when the vault has no graph config (a vault with only a legacy
-vault-kg/ is skipped with a rename instruction), merges the rows in
-templates/markdown-kg-profiles.md that the config lacks (replacing the rows init detected
-for files those rows cover), seeds markdown-kg/.gitignore so the database stays out of git,
-and ingests when a note or a row was added. markdown-kg is found beside this skill; when it
+Then seeds the vault's knowledge graph in .kg/, because that is how a grown vault is read:
+runs markdown-kg's `init` when the vault has no graph config (a vault whose graph is still
+in a legacy markdown-kg/ or vault-kg/ folder is skipped with a `migrate` instruction),
+merges the rows in templates/markdown-kg-profiles.md that the config lacks (replacing the
+rows init detected for files those rows cover), checks .kg/.gitignore keeps the database
+out of git, and ingests when a note or a row was added. markdown-kg is found beside this skill; when it
 is absent the step is reported and skipped. `--no-graph` skips it.
 
 Last, prints the pointer line for the host repo's AGENTS.md and the agent's memory, so later
@@ -50,6 +50,11 @@ DELIVERABLE_FOLDERS = ("adrs", "solution-designs")
 PROFILES = SKILL_DIR / "templates" / "markdown-kg-profiles.md"
 KG = SKILL_DIR.parent / "markdown-kg" / "scripts" / "markdown_kg.py"
 JSON_BLOCK = re.compile(r"```json\n(.*?)```", re.S)
+# markdown-kg's files in a vault: its folder, shared with code-kg, and the earlier folders
+# it keeps using in place until `migrate` moves them.
+KG_DIR = ".kg"
+KG_CONFIG = "markdown-kg-config.json"
+LEGACY_KG_DIRS = ("markdown-kg", "vault-kg")
 # A role whose file was renamed: a vault holding the older name already fills the role,
 # so seeding the new name would give it two files for one role.
 OLDER_NAMES = {"user-runsheet.md": ("user-stories-runsheet.md", "user-stories-tasks.md"),
@@ -187,13 +192,12 @@ def merge_profiles(config: Path, replace_detected: bool = False) -> int:
     if config.is_symlink():
         raise OSError(f"{config} is a symlink; refusing to write through it")
     text = config.read_text(encoding="utf-8")
-    block = JSON_BLOCK.search(text)
     shipped = JSON_BLOCK.search(PROFILES.read_text(encoding="utf-8"))
-    if not block or not shipped:
-        raise ValueError(f"no json block in {config if not block else PROFILES}")
-    data = json.loads(block.group(1))
+    if not shipped:
+        raise ValueError(f"no json block in {PROFILES}")
+    data = json.loads(text) if text.strip() else {}
     if not isinstance(data, dict):
-        raise ValueError(f"{config}: the json block is not an object")
+        raise ValueError(f"{config}: the config is not a json object")
     added = 0
     replaced = False
     for key, rows in json.loads(shipped.group(1)).items():
@@ -211,8 +215,7 @@ def merge_profiles(config: Path, replace_detected: bool = False) -> int:
                 existing.append(row)
                 added += 1
     if added or replaced:
-        body = json.dumps(data, indent=2) + "\n"
-        replace_file(config, text[:block.start(1)] + body + text[block.end(1):])
+        replace_file(config, json.dumps(data, indent=2) + "\n")
     return added
 
 
@@ -235,15 +238,16 @@ def replace_file(path: Path, text: str) -> None:
 
 
 def ignore_databases(kg_dir: Path) -> bool:
-    """Seed markdown-kg/.gitignore so the graph database, which holds every note's full text, stays out of git.
-    Returns whether the file ignores the database; an existing file is never rewritten."""
+    """Check .kg/.gitignore keeps the graph database, which holds every note's full text, out of git, seeding
+    `*` when the file is missing. Returns whether it does (`*` or `*.db*`); an existing file is never rewritten."""
     gitignore = kg_dir / ".gitignore"
     try:
         fd = os.open(gitignore, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
     except FileExistsError:
-        return "*.db*" in gitignore.read_text(encoding="utf-8").split()
+        lines = gitignore.read_text(encoding="utf-8").split()
+        return "*" in lines or "*.db*" in lines
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write("*.db*\n")
+        fh.write("*\n")
     return True
 
 
@@ -252,13 +256,15 @@ def graph_preflight(vault: Path) -> tuple[bool, str] | None:
     The real run and the dry run both ask this, so a dry run never promises what the run would refuse."""
     if not KG.is_file():
         return True, "graph: skipped, markdown-kg is not installed beside this skill; run its init and merge templates/markdown-kg-profiles.md by hand"
-    kg_dir = vault / "markdown-kg"
-    legacy = vault / "vault-kg"
+    kg_dir = vault / KG_DIR
     if kg_dir.exists() and not kg_dir.is_dir():
         return False, f"graph: {kg_dir} exists and is not a directory; refusing to initialize"
-    # markdown-kg uses a legacy vault-kg/ in place when markdown-kg/ is not a directory, so init would write there
-    if not kg_dir.is_dir() and not kg_dir.is_symlink() and (legacy.is_dir() or legacy.is_symlink()):
-        return True, "graph: skipped, this vault has a legacy vault-kg/ graph; rename it to markdown-kg/ and re-run to manage it here"
+    # markdown-kg keeps using a legacy folder in place until its files are in .kg/, so init would write there
+    current = any(os.path.lexists(kg_dir / n) for n in (KG_CONFIG, "markdown-kg.db"))
+    legacy = next((d for d in LEGACY_KG_DIRS if (vault / d).is_dir() or (vault / d).is_symlink()), None)
+    if not current and legacy:
+        return True, (f"graph: skipped, this vault's graph is in the legacy {legacy}/ folder; run markdown-kg's"
+                      " `migrate` on the vault and re-run to manage it here")
     if kg_dir.is_symlink() or (kg_dir.is_dir() and any(p.is_symlink() for p in kg_dir.iterdir())):
         return False, f"graph: {kg_dir} is or contains a symlink; refusing to write through it"
     return None
@@ -269,8 +275,8 @@ def seed_graph(vault: Path, notes_written: int) -> tuple[bool, str]:
     stop = graph_preflight(vault)
     if stop:
         return stop
-    kg_dir = vault / "markdown-kg"
-    config = kg_dir / "markdown-kg-config.md"
+    kg_dir = vault / KG_DIR
+    config = kg_dir / KG_CONFIG
     initialized = False
     if not config.exists():
         r = kg("init", str(vault))
@@ -281,15 +287,15 @@ def seed_graph(vault: Path, notes_written: int) -> tuple[bool, str]:
         ignored = ignore_databases(kg_dir)
         added = merge_profiles(config, replace_detected=initialized)
     except (OSError, ValueError) as exc:
-        return False, f"graph: could not configure markdown-kg/: {exc}"
-    git_note = "the database is gitignored" if ignored else "WARNING: markdown-kg/.gitignore exists without a *.db* line; add it, the database holds every note's full text"
+        return False, f"graph: could not configure {KG_DIR}/: {exc}"
+    git_note = "the database is gitignored" if ignored else f"WARNING: {KG_DIR}/.gitignore exists without a * or *.db* line; add one, the database holds every note's full text"
     if not (initialized or added or notes_written):
         return True, f"graph: config already has every profile row, nothing to ingest; {git_note}"
     r = kg("ingest", str(vault))
     if r.returncode != 0:
         return False, f"graph: ingest failed: {(r.stderr or r.stdout).strip()}"
     verb = "initialized" if initialized else "updated"
-    return True, f"graph: {verb} markdown-kg/, {added} profile row(s) merged, ingested; {git_note}"
+    return True, f"graph: {verb} {KG_DIR}/, {added} profile row(s) merged, ingested; {git_note}"
 
 
 def dry_run_graph(vault: Path, notes_to_write: int) -> str:
@@ -297,11 +303,10 @@ def dry_run_graph(vault: Path, notes_to_write: int) -> str:
     stop = graph_preflight(vault)
     if stop:
         return stop[1].replace("graph: ", "graph (dry run): ", 1)
-    kg_dir = vault / "markdown-kg"
-    if not (kg_dir / "markdown-kg-config.md").is_file():
-        return "graph: would initialize markdown-kg/, merge the profile rows and ingest"
+    if not (vault / KG_DIR / KG_CONFIG).is_file():
+        return f"graph: would initialize {KG_DIR}/, merge the profile rows and ingest"
     ingest = "and ingest, since notes would be added" if notes_to_write else "and ingest only if a row is missing"
-    return f"graph: markdown-kg/ present; would merge any missing profile rows {ingest}"
+    return f"graph: {KG_DIR}/ present; would merge any missing profile rows {ingest}"
 
 
 def pointer_steps(vault: Path, root: Path) -> str:
@@ -311,7 +316,7 @@ def pointer_steps(vault: Path, root: Path) -> str:
     host = next((p for p in (vault, *vault.parents) if (p / ".git").exists()), root.resolve())
     rel = vault.relative_to(host).as_posix() if vault.is_relative_to(host) else vault.name
     line = (f"Project knowledge vault: `{rel}/` - its `AGENTS.md` is the contract, "
-            f"its graph is `{rel}/markdown-kg/`, and its deliverables are in `{rel}-DELIVERABLES/`.")
+            f"its graph is `{rel}/{KG_DIR}/`, and its deliverables are in `{rel}-DELIVERABLES/`.")
     return ("next: record where this vault lives, so later sessions find it without searching:\n"
             "  1. add this line to the host repo's root AGENTS.md (CLAUDE.md where it has no AGENTS.md), unless it is there:\n"
             f"     {line}\n"

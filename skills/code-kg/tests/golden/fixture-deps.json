@@ -111,7 +111,7 @@
  },
  "init <REPO>": {
   "err": "",
-  "out": "initialized <REPO>/.code-kg\ningest: {\"alias_notes\": [], \"dep_files\": 0, \"edges\": 4, \"entry_points\": 1, \"entry_warnings\": [], \"files\": 2, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [], \"symbols\": 2}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
+  "out": "initialized <REPO>/.kg\ningest: {\"alias_notes\": [], \"dep_files\": 0, \"edges\": 4, \"entry_points\": 1, \"entry_warnings\": [], \"files\": 2, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [], \"symbols\": 2}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
   "rc": 0
  },
  "neighbors <REPO> app.py --depth 2 --json": {

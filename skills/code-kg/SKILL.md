@@ -7,10 +7,12 @@ description: Builds and queries a SQLite+FTS5 knowledge graph over any codebase 
 
 X-ray a codebase once, then answer from the graph instead of grepping. One
 stdlib engine: EXECUTE `scripts/code_kg.py` via Bash for every operation -
-never reimplement its parsing inline. Storage is `<repo>/.code-kg/`
-(config.json + a rebuildable db; the folder's own `.gitignore` of `*`, written
-when none exists, keeps all of it out of git, and `git add -f` shares a
-config). Every read command re-ingests
+never reimplement its parsing inline. Storage is `<repo>/.kg/`, shared with
+markdown-kg (`code-kg-config.json` + a rebuildable `code-kg.db`; the folder's
+own `.gitignore` of `*`, written when none exists, keeps all of it out of git,
+and `git add -f` shares a config). A repo with a legacy `.code-kg/` keeps
+using it in place until `migrate <repo>` moves its files into `.kg/`
+unchanged. Every read command re-ingests
 on drift, so answers track the live tree without you managing freshness.
 
 The parsers cover python (AST-exact), javascript/typescript, bash, go, rust,
@@ -30,7 +32,8 @@ machine-readable.
 
 | Command | Gives you |
 |---|---|
-| `init <repo>` | scaffold `.code-kg/` + first ingest (once per repo) |
+| `init <repo>` | scaffold `.kg/` + first ingest (once per repo) |
+| `migrate <repo>` | move a legacy `.code-kg/` graph into `.kg/`; run it while no other command is using the graph |
 | `ingest <repo>` | full rebuild, rarely needed because reads auto-refresh; `--keep-previous` first saves the current db as the checkpoint `diff` compares against |
 | `diff <repo> [--against DB]` | what changed since the checkpoint, or against another repo's db: files added, removed and edited; symbols added, removed, edited, renamed (same file, same body) and moved (same body, another file), and the unchanged count |
 | `search <repo> "question"` | ranked hits, symbols first, each with `file:start-end`. `--per-file N` caps hits per file (default off); `--budget TOKENS` returns each hit's whole text within that many estimated tokens, and a class or file too large to fit whole comes back as its methods or symbols |
@@ -104,7 +107,7 @@ failures are printed at init and recorded - never silent.
 ## Extending a repo
 
 Three optional config keys let a repo state what the parsers cannot see.
-Edit `.code-kg/config.json`, then run `config <repo>` to see what each row
+Edit `.kg/code-kg-config.json`, then run `config <repo>` to see what each row
 matched.
 
 - `components` names groups of files by glob. The `components` command
@@ -126,7 +129,7 @@ codebase - searchable and edge-connected, counted separately in `stats`
 
 ## Dependency code (opt-in)
 
-Set `"deps": "referenced"` in `.code-kg/config.json` and ingest also indexes
+Set `"deps": "referenced"` in `.kg/code-kg-config.json` and ingest also indexes
 the code of libraries the project actually imports, from repo-local installs
 (`.venv`, `venv`, `node_modules`) only - a global site-packages is outside
 the repo and stays out. Dependency files carry `origin='dep'` and are

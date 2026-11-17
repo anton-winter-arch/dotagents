@@ -1,17 +1,14 @@
-# markdown-kg-config.md field reference
+# markdown-kg-config.json field reference
 
-The config is one markdown file holding one fenced `json` block, at `<vault>/markdown-kg/markdown-kg-config.md`.
-A vault built before the folder was renamed has the config at the legacy `vault-kg/vault-kg-config.md`, and the engine keeps using that file in place.
+The config is one JSON object at `<vault>/.kg/markdown-kg-config.json`.
+A vault not yet migrated has it as one fenced `json` block in a legacy markdown file, `markdown-kg/markdown-kg-config.md` or `vault-kg/vault-kg-config.md`, which the engine keeps using in place; a legacy file with text but no `json` block is an error, never an empty config.
 It is an ordinary file: edit it directly.
-JSON rather than markdown tables because an agent is the primary editor, values containing a pipe break tables, and a sorted JSON block gives readable diffs.
+JSON because an agent is the primary editor, values containing a pipe break markdown tables, sorted JSON gives readable diffs, and a malformed file fails loudly instead of dropping its rules.
 
 Everything here is optional. A vault whose config is never touched keeps
 working: sections, search, the link graph and backlinks all need none of it.
 Enrichment accumulates as structure is confirmed, and nothing degrades if it
 never happens.
-
-````markdown
-# markdown-kg-config
 
 ```json
 {
@@ -32,7 +29,6 @@ never happens.
   ]
 }
 ```
-````
 
 Serialization is deterministic: fixed key order, entities sorted by canonical,
 so adding one entity is a one-line diff. Omitted keys take their defaults.

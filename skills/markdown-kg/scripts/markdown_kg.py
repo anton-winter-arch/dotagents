@@ -5,9 +5,9 @@
 # ///
 """markdown_kg.py - turn any markdown corpus into a queryable SQLite knowledge graph.
 
-Stdlib only, Python 3.10+. Storage is `<vault>/markdown-kg/markdown-kg.db`
-(SQLite + FTS5) beside `<vault>/markdown-kg/markdown-kg-config.md`; a vault
-built under the old `vault-kg/` names keeps using them in place. The vault
+Stdlib only, Python 3.10+. Storage is `<vault>/.kg/markdown-kg.db`
+(SQLite + FTS5) beside `<vault>/.kg/markdown-kg-config.json`; a vault built
+under the old `markdown-kg/` or `vault-kg/` folder keeps using it in place. The vault
 directory is always a CLI argument: nothing here is tied to any particular
 vault, machine, or agent, and nothing here ever sends vault text anywhere - the
 whole engine is offline.
@@ -31,7 +31,8 @@ Design goals:
 
 Commands:
   ingest <vault>                        full rebuild: notes, sections, edges
-  init <vault>                          scaffold markdown-kg/ + confident config
+  init <vault>                          scaffold .kg/ + confident config
+  migrate <vault>                       move a legacy graph folder into .kg/
   profile <vault>                       propose config rows; writes nothing
   query <vault> <fts-query>             raw FTS5 over sections
   search <vault> <question>             natural-language section search
@@ -87,17 +88,22 @@ import urllib.parse
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-KG_DIR = "markdown-kg"
+KG_DIR = ".kg"     # shared with code-kg; each file carries its engine's name
 DB_NAME = "markdown-kg.db"
-CONFIG_NAME = "markdown-kg-config.md"
+CONFIG_NAME = "markdown-kg-config.json"
 PREV_DB_NAME = "markdown-kg-prev.db"
-# The folder's name before the rename. A vault that has it is read and written
-# in place under its own file names; nothing ever creates it. Both names are
+# The engine's earlier folders, newest first, each with its own file names
+# and a markdown config. A vault that has one and no markdown-kg files in .kg/
+# is read and written there in place; nothing ever creates one. Every name is
 # the engine's folder and never corpus.
-LEGACY_KG_DIR = "vault-kg"
-LEGACY_NAMES = {DB_NAME: "vault-kg.db", CONFIG_NAME: "vault-kg-config.md",
-                PREV_DB_NAME: "vault-kg-prev.db"}
-KG_DIRS = (KG_DIR, LEGACY_KG_DIR)
+LEGACY_LAYOUTS = {
+    "markdown-kg": {DB_NAME: "markdown-kg.db",
+                    CONFIG_NAME: "markdown-kg-config.md",
+                    PREV_DB_NAME: "markdown-kg-prev.db"},
+    "vault-kg": {DB_NAME: "vault-kg.db", CONFIG_NAME: "vault-kg-config.md",
+                 PREV_DB_NAME: "vault-kg-prev.db"},
+}
+KG_DIRS = (KG_DIR, *LEGACY_LAYOUTS)
 
 # Folders Obsidian hides or that are never vault notes; any dot folder/file is
 # excluded too.
@@ -494,21 +500,23 @@ def vault_dir(arg: str) -> Path:
 
 
 def kg_dir(vault: Path) -> Path:
-    """The one resolver for the engine's folder: `markdown-kg/` when it
-    exists, else a legacy `vault-kg/` when that exists (used in place), else
-    `markdown-kg/`, which is what a first write creates."""
+    """The one resolver for the engine's folder: `.kg/` when it holds a
+    markdown-kg database or config, else the first legacy folder that exists
+    (used in place), else `.kg/`, which is what a first write creates.
+    code-kg shares `.kg/`, so the folder alone decides nothing. code-kg's
+    `kg_dir` follows the same rule."""
     current = vault / KG_DIR
-    legacy = vault / LEGACY_KG_DIR
-    if not current.is_dir() and legacy.is_dir():
-        return legacy
+    if not any(os.path.lexists(current / n) for n in (DB_NAME, CONFIG_NAME)):
+        for name in LEGACY_LAYOUTS:
+            if (vault / name).is_dir():
+                return vault / name
     return current
 
 
 def _kg_file(vault: Path, name: str) -> Path:
     """A file in the resolved folder, under that folder's own naming."""
     folder = kg_dir(vault)
-    return folder / (LEGACY_NAMES[name] if folder.name == LEGACY_KG_DIR
-                     else name)
+    return folder / LEGACY_LAYOUTS.get(folder.name, {}).get(name, name)
 
 
 def db_path(vault: Path) -> Path:
@@ -517,9 +525,8 @@ def db_path(vault: Path) -> Path:
 
 def prev_db_path(vault: Path) -> Path:
     """The one-deep checkpoint `ingest --keep-previous` writes and a bare
-    `diff` compares against. Lives beside the live db; the gitignore pattern
-    is markdown-kg/*.db*, not the db filename, so this file and the SQLite
-    journal/wal sidecars are covered too."""
+    `diff` compares against. Lives beside the live db, where the folder's
+    `*` .gitignore covers it and the SQLite journal/wal sidecars too."""
     return _kg_file(vault, PREV_DB_NAME)
 
 
@@ -558,8 +565,8 @@ def seed_gitignore(folder: Path) -> None:
     except OSError:
         return
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write("# Local and rebuildable: the database, its checkpoint and this"
-                 " folder's config.\n*\n")
+        fh.write("# Local and rebuildable: knowledge-graph databases, their"
+                 " checkpoints and configs.\n*\n")
 
 
 def connect(vault: Path, must_exist: bool = False) -> sqlite3.Connection:
@@ -607,18 +614,32 @@ def _add_missing_columns(con: sqlite3.Connection) -> None:
 
 
 # ---------- config ----------
+def config_json_text(cfg_file: Path) -> str:
+    """The json text of a config file: the whole file, or the one fenced
+    json block of a legacy markdown config. A legacy file with text but no
+    json block is an error, because silently dropping its ignore rules would
+    index what the vault meant to keep out."""
+    text = cfg_file.read_text(encoding="utf-8", errors="replace")
+    if cfg_file.suffix == ".md" and text.strip():
+        m = re.search(r"^```json\s*\n(.*?)\n```", text,
+                      re.MULTILINE | re.DOTALL)
+        if not m:
+            sys.exit(f"error: {cfg_file} has no ```json block")
+        return m.group(1)
+    return text
+
+
 def load_config(vault: Path) -> dict:
-    """Read the one fenced json block out of the config file. A missing or
-    empty config is not an error: the engine works with no config at all."""
+    """Read the config file. A missing or empty config is not an error: the
+    engine works with no config at all."""
     cfg_file = config_path(vault)
     if not cfg_file.exists():
         return {"ignore": [], "profiles": [], "entities": [], "markers": []}
-    text = cfg_file.read_text(encoding="utf-8", errors="replace")
-    m = re.search(r"^```json\s*\n(.*?)\n```", text, re.MULTILINE | re.DOTALL)
-    if not m:
+    text = config_json_text(cfg_file)
+    if not text.strip():
         return {"ignore": [], "profiles": [], "entities": [], "markers": []}
     try:
-        cfg = json.loads(m.group(1))
+        cfg = json.loads(text)
     except json.JSONDecodeError as e:
         sys.exit(f"error: {cfg_file} has invalid json: {e}")
     if not isinstance(cfg, dict):
@@ -759,12 +780,15 @@ def dump_config(cfg: dict) -> str:
                                   key=lambda r: str(r.get("field", "")))
     if "link_resolution" in cfg:
         out["link_resolution"] = cfg["link_resolution"]
-    body = json.dumps(out, indent=2, ensure_ascii=False, sort_keys=True)
-    return ("# markdown-kg-config\n\n"
-            "Configuration for the vault knowledge graph. Everything specific\n"
-            "to this vault lives here; the engine itself knows only markdown\n"
-            "structure. Edit this file directly.\n\n"
-            "```json\n" + body + "\n```\n")
+    return json.dumps(out, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+
+
+def write_config(vault: Path, cfg: dict) -> None:
+    """Write `cfg` to the vault's config file. Only `init` and tests write
+    one, and never into a legacy folder: `init` sends that to `migrate`."""
+    path = config_path(vault)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(dump_config(cfg), encoding="utf-8")
 
 
 def profile_for(note_id: str, rel_path: str, meta: dict, cfg: dict) -> dict:
@@ -4149,7 +4173,7 @@ def entity_row(con: sqlite3.Connection, name: str) -> tuple:
             " WHERE canonical=?", (hit[0],)).fetchone()
     con.close()
     sys.exit(f"error: {name!r} is not a registered entity - add it to "
-             f"{CONFIG_NAME} if a retrieval needed it")
+             "the vault's config if a retrieval needed it")
 
 
 def entity(vault: Path, name: str, limit: int = 20) -> dict:
@@ -4200,7 +4224,8 @@ def during(vault: Path, name: str, limit: int = 50) -> dict:
     if etime != "bounded":
         con.close()
         sys.exit(f"error: {canonical!r} has no bounded time span "
-                 f"(set time to '<start>..<end>' in {CONFIG_NAME})")
+                 "(set time to '<start>..<end>' in"
+                 f" {config_path(vault).relative_to(vault).as_posix()})")
     rows = con.execute(
         "SELECT id, note_id, doc_date, heading_path, line_start, line_end"
         " FROM sections WHERE is_unit=1 AND doc_date != ''"
@@ -4330,7 +4355,13 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
 def cmd_init(args: argparse.Namespace) -> int:
     vault = vault_dir(args.vault)
-    kg_dir(vault).mkdir(parents=True, exist_ok=True)
+    # The config is written here, so a link planted at it is refused too.
+    refused = linked_store(vault, kg_dir(vault), config_path(vault))
+    if refused:
+        sys.exit(f"error: {refused}")
+    if kg_dir(vault).name in LEGACY_LAYOUTS:
+        sys.exit(f"error: this vault's graph is in the legacy "
+                 f"{kg_dir(vault).name}/ folder - run `migrate` first")
     cfg_file = config_path(vault)
     if cfg_file.exists() and not args.force:
         sys.exit(f"error: {cfg_file} already exists - edit it directly, or "
@@ -4345,7 +4376,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     for row in found["generated"]:
         cfg["profiles"].append({"path": row["path"], "profile": "generated",
                                 "weight": 0.2})
-    cfg_file.write_text(dump_config(cfg), encoding="utf-8")
+    write_config(vault, cfg)
     ingest(vault)
     print(f"init: wrote {cfg_file} with {len(cfg['profiles'])} confident "
           f"profile rows ({len(found['dated_logs'])} dated logs, "
@@ -4353,6 +4384,75 @@ def cmd_init(args: argparse.Namespace) -> int:
     print(f"      db at {db_path(vault)}; {kg_dir(vault).name}/.gitignore keeps the folder,"
           " its config and its databases out of git (`git add -f` the config to share it)")
     return 0
+
+
+def migrate(vault: Path) -> dict:
+    """Move a legacy folder's files into .kg/ under the current names. The
+    config is rewritten from its json block to plain json with every key
+    kept, and it moves first, so an interrupted run never leaves a database
+    in .kg/ without its ignore rules. The databases move as they are: they
+    hold coverage ledgers, extractions and conflicts no ingest rebuilds. The
+    legacy folder is removed once only its .gitignore is left. Run it while
+    no other command is using the graph."""
+    old = kg_dir(vault)
+    if old.name not in LEGACY_LAYOUTS:
+        return {"from": None, "to": KG_DIR, "moved": [], "removed": False,
+                "left": []}
+    new = vault / KG_DIR
+    names = LEGACY_LAYOUTS[old.name]
+    for folder, db in ((old, old / names[DB_NAME]), (new, new / DB_NAME)):
+        refused = linked_store(vault, folder, db)
+        if refused:
+            sys.exit(f"error: {refused}")
+    load_config(vault)                  # exits loudly on a malformed config
+    moves = [(old / names[CONFIG_NAME], new / CONFIG_NAME)]
+    moves += [(old / (names[n] + s), new / (n + s))
+              for n in (DB_NAME, PREV_DB_NAME)
+              for s in ("", "-wal", "-shm", "-journal")]
+    moves = [(src, dst) for src, dst in moves
+             if src.is_file() and not src.is_symlink()]
+    for _, dst in moves:
+        if os.path.lexists(dst):
+            sys.exit(f"error: {dst} already exists; refusing to overwrite it")
+    new.mkdir(exist_ok=True)
+    seed_gitignore(new)
+    moved = []
+    for src, dst in moves:
+        if src.name == names[CONFIG_NAME]:
+            text = config_json_text(src)
+            body = json.dumps(json.loads(text) if text.strip() else {},
+                              indent=2, ensure_ascii=False, sort_keys=True)
+            fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | os.O_NOFOLLOW, 0o644)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(body + "\n")
+            src.unlink()
+        else:
+            os.replace(src, dst)
+        moved.append([src.relative_to(vault).as_posix(),
+                      dst.relative_to(vault).as_posix()])
+    left = sorted(p.name for p in old.iterdir() if p.name != ".gitignore")
+    if not left:
+        (old / ".gitignore").unlink(missing_ok=True)
+        old.rmdir()
+    return {"from": old.name, "to": KG_DIR, "moved": moved,
+            "removed": not left, "left": left}
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    payload = migrate(vault_dir(args.vault))
+
+    def render(p):
+        if p["from"] is None:
+            print(f"migrate: nothing to move; the graph is in {KG_DIR}/"
+                  " already, or not built yet")
+            return 0
+        for src, dst in p["moved"]:
+            print(f"moved {src} -> {dst}")
+        print(f"removed {p['from']}/" if p["removed"] else
+              f"left {p['from']}/ in place, holding: {', '.join(p['left'])}")
+        return 0
+    return emit(args, payload, render)
 
 
 def cmd_profile(args: argparse.Namespace) -> int:
@@ -5132,13 +5232,13 @@ def cmd_refs(args: argparse.Namespace) -> int:
 
 # The code-kg skill is reached as a sibling folder and through its command
 # line only: `--json` out, never its database file, so a schema change there
-# cannot break a read here. CODE_KG_DB is where that skill keeps the database
-# of a repo it has indexed; the file marks the repo and is never opened from
-# here.
+# cannot break a read here. CODE_KG_DBS is where that skill keeps the database
+# of a repo it has indexed, current folder first; the file marks the repo and
+# is never opened from here.
 SIBLING_CLI = (Path(__file__).resolve().parent.parent.parent
                / "code-kg" / "scripts" / "code_kg.py")
 SIBLING_TIMEOUT = 120
-CODE_KG_DB = ".code-kg/code-kg.db"
+CODE_KG_DBS = (".kg/code-kg.db", ".code-kg/code-kg.db")
 
 
 def sibling_json(*argv: str) -> tuple[object, str]:
@@ -5172,9 +5272,9 @@ def find_code_repo(vault: Path) -> Path | None:
     for d in (vault, *vault.parents):
         if d == home:
             break
-        db = d / CODE_KG_DB
-        if (db.is_file() and not db.is_symlink()
-                and not db.parent.is_symlink()):
+        dbs = [d / db for db in CODE_KG_DBS]
+        if any(db.is_file() for db in dbs) and not any(
+                db.is_symlink() or db.parent.is_symlink() for db in dbs):
             return d
         if os.path.lexists(d / ".git"):
             break
@@ -6061,7 +6161,7 @@ def cmd_during(args: argparse.Namespace) -> int:
 
 
 NO_LOG_DATED_LINE = ("no log-dated notes in this graph, so there is nothing to aggregate - "
-                     f"give a dated log the log-dated profile in {CONFIG_NAME}")
+                     "give a dated log the log-dated profile in the vault's config")
 
 
 def cmd_themes(args: argparse.Namespace) -> int:
@@ -6482,6 +6582,9 @@ def main(argv: list[str] | None = None) -> int:
     p = add("init", cmd_init, f"scaffold {KG_DIR}/ and a confident config")
     p.add_argument("--force", action="store_true",
                    help="rewrite an existing config scaffold")
+
+    add("migrate", cmd_migrate,
+        f"move a legacy markdown-kg/ or vault-kg/ graph into {KG_DIR}/")
 
     add("profile", cmd_profile, "propose config rows; writes nothing")
 

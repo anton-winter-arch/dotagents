@@ -50,6 +50,7 @@ class LintTest(unittest.TestCase):
         self.assertEqual((code, findings), (0, []))
 
     def test_flat_fires_on_a_subdirectory_but_not_tooling(self) -> None:
+        (self.v / ".kg").mkdir()
         (self.v / "markdown-kg").mkdir()
         (self.v / "vault-kg").mkdir()
         (self.v / ".obsidian").mkdir()

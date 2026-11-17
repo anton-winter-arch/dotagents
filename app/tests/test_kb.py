@@ -21,15 +21,18 @@ def test_tree_excludes_the_engine_folder():
     assert "markdown-kg" not in body and "vault-kg" not in body
 
 
-def test_both_engine_folder_names_stay_hidden(tmp_path, monkeypatch):
+def test_every_engine_folder_name_stays_hidden(tmp_path, monkeypatch):
     (tmp_path / "note.md").write_text("# note\n")
     for name in ("markdown-kg", "vault-kg"):
         (tmp_path / name).mkdir()
         (tmp_path / name / f"{name}-config.md").write_text("# config\n")
+    (tmp_path / ".kg").mkdir()
+    (tmp_path / ".kg" / "markdown-kg-config.md").write_text("# config\n")
     monkeypatch.setenv("AGENTS_APP_VAULT", str(tmp_path))
     c = TestClient(create_app())
     body = c.get("/kb/tree").text
     assert "markdown-kg" not in body and "vault-kg" not in body
+    assert ".kg" not in body
     hits = c.get("/kb/search", params={"q": "config", "scope": "filename"}).json()
     assert hits == []
 

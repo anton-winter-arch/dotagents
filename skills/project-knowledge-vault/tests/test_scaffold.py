@@ -34,8 +34,7 @@ def run(*args: str, graph: bool = False) -> subprocess.CompletedProcess:
 
 
 def config_rows(vault: Path) -> dict:
-    text = (vault / "markdown-kg" / "markdown-kg-config.md").read_text()
-    return json.loads(re.search(r"```json\n(.*?)```", text, re.S).group(1))
+    return json.loads((vault / ".kg" / "markdown-kg-config.json").read_text())
 
 
 class Base(unittest.TestCase):
@@ -118,7 +117,7 @@ class TestSeed(Base):
         (repo / ".git").mkdir(parents=True)
         result = run("--target", str(repo), "--name", "TEST")
         self.assertIn("Project knowledge vault: `PROJECTS/TEST/`", result.stdout)
-        self.assertIn("`PROJECTS/TEST/markdown-kg/`", result.stdout)
+        self.assertIn("`PROJECTS/TEST/.kg/`", result.stdout)
         self.assertIn("persistent memory", result.stdout)
         self.assertNotIn(str(self.tmp), result.stdout.split("next:", 1)[1])
         into = run("--into", str(repo / "docs" / "vault"))
@@ -213,8 +212,8 @@ class TestInto(Base):
         dest = self.tmp / "docs"
         result = run("--into", str(dest), graph=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertTrue((dest / "markdown-kg" / "markdown-kg-config.md").is_file())
-        self.assertIn("*.db*", (dest / "markdown-kg" / ".gitignore").read_text())
+        self.assertTrue((dest / ".kg" / "markdown-kg-config.json").is_file())
+        self.assertIn("*", (dest / ".kg" / ".gitignore").read_text().split())
 
 
 class TestDeliverables(Base):
@@ -275,7 +274,7 @@ class TestDeliverables(Base):
         result = run("--target", str(self.tmp), "--name", "TEST", graph=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         out = self.tmp / "PROJECTS" / "TEST-DELIVERABLES"
-        self.assertTrue((out / "markdown-kg" / "markdown-kg-config.md").is_file())
+        self.assertTrue((out / ".kg" / "markdown-kg-config.json").is_file())
         found = subprocess.run([sys.executable, str(KG), "search", str(out), "decision options", "--json"],
                                capture_output=True, text=True)
         self.assertEqual(found.returncode, 0, found.stderr)
@@ -311,7 +310,7 @@ class TestSymlinks(Base):
         elsewhere.mkdir()
         vault = self.tmp / "v" / "PROJECTS" / "T"
         vault.mkdir(parents=True)
-        (vault / "markdown-kg").symlink_to(elsewhere)
+        (vault / ".kg").symlink_to(elsewhere)
         result = run("--target", str(self.tmp / "v"), "--name", "T", graph=True)
         self.assertEqual(result.returncode, 1)
         self.assertIn("symlink", result.stdout)
@@ -320,9 +319,9 @@ class TestSymlinks(Base):
     @needs_kg
     def test_symlinked_file_in_graph_dir_is_refused(self) -> None:
         self.assertEqual(run("--target", str(self.tmp / "a"), "--name", "A", graph=True).returncode, 0)
-        other_db = self.tmp / "a" / "PROJECTS" / "A" / "markdown-kg" / "markdown-kg.db"
+        other_db = self.tmp / "a" / "PROJECTS" / "A" / ".kg" / "markdown-kg.db"
         before = other_db.read_bytes()
-        kg_dir = self.tmp / "b" / "PROJECTS" / "B" / "markdown-kg"
+        kg_dir = self.tmp / "b" / "PROJECTS" / "B" / ".kg"
         kg_dir.mkdir(parents=True)
         (kg_dir / "markdown-kg.db").symlink_to(other_db)
         result = run("--target", str(self.tmp / "b"), "--name", "B", graph=True)
@@ -335,20 +334,20 @@ class TestSymlinks(Base):
 class TestDryRunGraph(Base):
     def test_dry_run_on_a_new_vault_says_it_would_initialize(self) -> None:
         result = run("--into", str(self.tmp / "docs"), "--dry-run", graph=True)
-        self.assertIn("graph: would initialize markdown-kg/", result.stdout)
+        self.assertIn("graph: would initialize .kg/", result.stdout)
 
     def test_dry_run_on_a_vault_with_a_graph_says_it_is_present(self) -> None:
         dest = self.tmp / "docs"
-        (dest / "markdown-kg").mkdir(parents=True)
-        (dest / "markdown-kg" / "markdown-kg-config.md").write_text("```json\n{}\n```\n")
+        (dest / ".kg").mkdir(parents=True)
+        (dest / ".kg" / "markdown-kg-config.json").write_text("{}\n")
         result = run("--into", str(dest), "--dry-run", graph=True)
         self.assertNotIn("docs: graph: would initialize", result.stdout)
-        self.assertIn("docs: graph: markdown-kg/ present", result.stdout)
+        self.assertIn("docs: graph: .kg/ present", result.stdout)
 
     def test_dry_run_reports_the_refusals_the_real_run_makes(self) -> None:
         dest = self.tmp / "docs"
         dest.mkdir()
-        (dest / "markdown-kg").write_text("not a folder\n")
+        (dest / ".kg").write_text("not a folder\n")
         dry = run("--into", str(dest), "--dry-run", graph=True)
         self.assertNotIn("docs: graph: would initialize", dry.stdout)
         self.assertIn("not a directory", dry.stdout)
@@ -356,10 +355,13 @@ class TestDryRunGraph(Base):
         self.assertEqual(real.returncode, 1)
 
     def test_dry_run_on_a_legacy_graph_says_it_would_skip(self) -> None:
-        dest = self.tmp / "docs"
-        (dest / "vault-kg").mkdir(parents=True)
-        result = run("--into", str(dest), "--dry-run", graph=True)
-        self.assertIn("legacy vault-kg/", result.stdout)
+        for legacy in ("markdown-kg", "vault-kg"):
+            with self.subTest(legacy=legacy):
+                dest = self.tmp / legacy / "docs"
+                (dest / legacy).mkdir(parents=True)
+                result = run("--into", str(dest), "--dry-run", graph=True)
+                self.assertIn(f"legacy {legacy}/", result.stdout)
+                self.assertIn("`migrate`", result.stdout)
 
 
 class TestGraph(Base):
@@ -376,7 +378,7 @@ class TestGraph(Base):
         self.assertEqual(found.returncode, 0, found.stderr)
         ids = [h["section_id"] for h in json.loads(found.stdout)["results"]]
         self.assertTrue(ids and not any(i.startswith(("AGENTS", "CLAUDE")) for i in ids), ids)
-        self.assertEqual((vault / "markdown-kg" / ".gitignore").read_text(), "*.db*\n")
+        self.assertIn("*", (vault / ".kg" / ".gitignore").read_text().split())
 
     def test_shipped_slots_survive_init_on_a_folder_with_dated_notes(self) -> None:
         # init writes an exact-path row for each dated log it finds, which would outrank notes-*.md
@@ -402,8 +404,8 @@ class TestGraph(Base):
         result = run("--target", str(self.tmp / "v"), "--name", "T", graph=True)
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("legacy vault-kg/", result.stdout)
-        self.assertFalse(any(elsewhere.iterdir()) or (vault / "markdown-kg").exists())
-        (vault / "markdown-kg").write_text("")  # a file where the folder belongs
+        self.assertFalse(any(elsewhere.iterdir()) or (vault / ".kg").exists())
+        (vault / ".kg").write_text("")  # a file where the folder belongs
         result = run("--target", str(self.tmp / "v"), "--name", "T", graph=True)
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("not a directory", result.stdout)
@@ -411,20 +413,20 @@ class TestGraph(Base):
 
     def test_existing_gitignore_without_db_line_is_warned_not_rewritten(self) -> None:
         vault = self.tmp / "PROJECTS" / "T"
-        (vault / "markdown-kg").mkdir(parents=True)
-        (vault / "markdown-kg" / ".gitignore").write_text("*.log\n")
+        (vault / ".kg").mkdir(parents=True)
+        (vault / ".kg" / ".gitignore").write_text("*.log\n")
         result = run("--target", str(self.tmp), "--name", "T", graph=True)
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("WARNING", result.stdout)
-        self.assertEqual((vault / "markdown-kg" / ".gitignore").read_text(), "*.log\n")
+        self.assertEqual((vault / ".kg" / ".gitignore").read_text(), "*.log\n")
 
     def test_leftover_temp_file_fails_with_a_fix(self) -> None:
         run("--target", str(self.tmp), "--name", "T", graph=True)
-        kg_dir = self.tmp / "PROJECTS" / "T" / "markdown-kg"
-        config = kg_dir / "markdown-kg-config.md"
+        kg_dir = self.tmp / "PROJECTS" / "T" / ".kg"
+        config = kg_dir / "markdown-kg-config.json"
         text = config.read_text().replace('"path": "index.md"', '"path": "index-gone.md"')
         config.write_text(text)
-        (kg_dir / ".markdown-kg-config.md.tmp").write_text("stale\n")
+        (kg_dir / ".markdown-kg-config.json.tmp").write_text("stale\n")
         result = run("--target", str(self.tmp), "--name", "T", graph=True)
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("delete it and re-run", result.stdout)
@@ -432,10 +434,11 @@ class TestGraph(Base):
 
     def test_malformed_config_fails_cleanly_and_is_left_intact(self) -> None:
         run("--target", str(self.tmp), "--name", "T", graph=True)
-        config = self.tmp / "PROJECTS" / "T" / "markdown-kg" / "markdown-kg-config.md"
-        for bad in ('["not", "an", "object"]', '{"profiles": ["not-a-row"]}', '{"ignore": {"path": "x"}}'):
+        config = self.tmp / "PROJECTS" / "T" / ".kg" / "markdown-kg-config.json"
+        for bad in ('["not", "an", "object"]', '{"profiles": ["not-a-row"]}', '{"ignore": {"path": "x"}}',
+                    "```json\n{}\n```\n"):
             with self.subTest(config=bad):
-                text = f"# markdown-kg-config\n\n```json\n{bad}\n```\n"
+                text = bad
                 config.write_text(text)
                 result = run("--target", str(self.tmp), "--name", "T", graph=True)
                 self.assertEqual(result.returncode, 1, result.stderr)
@@ -446,13 +449,11 @@ class TestGraph(Base):
     def test_rerun_restores_only_missing_rows_and_keeps_the_operators(self) -> None:
         run("--target", str(self.tmp), "--name", "T", graph=True)
         vault = self.tmp / "PROJECTS" / "T"
-        config = vault / "markdown-kg" / "markdown-kg-config.md"
+        config = vault / ".kg" / "markdown-kg-config.json"
         rows = config_rows(vault)
         rows["profiles"] = [r for r in rows["profiles"] if r["path"] != "index.md"]
         rows["profiles"].append({"path": "notes-learnings.md", "profile": "reference"})
-        text = config.read_text()
-        block = re.search(r"```json\n(.*?)```", text, re.S)
-        config.write_text(text[:block.start(1)] + json.dumps(rows, indent=2) + "\n" + text[block.end(1):])
+        config.write_text(json.dumps(rows, indent=2) + "\n")
         result = run("--target", str(self.tmp), "--name", "T", graph=True)
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("1 profile row(s) merged", result.stdout)

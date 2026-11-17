@@ -1,7 +1,7 @@
 """Unit, behavior and end-to-end tests for code_kg.py.
 
 Behavior tests run against a temporary copy of tests/fixture-repo so the
-committed fixture never grows a .code-kg folder.
+committed fixture never grows a .kg folder.
 """
 import json
 import os
@@ -905,9 +905,10 @@ class TestProfileAndEntryConfig(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _cfg(self, cfg):
-        kg = self.repo / ".code-kg"
+        kg = self.repo / ".kg"
         kg.mkdir(exist_ok=True)
-        (kg / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+        (kg / "code-kg-config.json").write_text(json.dumps(cfg),
+                                                encoding="utf-8")
 
     def test_config_entry_point_globs_and_warning(self):
         (self.repo / "a").mkdir()
@@ -929,6 +930,110 @@ class TestProfileAndEntryConfig(unittest.TestCase):
         self._cfg({"profile": "generic"})
         counts = code_kg.ingest(self.repo)
         self.assertEqual(counts["profiles"], [])
+
+
+class TestEngineFolder(unittest.TestCase):
+    """The engine's files live in .kg/, shared with markdown-kg. A legacy
+    .code-kg/ is read and written in place under its own names and never
+    created."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.repo = Path(self.tmpdir)
+        (self.repo / "a.py").write_text("x = 1\n", encoding="utf-8")
+        (self.repo / "b.py").write_text("y = 2\n", encoding="utf-8")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def legacy(self):
+        old = self.repo / ".code-kg"
+        old.mkdir()
+        (old / "config.json").write_text(
+            json.dumps({"ignore": ["b.py"]}), encoding="utf-8")
+        return old
+
+    def files(self):
+        con = code_kg.connect(self.repo, must_exist=True)
+        got = {r[0] for r in con.execute("SELECT id FROM files")}
+        con.close()
+        return got
+
+    def test_legacy_folder_is_read_and_written_in_place(self):
+        old = self.legacy()
+        self.assertEqual(code_kg.config_path(self.repo), old / "config.json")
+        code_kg.ingest(self.repo, keep_previous=True)
+        code_kg.ingest(self.repo, keep_previous=True)
+        self.assertTrue((old / "code-kg.db").exists())
+        self.assertTrue((old / "code-kg-prev.db").exists())
+        self.assertEqual(self.files(), {"a.py"})     # the legacy config's rule
+        self.assertFalse((self.repo / ".kg").exists())
+
+    def test_a_kg_folder_holding_only_markdown_kg_leaves_the_legacy_in_use(self):
+        # markdown-kg shares .kg/, so the folder existing decides nothing.
+        old = self.legacy()
+        (self.repo / ".kg").mkdir()
+        (self.repo / ".kg" / "markdown-kg.db").write_bytes(b"")
+        self.assertEqual(code_kg.kg_dir(self.repo), old)
+
+    def test_current_files_win_and_no_engine_folder_is_corpus(self):
+        self.legacy()
+        (self.repo / ".kg").mkdir()
+        (self.repo / ".kg" / "code-kg-config.json").write_text(
+            json.dumps({"ignore": ["a.py"]}), encoding="utf-8")
+        code_kg.ingest(self.repo)
+        self.assertTrue((self.repo / ".kg" / "code-kg.db").exists())
+        self.assertFalse((self.repo / ".code-kg" / "code-kg.db").exists())
+        self.assertEqual(self.files(), {"b.py"})
+
+    def test_migrate_moves_the_graph_into_kg_unchanged(self):
+        old = self.legacy()
+        code_kg.ingest(self.repo, keep_previous=True)
+        code_kg.ingest(self.repo, keep_previous=True)
+        cfg_bytes = (old / "config.json").read_bytes()
+        db_bytes = (old / "code-kg.db").read_bytes()
+        got = code_kg.migrate(self.repo)
+        self.assertTrue(got["removed"])
+        kg = self.repo / ".kg"
+        self.assertFalse(old.exists())
+        self.assertEqual((kg / "code-kg-config.json").read_bytes(), cfg_bytes)
+        self.assertEqual((kg / "code-kg.db").read_bytes(), db_bytes)
+        self.assertTrue((kg / "code-kg-prev.db").exists())
+        self.assertTrue((kg / ".gitignore").exists())
+        self.assertEqual(self.files(), {"a.py"})
+        self.assertIsNone(code_kg.migrate(self.repo)["from"])
+
+    def test_migrate_keeps_a_legacy_folder_holding_unknown_files(self):
+        old = self.legacy()
+        (old / "notes.txt").write_text("mine\n", encoding="utf-8")
+        got = code_kg.migrate(self.repo)
+        self.assertEqual(got["left"], ["notes.txt"])
+        self.assertTrue((old / "notes.txt").exists())
+        self.assertEqual(code_kg.kg_dir(self.repo), self.repo / ".kg")
+
+    def test_init_refuses_a_linked_config(self):
+        outside = Path(self.tmpdir).parent / (Path(self.tmpdir).name + "-out")
+        self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        (self.repo / ".kg").mkdir()
+        os.symlink(outside / "planted.json",
+                   self.repo / ".kg" / "code-kg-config.json")
+        r = subprocess.run([sys.executable, str(ENGINE), "init",
+                            str(self.repo)], capture_output=True, text=True,
+                           timeout=120)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("symbolic link", r.stderr)
+        self.assertFalse(outside.exists())
+
+    def test_init_creates_only_the_current_folder(self):
+        r = subprocess.run([sys.executable, str(ENGINE), "init",
+                            str(self.repo)], capture_output=True, text=True,
+                           timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        cfg = self.repo / ".kg" / "code-kg-config.json"
+        self.assertIsInstance(json.loads(cfg.read_text(encoding="utf-8")),
+                              dict)
+        self.assertTrue((self.repo / ".kg" / "code-kg.db").exists())
+        self.assertFalse((self.repo / ".code-kg").exists())
 
 
 class TestCoverageParsers(unittest.TestCase):
@@ -1007,9 +1112,11 @@ class TestIngestBehavior(unittest.TestCase):
 
     def test_bare_ingest_seeds_gitignore(self):
         # `*` keeps the folder, its config and every database out of the repo.
-        gi = self.repo / ".code-kg" / ".gitignore"
+        gi = self.repo / ".kg" / ".gitignore"
         self.assertTrue(gi.exists())
         self.assertIn("*", gi.read_text().split())
+        self.assertTrue((self.repo / ".kg" / "code-kg.db").exists())
+        self.assertFalse((self.repo / ".code-kg").exists())
 
     def test_counts(self):
         self.assertEqual(self.counts["files"], 23)
@@ -1260,7 +1367,7 @@ class TestDepsIndexing(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def set_deps(self, mode: str) -> None:
-        cfg_file = self.repo / ".code-kg" / "config.json"
+        cfg_file = self.repo / ".kg" / "code-kg-config.json"
         cfg = json.loads(cfg_file.read_text())
         cfg["deps"] = mode
         cfg_file.write_text(json.dumps(cfg, indent=2, sort_keys=True))
@@ -1344,7 +1451,7 @@ class TestRelayAnswerKey(unittest.TestCase):
         cls.tmpdir = tempfile.mkdtemp()
         cls.repo = Path(cls.tmpdir) / "relay"
         shutil.copytree(RELAY, cls.repo,
-                        ignore=shutil.ignore_patterns(".code-kg",
+                        ignore=shutil.ignore_patterns(".kg", ".code-kg",
                                                       "__pycache__"))
         cls.key = json.loads(RELAY_KEY.read_text())
         code_kg.ingest(cls.repo)
@@ -1406,7 +1513,7 @@ class TestCommunities(unittest.TestCase):
         cls.tmpdir = tempfile.mkdtemp()
         cls.repo = Path(cls.tmpdir) / "repo"
         shutil.copytree(FIXTURE, cls.repo,
-                        ignore=shutil.ignore_patterns(".code-kg",
+                        ignore=shutil.ignore_patterns(".kg", ".code-kg",
                                                       "__pycache__"))
         code_kg.ingest(cls.repo)
         cls.report = code_kg.communities_report(cls.repo)
@@ -1559,7 +1666,7 @@ class TestGodNodes(unittest.TestCase):
         cls.tmpdir = tempfile.mkdtemp()
         cls.repo = Path(cls.tmpdir) / "repo"
         shutil.copytree(FIXTURE, cls.repo,
-                        ignore=shutil.ignore_patterns(".code-kg",
+                        ignore=shutil.ignore_patterns(".kg", ".code-kg",
                                                       "__pycache__"))
         code_kg.ingest(cls.repo)
 

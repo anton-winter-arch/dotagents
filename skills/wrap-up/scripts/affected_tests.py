@@ -126,7 +126,7 @@ def plan(root: Path, files: list[str]) -> tuple[list[tuple], list[str]]:
     return list(unique.values()), lint
 
 
-SKIP_DIRS = {"__pycache__", ".venv", "node_modules", ".pytest_cache", ".code-kg", "markdown-kg", "vault-kg", ".git"}
+SKIP_DIRS = {"__pycache__", ".venv", "node_modules", ".pytest_cache", ".kg", ".code-kg", "markdown-kg", "vault-kg", ".git"}
 
 
 def fingerprint(root: Path, kind: str, path: str, files: list[str], py: str) -> str:

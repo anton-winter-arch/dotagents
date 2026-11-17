@@ -231,7 +231,7 @@
  },
  "init <REPO>": {
   "err": "",
-  "out": "initialized <REPO>/.code-kg\n  1 aliases loaded from tsconfig.json\ningest: {\"alias_notes\": [\"1 aliases loaded from tsconfig.json\"], \"dep_files\": 0, \"edges\": 39, \"entry_points\": 7, \"entry_warnings\": [], \"files\": 23, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [], \"symbols\": 28}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
+  "out": "initialized <REPO>/.kg\n  1 aliases loaded from tsconfig.json\ningest: {\"alias_notes\": [\"1 aliases loaded from tsconfig.json\"], \"dep_files\": 0, \"edges\": 39, \"entry_points\": 7, \"entry_warnings\": [], \"files\": 23, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [], \"symbols\": 28}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
   "rc": 0
  },
  "neighbors <REPO> .github/actions/setup/action.yml --depth 2 --json": {

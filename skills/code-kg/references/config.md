@@ -1,7 +1,8 @@
 # code-kg config reference
 
-`<repo>/.code-kg/config.json`, one JSON object. A missing config is valid:
-every field defaults to empty. Edit the file directly.
+`<repo>/.kg/code-kg-config.json`, one JSON object (`.code-kg/config.json` in a
+repo not yet migrated). A missing config is valid: every field defaults to
+empty. Edit the file directly.
 
 ```json
 {

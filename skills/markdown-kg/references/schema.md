@@ -1,8 +1,9 @@
 # markdown-kg.db schema reference
 
-`markdown_kg.py` creates the SQLite database at `<vault>/markdown-kg/markdown-kg.db`, beside `markdown-kg-config.md`.
-A vault built before the folder was renamed has the database at the legacy `vault-kg/vault-kg.db`, and the engine keeps using that file in place.
+`markdown_kg.py` creates the SQLite database at `<vault>/.kg/markdown-kg.db`, beside `markdown-kg-config.json`.
+A vault not yet migrated has it at the legacy `markdown-kg/markdown-kg.db` or `vault-kg/vault-kg.db`, and the engine keeps using that file in place.
 Read this before writing raw SQL against the DB; prefer the CLI subcommands otherwise.
+When code-kg has indexed the same root, its `code-kg.db` sits in the same `.kg/`, and one connection can read both: `ATTACH '.kg/code-kg.db' AS code` names its tables `code.<table>`.
 
 ## Contents
 
@@ -30,7 +31,7 @@ Read this before writing raw SQL against the DB; prefer the CLI subcommands othe
 ## notes
 
 One row per ingested markdown file.
-Dot folders such as `.obsidian`, `.git` and `.trash`, the folders in `SKIP_FOLDERS` and the engine's own folder under either name (`markdown-kg/` or the legacy `vault-kg/`) are never ingested.
+Dot folders such as `.obsidian`, `.git` and `.trash`, the folders in `SKIP_FOLDERS` and the engine's legacy folders (`markdown-kg/` and `vault-kg/`) are never ingested; `.kg/` is a dot folder.
 Enumeration is a filesystem walk, so gitignored notes and notes
 inside a nested git repo are ingested like any other; exclusion belongs to
 the engine's own ignore rules. Files excluded by an ignore rule are not here

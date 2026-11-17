@@ -24,7 +24,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import markdown_kg
+from fixture_copy import copy_fixture
 
 HERE = Path(__file__).resolve().parent
 GOLDEN = HERE / "golden"
@@ -87,8 +89,7 @@ def _norm(text: str, vault: Path) -> str:
 def capture(fixture: str) -> dict:
     tmp = Path(tempfile.mkdtemp(prefix="mdkg-golden-"))
     try:
-        vault = tmp / "vault"
-        shutil.copytree(HERE / fixture, vault)
+        vault = copy_fixture(HERE / fixture, tmp / "vault")
         v = str(vault)
         got: dict = {}
 

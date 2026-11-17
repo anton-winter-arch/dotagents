@@ -231,7 +231,7 @@
  },
  "init <REPO>": {
   "err": "",
-  "out": "initialized <REPO>/.code-kg\n  profile: nextjs\n  1 aliases loaded from tsconfig.base.json\n  2 aliases loaded from tsconfig.json\n  1 aliases loaded from package.json imports\n  data stores: sqlite (details: `data`)\ningest: {\"alias_notes\": [\"1 aliases loaded from tsconfig.base.json\", \"2 aliases loaded from tsconfig.json\", \"1 aliases loaded from package.json imports\"], \"dep_files\": 0, \"edges\": 153, \"entry_points\": 19, \"entry_warnings\": [], \"files\": 70, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [\"nextjs\"], \"symbols\": 139}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
+  "out": "initialized <REPO>/.kg\n  profile: nextjs\n  1 aliases loaded from tsconfig.base.json\n  2 aliases loaded from tsconfig.json\n  1 aliases loaded from package.json imports\n  data stores: sqlite (details: `data`)\ningest: {\"alias_notes\": [\"1 aliases loaded from tsconfig.base.json\", \"2 aliases loaded from tsconfig.json\", \"1 aliases loaded from package.json imports\"], \"dep_files\": 0, \"edges\": 153, \"entry_points\": 19, \"entry_warnings\": [], \"files\": 70, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [\"nextjs\"], \"symbols\": 139}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
   "rc": 0
  },
  "neighbors <REPO> CLAUDE.md --depth 2 --json": {

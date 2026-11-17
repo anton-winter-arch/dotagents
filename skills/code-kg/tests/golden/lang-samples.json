@@ -231,7 +231,7 @@
  },
  "init <REPO>": {
   "err": "",
-  "out": "initialized <REPO>/.code-kg\ningest: {\"alias_notes\": [], \"dep_files\": 0, \"edges\": 13, \"entry_points\": 7, \"entry_warnings\": [], \"files\": 19, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [], \"symbols\": 26}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
+  "out": "initialized <REPO>/.kg\ningest: {\"alias_notes\": [], \"dep_files\": 0, \"edges\": 13, \"entry_points\": 7, \"entry_warnings\": [], \"files\": 19, \"ignored\": 0, \"parse_errors\": 0, \"profiles\": [], \"symbols\": 26}\nnext: try `search <repo> \"<question>\"` and `entrypoints <repo>`\n",
   "rc": 0
  },
  "neighbors <REPO> cmd/svc/main.go --depth 2 --json": {

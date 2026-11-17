@@ -9,7 +9,7 @@ disable-model-invocation: true
 This skill is now `skills/markdown-kg/`.
 The engine and its commands are unchanged; the skill name, the script name and the engine's folder inside a vault moved.
 Use `python3 <skills-root>/markdown-kg/scripts/markdown_kg.py`.
-The engine's folder inside a vault is now `markdown-kg/`, and an existing `vault-kg/` folder keeps working in place.
+The engine's files inside a vault are now in `.kg/`; an existing `vault-kg/` folder keeps working in place until markdown-kg's `migrate` moves it.
 
 `scripts/obsidian_kg.py` here is a forwarder: it runs the new engine with the
 same arguments and prints one notice to stderr, so an old command line keeps

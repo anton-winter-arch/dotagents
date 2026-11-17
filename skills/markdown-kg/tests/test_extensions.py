@@ -80,9 +80,7 @@ class VaultCase(unittest.TestCase):
         self.vault = self.tmp / "vault"
         shutil.copytree(self.fixture, self.vault)
         if self.fixture == WIKI:
-            cfg_file = kg.config_path(self.vault)
-            cfg_file.parent.mkdir(exist_ok=True)
-            cfg_file.write_text(kg.dump_config(WIKI_CONFIG), encoding="utf-8")
+            kg.write_config(self.vault, WIKI_CONFIG)
         run("ingest", str(self.vault))
 
     def json(self, *argv: str):
@@ -105,8 +103,8 @@ class VaultCase(unittest.TestCase):
         return kg.load_config(self.vault)
 
     def write_config(self, cfg: dict) -> None:
-        kg.config_path(self.vault).write_text(
-            "```json\n" + json.dumps(cfg) + "\n```\n", encoding="utf-8")
+        kg.config_path(self.vault).write_text(json.dumps(cfg),
+                                              encoding="utf-8")
 
     def limits(self, floor: int) -> None:
         old = kg.WORD_FLOOR
@@ -235,11 +233,8 @@ class TermSafeTests(unittest.TestCase):
             self.assertEqual(rc, 0, argv)
             self.assertNotIn(self.ESC, out)
             self.assertIn("odd\\x1b[2Jname", out)
-        (tmp / "markdown-kg").mkdir(exist_ok=True)
-        kg.config_path(tmp).write_text("```json\n" + json.dumps(
-            {"entity_sources": [{"path": self.ESC + "]0;x" + chr(7),
-                                 "time": "bad"}]}) + "\n```\n",
-            encoding="utf-8")
+        kg.write_config(tmp, {"entity_sources": [
+            {"path": self.ESC + "]0;x" + chr(7), "time": "bad"}]})
         rc, out, err = run("ingest", str(tmp))
         self.assertEqual(rc, 1)
         self.assertIn("'static' or 'evolving'", err)
@@ -944,7 +939,7 @@ class RelationsConfigTests(VaultCase):
 class ConfigCommandTests(VaultCase):
     def test_report(self):
         got = self.json("config")
-        self.assertEqual(got["path"], "markdown-kg/markdown-kg-config.md")
+        self.assertEqual(got["path"], ".kg/markdown-kg-config.json")
         self.assertEqual(got["status"], "WARNINGS")
         self.assertEqual(got["warnings"], [
             "3 derived entity names were left out (see skipped)",
@@ -998,7 +993,7 @@ class ConfigCommandTests(VaultCase):
     def test_text_render(self):
         rc, out, _ = run("config", str(self.vault))
         self.assertEqual(rc, 0)
-        self.assertIn("markdown-kg/markdown-kg-config.md: WARNINGS", out)
+        self.assertIn(".kg/markdown-kg-config.json: WARNINGS", out)
         self.assertIn("entity source entities/*.md: 4 notes, 3 entities", out)
         self.assertIn("skipped 'RP' from entities/Rill Pump", out)
 
@@ -1603,7 +1598,7 @@ class CodeTests(LinkedCase):
     def test_the_code_folder_is_left_as_it_was(self):
         def snapshot():
             return sorted((p.name, p.stat().st_size, p.stat().st_mtime_ns)
-                          for p in (self.repo / ".code-kg").iterdir())
+                          for p in (self.repo / ".kg").iterdir())
         before = snapshot()
         self.json("code", "guide")
         self.assertEqual(snapshot(), before)
@@ -1612,8 +1607,8 @@ class CodeTests(LinkedCase):
         """code-kg refreshes its database before it answers, so a link here
         would let the vault's tree choose where that write lands."""
         real = self.tmp / "elsewhere"
-        shutil.move(str(self.repo / ".code-kg"), str(real))
-        os.symlink(real, self.repo / ".code-kg")
+        shutil.move(str(self.repo / ".kg"), str(real))
+        os.symlink(real, self.repo / ".kg")
         (self.repo / "src" / "tidelog" / "added.py").write_text(
             "x = 1\n", encoding="utf-8")
 
@@ -2022,36 +2017,41 @@ class CodeWithoutDatabaseTests(LinkedCase):
         self.assertEqual(len(got["missing"]), 1)
         self.assertIn("ingest", got["missing"][0])
         self.assertEqual(len(got["files"]), 7)
-        self.assertFalse((self.repo / ".code-kg").exists())
+        self.assertFalse((self.repo / ".kg").exists())
 
     def test_the_search_stops_at_the_repo_the_vault_is_in(self):
         (self.repo / ".git").mkdir()
-        (self.tmp / ".code-kg").mkdir()
-        (self.tmp / ".code-kg" / "code-kg.db").write_bytes(b"")
+        (self.tmp / ".kg").mkdir()
+        (self.tmp / ".kg" / "code-kg.db").write_bytes(b"")
         got = self.json("code", "guide")
         self.assertIsNone(got["repo"])
         self.assertIn("no code-kg database", got["missing"][0])
 
-    def test_the_search_stops_below_the_home_folder(self):
+    def test_a_legacy_code_folder_still_marks_the_repo(self):
         (self.repo / ".code-kg").mkdir()
         (self.repo / ".code-kg" / "code-kg.db").write_bytes(b"")
+        self.assertEqual(kg.find_code_repo(self.vault), self.repo)
+
+    def test_the_search_stops_below_the_home_folder(self):
+        (self.repo / ".kg").mkdir()
+        (self.repo / ".kg" / "code-kg.db").write_bytes(b"")
         with mock.patch.object(kg.Path, "home", return_value=self.repo):
             got = self.json("code", "guide")
         self.assertIsNone(got["repo"])
 
     def test_a_dangling_git_link_still_ends_the_search(self):
         os.symlink(self.tmp / "nowhere", self.repo / ".git")
-        (self.tmp / ".code-kg").mkdir()
-        (self.tmp / ".code-kg" / "code-kg.db").write_bytes(b"")
+        (self.tmp / ".kg").mkdir()
+        (self.tmp / ".kg" / "code-kg.db").write_bytes(b"")
         self.assertIsNone(self.json("code", "guide")["repo"])
 
     def test_a_code_folder_without_a_database(self):
-        (self.repo / ".code-kg").mkdir()
+        (self.repo / ".kg").mkdir()
         got = self.json("code", "guide")
         self.assertEqual(len(got["missing"]), 1)
         self.assertIn("ingest", got["missing"][0])
         self.assertEqual(len(got["files"]), 7)
-        self.assertEqual(list((self.repo / ".code-kg").iterdir()), [])
+        self.assertEqual(list((self.repo / ".kg").iterdir()), [])
 
 
 @unittest.skipUnless(kg.SIBLING_CLI.is_file(), "the code-kg skill is absent")

@@ -198,7 +198,7 @@ script, SQLite+FTS5, no network and no embeddings. The skill was named
 `obsidian-kg` until the engine's reach outgrew the editor's name; `skills/obsidian-kg/`
 is a pointer whose `scripts/obsidian_kg.py` forwards to the engine, kept until no
 live caller in a sibling repo names the old path, then removed. Retrieval addresses sections
-rather than files, a profile in `<vault>/markdown-kg/markdown-kg-config.md` declares
+rather than files, a profile in `<vault>/.kg/markdown-kg-config.json` declares
 what one section is, and a declared unit is never fragmented. Aggregates over
 time (`themes` and `trends` over log-dated notes, `timeline` and `during` over
 detected dates) are the layer no search provides.
