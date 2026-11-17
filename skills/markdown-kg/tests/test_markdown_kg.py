@@ -3274,6 +3274,78 @@ class FolderNameTests(VaultCase):
         self.assertFalse((self.vault / "vault-kg").exists())
 
 
+class ParseCacheEquivalence(VaultCase):
+    """The parse cache must never change the graph: a warm ingest, an ingest after
+    an edit, and an ingest over a tampered cache all equal a cold build."""
+
+    def setUp(self):
+        super().setUp()
+        self.station(self.tmp / "state-a")
+
+    def station(self, state: Path):
+        """Point the salt at a test-owned state folder, as a fresh station would."""
+        old = os.environ.get("XDG_STATE_HOME")
+        os.environ["XDG_STATE_HOME"] = str(state)
+        markdown_kg.ParseCache._source = None
+        self.addCleanup(lambda: os.environ.pop("XDG_STATE_HOME", None) if old is None
+                        else os.environ.__setitem__("XDG_STATE_HOME", old))
+        self.addCleanup(setattr, markdown_kg.ParseCache, "_source", None)
+
+    def keys(self):
+        con = self.db()
+        out = {k for (k,) in con.execute("SELECT key FROM parse_cache")}
+        con.close()
+        return out
+
+    def test_a_cache_from_another_station_is_never_trusted(self):
+        # A synced vault brings its db along; rows keyed under another station's
+        # salt must all miss and be dropped, not feed the graph.
+        self.ingest()
+        theirs = self.keys()
+        self.station(self.tmp / "state-b")
+        con = self.db()
+        con.execute("UPDATE parse_cache SET value = '[\"planted\"]'")
+        con.commit()
+        con.close()
+        self.assertEqual(self.ingest(), self.cold())
+        self.assertFalse(theirs & self.keys())
+
+    def graph(self):
+        con = self.db()
+        out = {}
+        for (table,) in con.execute("SELECT name FROM sqlite_master WHERE type='table'"
+                                    " AND name NOT LIKE 'sqlite_%'"):
+            if table not in ("meta", "parse_cache"):
+                out[table] = sorted(map(repr, con.execute(f'SELECT * FROM "{table}"')))
+        con.close()
+        return out
+
+    def cold(self):
+        markdown_kg.db_path(self.vault).unlink()
+        with contextlib.redirect_stdout(io.StringIO()):
+            markdown_kg.ingest(self.vault)
+        return self.graph()
+
+    def ingest(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            markdown_kg.ingest(self.vault)
+        return self.graph()
+
+    def test_warm_edited_and_tampered_runs_equal_a_cold_build(self):
+        self.ingest()
+        self.assertEqual(self.ingest(), self.cold())
+        note = sorted(self.vault.rglob("*.md"))[0]
+        note.write_text(note.read_text() + "\n## Added\n\nA [[nowhere]] link.\n")
+        self.assertEqual(self.ingest(), self.cold())
+        self.ingest()
+        con = self.db()
+        self.assertGreater(con.execute("SELECT count(*) FROM parse_cache").fetchone()[0], 0)
+        con.execute("UPDATE parse_cache SET value = 'not json'")
+        con.commit()
+        con.close()
+        self.assertEqual(self.ingest(), self.cold())
+
+
 class CaseFoldPrefilter(unittest.TestCase):
     """load_entities skips a section unless the folded alias occurs in its folded
     text, so every match re.IGNORECASE finds must survive the fold. These pairs

@@ -2041,21 +2041,37 @@ def _finish_sections(out: list[dict], text: str) -> None:
             if parent:
                 sec["doc_date"] = parent["doc_date"]
     for sec in out:
-        start, end = sec["char_start"], sec["char_end"]
-        nested = sorted((o["char_start"] - start, o["char_end"] - start) for o in out
-                        if o is not sec and o["char_start"] >= start and o["char_end"] <= end
-                        and 0 < o["char_end"] - o["char_start"] < end - start)
-        # The body minus the nested spans, cut by slices rather than per character.
-        body = sec["body"]
-        limit = max(0, min(len(body), end - start))
-        pieces, pos = [], 0
-        for a, b in nested:
-            if a > pos:
-                pieces.append(body[min(pos, limit):min(a, limit)])
-            pos = max(pos, b)
-        pieces.append(body[min(pos, limit):limit])
-        sec["own_body"] = "".join(pieces)
+        sec["own_body"] = _own_body(sec, out)
         sec["own_words"] = word_count(sec["own_body"])
+
+
+def _own_body(sec: dict, out: list[dict]) -> str:
+    """The section's body minus the sections nested inside it, cut by slices."""
+    start, end = sec["char_start"], sec["char_end"]
+    nested = sorted((o["char_start"] - start, o["char_end"] - start) for o in out
+                    if o is not sec and o["char_start"] >= start and o["char_end"] <= end
+                    and 0 < o["char_end"] - o["char_start"] < end - start)
+    body = sec["body"]
+    limit = max(0, min(len(body), end - start))
+    pieces, pos = [], 0
+    for a, b in nested:
+        if a > pos:
+            pieces.append(body[min(pos, limit):min(a, limit)])
+        pos = max(pos, b)
+    pieces.append(body[min(pos, limit):limit])
+    return "".join(pieces)
+
+
+def _pack_sections(sections: list[dict]) -> list[dict]:
+    """Sections without their text, which _unpack_sections cuts back out of the note."""
+    return [{k: v for k, v in s.items() if k not in ("body", "own_body")} for s in sections]
+
+
+def _unpack_sections(rows: list[dict], text: str) -> list[dict]:
+    out = [dict(r, body=text[r["char_start"]:r["char_end"]]) for r in rows]
+    for sec in out:
+        sec["own_body"] = _own_body(sec, out)
+    return out
 
 
 def _split_if_oversize(out: list[dict], unit: dict | None, text: str,
@@ -2230,6 +2246,141 @@ def learn_note(text: str, row: dict) -> dict:
     return learned
 
 
+def _json_enc(value):
+    """JSON keeps lists but not tuples; a tuple is tagged so it comes back a tuple."""
+    if isinstance(value, tuple):
+        return {"__t": [_json_enc(v) for v in value]}
+    if isinstance(value, list):
+        return [_json_enc(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _json_enc(v) for k, v in value.items()}
+    return value
+
+
+def _json_dec(value):
+    if isinstance(value, dict):
+        if set(value) == {"__t"}:
+            return tuple(_json_dec(v) for v in value["__t"])
+        return {k: _json_dec(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_dec(v) for v in value]
+    return value
+
+
+class ParseCache:
+    """Results of the pure per-note and per-section work, kept in the graph's
+    own database between ingests so an unchanged note is never parsed again.
+    The key is this engine's source, the Python version, the current value of
+    every module constant (a test or a flag may lower SIZE_CEILING) and the
+    inputs, so any engine change starts cold. Values are JSON, never pickle: the database can
+    arrive with a synced vault. A value that does not survive the JSON round
+    trip exactly is computed every time and never stored. Keys not used by an
+    ingest are dropped at its end, so the cache holds one generation."""
+
+    _source = None
+
+    def __init__(self, con: sqlite3.Connection):
+        con.execute("CREATE TABLE IF NOT EXISTS parse_cache("
+                    "key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        if ParseCache._source is None:
+            # The station salt keeps the keys unguessable: a db that arrives with
+            # a synced vault can carry planted rows, and without it anyone who
+            # can write the vault could compute a key and have its value trusted.
+            salt = _station_salt()
+            ParseCache._source = (None if salt is None else
+                                  salt + Path(__file__).read_bytes() + sys.version.encode())
+        self.off = ParseCache._source is None
+        if self.off:
+            self.con, self.used, self.new = con, set(), []
+            return
+        def stable(v):
+            # Sets iterate in hash order, which changes per process; sort them.
+            if isinstance(v, (set, frozenset)):
+                return repr(sorted(map(stable, v)))
+            if isinstance(v, dict):
+                return repr(sorted((stable(k), stable(x)) for k, x in v.items()))
+            if isinstance(v, (list, tuple)):
+                return repr([stable(x) for x in v])
+            return repr(v)
+        constants = sorted((k, stable(v)) for k, v in globals().items()
+                           if k.isupper() and isinstance(
+                               v, (int, float, str, tuple, list, set, frozenset, dict)))
+        self._engine = hashlib.sha256(ParseCache._source + repr(constants).encode()).hexdigest()
+        self.con, self.used, self.new = con, set(), []
+
+    def get(self, name: str, key_parts: list, compute, pack=None, unpack=None):
+        """`compute()` through the cache. `pack` shrinks a value before it is stored
+        and `unpack` restores it; a value is stored only when unpacking the stored
+        form gives back exactly what `compute()` returned."""
+        if self.off:
+            return compute()
+        pack = pack or (lambda v: v)
+        unpack = unpack or (lambda v: v)
+        key = hashlib.sha256(json.dumps([self._engine, name, key_parts],
+                                        sort_keys=True).encode()).hexdigest()
+        self.used.add(key)
+        row = self.con.execute("SELECT value FROM parse_cache WHERE key = ?",
+                               (key,)).fetchone()
+        if row is not None:
+            try:
+                return unpack(_json_dec(json.loads(row[0])))
+            except Exception:           # any unreadable value is recomputed, never trusted
+                pass
+        value = compute()
+        try:
+            blob = json.dumps(_json_enc(pack(value)))
+            if unpack(_json_dec(json.loads(blob))) == value:
+                self.new.append((key, blob))
+        except (TypeError, ValueError, KeyError):
+            pass
+        return value
+
+    def flush(self) -> None:
+        if self.off:
+            self.con.execute("DELETE FROM parse_cache")
+            return
+        self.con.executemany("INSERT OR REPLACE INTO parse_cache(key, value)"
+                             " VALUES (?,?)", self.new)
+        self.con.execute("CREATE TEMP TABLE IF NOT EXISTS used_keys(key TEXT PRIMARY KEY)")
+        self.con.execute("DELETE FROM used_keys")
+        self.con.executemany("INSERT OR IGNORE INTO used_keys(key) VALUES (?)",
+                             [(k,) for k in self.used])
+        self.con.execute("DELETE FROM parse_cache WHERE key NOT IN (SELECT key FROM used_keys)")
+
+
+def _station_salt() -> bytes | None:
+    """32 random bytes kept in this station's user state folder, outside every
+    vault, created on first use; None when the folder cannot be written, which
+    turns the parse cache off rather than leaving its keys guessable."""
+    base = (Path(os.environ["LOCALAPPDATA"]) if os.name == "nt" and os.environ.get("LOCALAPPDATA")
+            else Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"))
+    path = base / "markdown-kg" / "cache-salt"
+    try:
+        data = path.read_bytes()
+        if len(data) == 32:
+            return data
+    except OSError:
+        pass
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(os.urandom(32))
+    except FileExistsError:
+        pass                    # another process created it first; read theirs
+    except OSError:
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return data if len(data) == 32 else None
+
+
+def _first_h1(text: str) -> str | None:
+    return next((n.heading for n in parse_headings(text) if n.level == 1), None)
+
+
 def ingest(vault: Path, keep_previous: bool = False) -> dict:
     checkpoint = None
     refused = linked_store(vault, kg_dir(vault), db_path(vault))
@@ -2245,6 +2396,7 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
             write_checkpoint(live, prev_db_path(vault))
             checkpoint = str(prev_db_path(vault))
     con = connect(vault)
+    memo = ParseCache(con)
     cfg = load_config(vault)
     kgignore = load_kgignore(vault)
     report = {"notes": 0, "sections": 0, "resolved": 0, "unresolved": 0,
@@ -2306,8 +2458,8 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
     for nid in ids:
         doc = parsed[nid]
         meta, text, row = doc["meta"], doc["text"], doc["row"]
-        heading = next((n.heading for n in parse_headings(text) if n.level == 1),
-                       None)
+        doc["hash"] = text_hash = hashlib.sha256(text.encode()).hexdigest()
+        heading = memo.get("h1", [text_hash], lambda: _first_h1(text))
         title = str(meta.get("title") or heading or nid.rsplit("/", 1)[-1])
         tag_list = _listify(meta.get("tags", []))
         alias_list = _listify(meta.get("aliases", []))
@@ -2342,8 +2494,7 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
             " body, profile, weight, doc_date, status)"
             " VALUES (?,?,?,?,?,?,?,?,?,?, 'hot')",
             (nid, doc["rel"], title, ", ".join(tag_list), ", ".join(alias_list),
-             hashlib.sha256(text.encode()).hexdigest(), text, profile, weight,
-             note_date))
+             text_hash, text, profile, weight, note_date))
         report["notes"] += 1
         for tag in sorted(set(tag_list)):
             con.execute("INSERT INTO tags(note_id, tag) VALUES (?,?)",
@@ -2363,18 +2514,24 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
                 "INSERT INTO properties(note_id, key, value) VALUES (?,?,?)",
                 (nid, key, str(val)))
 
-        learned = learn_note(text, row)
+        learned = memo.get("learn_note", [text_hash, row], lambda: learn_note(text, row))
         if learned.get("date_order"):
             con.execute(
                 "INSERT OR REPLACE INTO properties(note_id, key, value)"
                 " VALUES (?,?,?)",
                 (nid, "kg-date-order", order_label(learned["date_order"])))
+        unpack = lambda rows: _unpack_sections(rows, text)  # noqa: E731
         if profile == "list":
-            sections = build_list_sections(nid, text, row)
+            sections = memo.get("build_list_sections", [nid, text_hash, row],
+                                lambda: build_list_sections(nid, text, row),
+                                _pack_sections, unpack)
         else:
-            sections = build_sections(nid, text, {**row, "profile": profile},
-                                      learned)
-        anns, cands = scan_annotations(text, registered_markers)
+            sections = memo.get("build_sections", [nid, text_hash, row, profile, learned],
+                                lambda: build_sections(nid, text, {**row, "profile": profile},
+                                                       learned),
+                                _pack_sections, unpack)
+        anns, cands = memo.get("scan_annotations", [text_hash, sorted(registered_markers)],
+                               lambda: scan_annotations(text, registered_markers))
         for tok_kind in cands:
             # Bounded: counts keep accumulating for known tokens, but past
             # 1000 distinct tokens no new rows are minted - a hostile corpus
@@ -2454,9 +2611,11 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
         resolved; then the anchor either lands in a section or is missing."""
         dst_section, dst_line = "", 0
         if status == "resolved" and dst:
-            if dst not in anchor_cache:
-                anchor_cache[dst] = anchor_index(parsed[dst]["text"])
-            at = resolve_anchor(anchor_cache[dst], anchor)
+            def resolve():
+                if dst not in anchor_cache:
+                    anchor_cache[dst] = anchor_index(parsed[dst]["text"])
+                return resolve_anchor(anchor_cache[dst], anchor)
+            at = memo.get("resolve_anchor", [parsed[dst]["hash"], anchor], resolve)
             if at is None:
                 status = "anchor-missing"
             else:
@@ -2475,13 +2634,15 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
         # every line of the note and not every character, so an offset from
         # them falls short of its place in `text` by all the code above it.
         # The line is exact, so the section is found by line.
-        starts = _line_starts(strip_code(text))
+        h = doc["hash"]
+        starts = memo.get("line_starts", [h], lambda: _line_starts(strip_code(text)))
 
         def section_of(off: int) -> str:
             return _section_on_line(sections,
                                     bisect.bisect_right(starts, off))
 
-        for target, anchor, kind, off in scan_wikilinks(text):
+        for target, anchor, kind, off in memo.get("scan_wikilinks", [h],
+                                                  lambda: list(scan_wikilinks(text))):
             sec = section_of(off)
             dst, status = nid, "resolved"       # a same-note link
             if target:
@@ -2497,7 +2658,8 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
             if anchor:
                 anchor_rows.append(anchor_row(nid, sec, dst, target, anchor,
                                               "wiki", status))
-        for target, anchor, style, off in scan_md_links(text):
+        for target, anchor, style, off in memo.get("scan_md_links", [h],
+                                                   lambda: list(scan_md_links(text))):
             sec = section_of(off)
             dst, status = nid, "resolved"       # a same-note link
             written = urllib.parse.unquote(target)
@@ -2531,7 +2693,8 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
         con.executemany(
             "INSERT OR IGNORE INTO file_links(src, section_id, target, path,"
             " syntax) VALUES (?,?,?,?,?)", file_rows)
-        for field, origin, syntax, target, off in scan_field_links(text):
+        for field, origin, syntax, target, off in memo.get(
+                "scan_field_links", [h], lambda: list(scan_field_links(text))):
             if syntax == "wiki":
                 dst, status = wiki_dst(target)
             else:
@@ -2546,7 +2709,7 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
                 (nid, field, origin, urllib.parse.unquote(target), dst,
                  status, _section_at(sections, off)))
         tag_counts: dict[tuple[str, str], int] = {}
-        for tag, off in scan_inline_tags(text):
+        for tag, off in memo.get("scan_inline_tags", [h], lambda: list(scan_inline_tags(text))):
             key_ = (_section_at(sections, off), tag)
             tag_counts[key_] = tag_counts.get(key_, 0) + 1
         con.executemany(
@@ -2557,7 +2720,8 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
             "INSERT OR IGNORE INTO code_spans(note_id, section_id, text,"
             " line) VALUES (?,?,?,?)",
             [(nid, _section_on_line(sections, line), span, line)
-             for span, line in scan_code_spans(text)])
+             for span, line in memo.get("scan_code_spans", [h],
+                                        lambda: list(scan_code_spans(text)))])
 
     for (token, kind), n in sorted(cand_counts.items()):
         con.execute(
@@ -2567,8 +2731,9 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
     ent_report = load_entities(con, cfg, all_sections, [
         {"id": nid, "rel": parsed[nid]["rel"], "meta": parsed[nid]["meta"],
          "title": parsed[nid]["title"], "aliases": parsed[nid]["aliases"]}
-        for nid in ids])
+        for nid in ids], memo)
     report.update(ent_report)
+    memo.flush()
 
     con.execute("INSERT INTO sections_fts(sections_fts) VALUES ('rebuild')")
     con.execute("INSERT INTO meta(key, value) VALUES ('ingested_at', ?)",
@@ -2762,7 +2927,7 @@ def derive_entities(con: sqlite3.Connection, cfg: dict, notes: list[dict],
 
 
 def load_entities(con: sqlite3.Connection, cfg: dict, sections: list[dict],
-                  notes: list[dict] | None = None) -> dict:
+                  notes: list[dict] | None = None, memo: ParseCache | None = None) -> dict:
     """Gazetteer matching from config. Longest alias wins; matches inside code
     fences do not count. Derived from a file, so it is wiped and rebuilt."""
     rows = [r for r in cfg.get("entities", []) if isinstance(r, dict)
@@ -2810,11 +2975,12 @@ def load_entities(con: sqlite3.Connection, cfg: dict, sections: list[dict],
     # longest alias first, so a longer name is never eaten by a shorter one
     pairs.sort(key=lambda p: (-len(p[0]), p[0]))
     compiled = [(case_fold(name), alias_pattern(name), canonical) for name, canonical in pairs]
-    mentions = 0
-    for sec in sections:
+    gazetteer = hashlib.sha256(json.dumps(pairs).encode()).hexdigest()
+
+    def count_mentions(own_body: str) -> dict[str, int]:
         # own_body, so a name inside a child section is counted against that
         # child and not a second time against the unit that contains it
-        text = strip_code(sec["own_body"])
+        text = strip_code(own_body)
         folded = case_fold(text)
         claimed = [False] * len(text)
         counts: dict[str, int] = {}
@@ -2829,6 +2995,14 @@ def load_entities(con: sqlite3.Connection, cfg: dict, sections: list[dict],
                 for i in range(m.start(), m.end()):
                     claimed[i] = True
                 counts[canonical] = counts.get(canonical, 0) + 1
+        return counts
+
+    mentions = 0
+    for sec in sections:
+        own = sec["own_body"]
+        counts = (memo.get("mentions", [hashlib.sha256(own.encode()).hexdigest(), gazetteer],
+                           lambda: count_mentions(own))
+                  if memo is not None else count_mentions(own))
         for canonical in sorted(counts):
             con.execute(
                 "INSERT OR REPLACE INTO mentions(canonical, section_id,"
