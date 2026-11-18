@@ -88,7 +88,7 @@ KG_DIRS = (KG_DIR, LEGACY_KG_DIR)
 # Bump when a parser or schema change must re-index a repo whose files have
 # not changed. The manifest folds it in, so the next read command re-ingests
 # once instead of answering from tables the old engine never filled.
-INDEX_REV = 3
+INDEX_REV = 4
 
 # Folders that are never source: build output, package caches, third-party deps.
 SKIP_FOLDERS = {
@@ -307,7 +307,8 @@ CREATE TABLE IF NOT EXISTS files(
   content_hash TEXT NOT NULL,
   body         TEXT NOT NULL,
   parse_error  TEXT NOT NULL DEFAULT '',
-  origin       TEXT NOT NULL DEFAULT 'project'  -- project|dep
+  origin       TEXT NOT NULL DEFAULT 'project',  -- project|dep
+  git          TEXT NOT NULL DEFAULT 'none'  -- tracked|untracked|ignored|none
 );
 CREATE TABLE IF NOT EXISTS symbols(
   id         TEXT PRIMARY KEY,         -- file::qualname
@@ -552,11 +553,12 @@ def connect(repo: Path, must_exist: bool = False) -> sqlite3.Connection:
     seed_gitignore(db.parent)
     con = sqlite3.connect(db)
     con.executescript(SCHEMA)
-    try:  # databases built before the origin column existed
-        con.execute("ALTER TABLE files ADD COLUMN origin TEXT NOT NULL"
-                    " DEFAULT 'project'")
-    except sqlite3.OperationalError:
-        pass
+    for col in ("origin TEXT NOT NULL DEFAULT 'project'",
+                "git TEXT NOT NULL DEFAULT 'none'"):
+        try:  # databases built before the column existed
+            con.execute(f"ALTER TABLE files ADD COLUMN {col}")
+        except sqlite3.OperationalError:
+            pass
     return con
 
 
@@ -1059,6 +1061,34 @@ def append_kgignore(root: Path, lines: list[str]) -> None:
         fh.write(lead + "\n".join(lines) + "\n")
 
 
+GIT_STATES = ("tracked", "untracked", "ignored", "none")
+
+
+def git_status(root: Path, rels: list[str]) -> dict[str, str]:
+    """Each path's git status under `root`: tracked, untracked or ignored,
+    or none for all of them outside a work tree or without git. It labels
+    files for `--git` and never decides membership. Two read-only calls per
+    ingest, with `core.fsmonitor=` because a repo is untrusted content and its
+    config must never run a command here. markdown-kg's `git_status` has the
+    same body; keep the two identical."""
+    base = ["git", "-c", "core.fsmonitor=", "--no-optional-locks",
+            "-C", str(root)]
+    try:
+        tracked = subprocess.run(base + ["ls-files", "-z", "--cached"],
+                                 capture_output=True, timeout=60)
+        if tracked.returncode != 0:
+            return dict.fromkeys(rels, "none")
+        ignored = subprocess.run(base + ["check-ignore", "-z", "--stdin"],
+                                 input="\0".join(rels).encode(),
+                                 capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return dict.fromkeys(rels, "none")
+    have = set(tracked.stdout.decode("utf-8", "replace").split("\0"))
+    ign = set(ignored.stdout.decode("utf-8", "replace").split("\0"))
+    return {r: "tracked" if r in have else "ignored" if r in ign
+            else "untracked" for r in rels}
+
+
 def path_filter(con: sqlite3.Connection, pattern: str | None,
                 column: str) -> str:
     """SQL keeping only rows whose `column` matches the `--path` glob, or ''.
@@ -1072,11 +1102,14 @@ def path_filter(con: sqlite3.Connection, pattern: str | None,
     return f" AND kg_path_match({column})"
 
 
-# ---------- repo walking (git parity, symlink refusal) ----------
+# ---------- repo walking (symlink refusal) ----------
+# File names that conventionally hold credentials: listed by name, never read.
 SECRETISH_RE = re.compile(
-    r"^\.env(rc|\.|$)|^\.(netrc|npmrc|pypirc|pgpass|git-credentials)$"
-    r"|^id_(rsa|dsa|ecdsa|ed25519)$|^credentials$"
-    r"|^secrets?\.(ya?ml|json|toml)$|\.tfvars(\.json)?$", re.IGNORECASE)
+    r"^\.env(rc|\.|$)|\.env$|^\.(netrc|npmrc|pypirc|pgpass|git-credentials"
+    r"|htpasswd|dockercfg)$|^id_(rsa|dsa|ecdsa|ed25519)$|^credentials$"
+    r"|^secrets?\.(ya?ml|json|toml)$|\.tfvars(\.json)?$|\.config$"
+    r"|\.(pem|key|p12|pfx|jks|keystore|kdbx)$|^service-account.*\.json$",
+    re.IGNORECASE)
 
 
 # Environment files: the graph knows each one exists and the names it
@@ -5678,14 +5711,15 @@ def ingest(repo: Path, keep_previous: bool = False) -> dict:
                     " ('annotations_seen', ?)", (str(annotations_seen),))
         con.execute("DELETE FROM symbols_fts")
         con.execute("DELETE FROM files_fts")
+        git = git_status(repo, [f["id"] for f in files])
         for f in files + dep_files:
             con.execute(
                 "INSERT INTO files(id, language, role, size, lines,"
-                " content_hash, body, parse_error, origin)"
-                " VALUES (?,?,?,?,?,?,?,?,?)",
+                " content_hash, body, parse_error, origin, git)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (f["id"], f["language"], f["role"], f["size"], f["lines"],
                  f["hash"], f["body"], parse_errors.get(f["id"], ""),
-                 f.get("origin", "project")))
+                 f.get("origin", "project"), git.get(f["id"], "none")))
             con.execute("INSERT INTO files_fts(id, path, body) VALUES (?,?,?)",
                         (f["id"], f["id"].replace("/", " "), f["body"]))
         body_lines = {f["id"]: f["body"].splitlines()
@@ -5859,17 +5893,21 @@ def _children(con: sqlite3.Connection, unit: str) -> list:
 
 def search(repo: Path, question: str, limit: int = 10,
            include_deps: bool = False, per_file: int = 0,
-           budget: int | None = None, path: str | None = None) -> dict:
+           budget: int | None = None, path: str | None = None,
+           git: str = "all") -> dict:
     con = open_fresh(repo)
     phrases, terms = tokenize(question)
     if not phrases and not terms:
         con.close()
         sys.exit("error: empty question")
-    dep_ids = set() if include_deps else {r[0] for r in con.execute(
-        "SELECT id FROM files WHERE origin='dep'")}
+    # Files a hit may not come from: dependency code unless asked for, and
+    # anything outside the `--git` status asked for.
+    hidden = {r[0] for r in con.execute(
+        "SELECT id FROM files WHERE (origin='dep' AND NOT ?)"
+        " OR (? != 'all' AND git != ?)", (include_deps, git, git))}
 
     def project_only(rows, id_to_file):
-        return [(hid, s) for hid, s in rows if id_to_file(hid) not in dep_ids]
+        return [(hid, s) for hid, s in rows if id_to_file(hid) not in hidden]
 
     # The first rung with hits is primary, but one confident hit must not
     # suppress the relaxed rung - or the files scope - holding the real
@@ -5924,18 +5962,20 @@ def search(repo: Path, question: str, limit: int = 10,
         if hit_scope == "symbols":
             row = con.execute(
                 "SELECT s.file_id, s.kind, s.qualname, s.line_start,"
-                " s.line_end FROM symbols s WHERE s.id=?", (hid,)).fetchone()
+                " s.line_end, f.git FROM symbols s JOIN files f"
+                " ON f.id = s.file_id WHERE s.id=?", (hid,)).fetchone()
             if row:
                 results.append({"symbol": hid, "file": row[0], "kind": row[1],
                                 "qualname": row[2], "lines":
-                                f"{row[3]}-{row[4]}", "score": round(score, 3)})
+                                f"{row[3]}-{row[4]}", "git": row[5],
+                                "score": round(score, 3)})
         else:
-            row = con.execute("SELECT language, role, lines FROM files"
+            row = con.execute("SELECT language, role, lines, git FROM files"
                               " WHERE id=?", (hid,)).fetchone()
             if row:
                 results.append({"file": hid, "language": row[0],
                                 "role": row[1], "lines": f"1-{row[2]}",
-                                "score": round(score, 3)})
+                                "git": row[3], "score": round(score, 3)})
         if len(results) > before \
                 and (rung_name, hit_scope) != (rung_used, scope):
             results[-1]["rung"] = rung_name if hit_scope == scope \
@@ -7371,7 +7411,7 @@ def cmd_search(args: argparse.Namespace) -> int:
     repo = repo_dir(args.repo)
     result = search(repo, args.question, limit=args.limit,
                     include_deps=args.deps, per_file=args.per_file,
-                    path=args.path,
+                    path=args.path, git=args.git,
                     budget=args.budget)
     record_reads(repo, args.session, [h.get("symbol", h["file"])
                                       for h in result["results"]], "search")
@@ -7400,19 +7440,20 @@ def cmd_search(args: argparse.Namespace) -> int:
 def cmd_query(args: argparse.Namespace) -> int:
     repo = repo_dir(args.repo)
     con = open_fresh(repo)
-    origin_clause = ("" if args.deps else
-                     " AND id IN (SELECT id FROM files WHERE origin='project')"
-                     ) + path_filter(con, args.path, "id")
     try:
         rows = con.execute(
-            "SELECT id, bm25(files_fts) FROM files_fts WHERE files_fts"
-            f" MATCH ?{origin_clause} ORDER BY bm25(files_fts) LIMIT ?",
-            (args.fts, args.limit)).fetchall()
+            "SELECT t.id, bm25(files_fts), f.git FROM files_fts t"
+            " JOIN files f ON f.id = t.id WHERE files_fts MATCH ?"
+            " AND (? OR f.origin = 'project') AND (? = 'all' OR f.git = ?)"
+            + path_filter(con, args.path, "t.id")
+            + " ORDER BY bm25(files_fts) LIMIT ?",
+            (args.fts, args.deps, args.git, args.git, args.limit)).fetchall()
     except sqlite3.OperationalError as e:
         con.close()
         sys.exit(f"error: bad FTS5 query: {e}")
     con.close()
-    payload = [{"file": fid, "score": round(s, 3)} for fid, s in rows]
+    payload = [{"file": fid, "git": g, "score": round(s, 3)}
+               for fid, s, g in rows]
     record_reads(repo, args.session, [r["file"] for r in payload], "query")
     return emit(args, payload, lambda p: [print(f"  {r['file']}") for r in p]
                 and 0 or 0)
@@ -9588,6 +9629,8 @@ def main(argv: list[str] | None = None) -> int:
                         " inside it that fit")
     p.add_argument("--session", metavar="ID", help=session_help)
     p.add_argument("--path", metavar="GLOB", help=path_help)
+    p.add_argument("--git", default="all", choices=("all",) + GIT_STATES,
+                   help="only files with this git status; every row shows it")
     p = add("query", cmd_query)
     p.add_argument("fts")
     p.add_argument("--limit", type=int, default=20)
@@ -9595,6 +9638,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="include indexed dependency code in results")
     p.add_argument("--session", metavar="ID", help=session_help)
     p.add_argument("--path", metavar="GLOB", help=path_help)
+    p.add_argument("--git", default="all", choices=("all",) + GIT_STATES,
+                   help="only files with this git status; every row shows it")
     p = add("related", cmd_related,
             help="files, or symbols, ranked by graph proximity to one:"
                  " personalized PageRank, not content similarity")

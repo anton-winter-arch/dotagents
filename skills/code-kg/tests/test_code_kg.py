@@ -1326,6 +1326,28 @@ class TestScanSafety(unittest.TestCase):
         self.assertEqual([h["file"] for h in json.loads(r.stdout)],
                          ["two/zebrafish.py"])
 
+    def test_every_file_carries_its_git_status_and_filters_on_it(self):
+        def git(*a):
+            subprocess.run(["git", "-C", str(self.repo), *a], check=True,
+                           capture_output=True)
+        for name in ("tracked", "untracked", "ignored"):
+            (self.repo / f"{name}_mod.py").write_text(
+                f"def {name}_marker():\n    pass\n")
+        (self.repo / ".gitignore").write_text("ignored_mod.py\n")
+        git("init", "-q")
+        git("add", "tracked_mod.py")
+        code_kg.ingest(self.repo)
+        con = code_kg.connect(self.repo, must_exist=True)
+        got = dict(con.execute("SELECT id, git FROM files WHERE id LIKE"
+                               " '%_mod.py'"))
+        con.close()
+        self.assertEqual(got, {"tracked_mod.py": "tracked",
+                               "untracked_mod.py": "untracked",
+                               "ignored_mod.py": "ignored"})
+        hits = code_kg.search(self.repo, "marker", git="ignored")["results"]
+        self.assertEqual({(h["file"], h["git"]) for h in hits},
+                         {("ignored_mod.py", "ignored")})
+
     def test_a_config_ignore_row_is_refused_not_dropped(self):
         code_kg.kg_dir(self.repo).mkdir(exist_ok=True)
         code_kg.config_path(self.repo).write_text('{"ignore": ["web/**"]}')

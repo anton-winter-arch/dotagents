@@ -29,9 +29,12 @@ folder or file is recorded in the `ignored` table with the file and line that
 matched. A config that still has an `ignore` array is refused with an error;
 `migrate` moves a legacy config's patterns into `.kgignore`.
 
-Environment files (`.env`, `.env.*`, `.envrc`, `*.env`) are never indexed.
-The graph records only that each exists and the variable names it defines, as
-`data_edges` rows of kind `write` and node kind `env`; no value is stored.
+Files whose names conventionally hold credentials (`.env*`, `*.env`, `.envrc`,
+`*.config`, `*.tfvars`, `secrets.*`, `credentials`, private keys and keystores,
+`service-account*.json`, `.netrc` and its kin) are never read: the graph lists
+them by name only. From environment files it also records the variable names
+each defines, as `data_edges` rows of kind `write` and node kind `env`; no value
+is stored. Variable names the code reads are recorded the same way.
 
 ## Fields
 

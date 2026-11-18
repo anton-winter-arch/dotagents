@@ -879,7 +879,7 @@ class TestHostileInput(unittest.TestCase):
 
 class TestIndexRevision(unittest.TestCase):
     def test_revision_is_bumped_for_the_new_table(self):
-        self.assertEqual(code_kg.INDEX_REV, 3)
+        self.assertGreaterEqual(code_kg.INDEX_REV, 3)
 
 
 if __name__ == "__main__":

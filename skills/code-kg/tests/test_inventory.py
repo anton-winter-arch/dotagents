@@ -91,7 +91,9 @@ class TestSecretNames(unittest.TestCase):
         for name in ("terraform.tfvars.json", "prod.auto.tfvars.json",
                      ".envrc", ".netrc", ".npmrc", ".pypirc", ".pgpass",
                      ".git-credentials", "id_ed25519", "credentials",
-                     ".env.local", "secrets.yaml", "x.tfvars"):
+                     ".env.local", "secrets.yaml", "x.tfvars", "prod.env",
+                     "web.config", "server.key", "cert.pem", "store.p12",
+                     ".htpasswd", "service-account-prod.json"):
             self.assertEqual(code_kg.other_reason(name), "secret-name", name)
             self.assertIsNone(code_kg.language_of(name), name)
         self.assertEqual(code_kg.language_of("tsconfig.json"), "json")

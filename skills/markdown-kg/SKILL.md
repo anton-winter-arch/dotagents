@@ -36,7 +36,7 @@ The engine writes the `.gitignore` when the folder has none, and never rewrites 
 
 **What gets indexed:** every note under the vault root except dot folders and what a `.kgignore` at or below the root excludes, in git's syntax. `.gitignore` is not read, so gitignored notes stay searchable, and rules above the root are never read. An environment file (`.env`, `*.env`) is never read.
 
-`search` and `query` take `--path GLOB` to keep only notes under a folder, such as `--path 'docs/**'`.
+`search` and `query` take `--path GLOB` to keep only notes under a folder, such as `--path 'docs/**'`, and `--git tracked|untracked|ignored|all` (default `all`) to keep only notes with that git status. Every result row shows its note's `git` status, `none` outside a git work tree.
 
 A vault built earlier has its graph in a legacy `markdown-kg/` or `vault-kg/` folder, with a markdown config holding one fenced `json` block.
 Until `.kg/` holds a markdown-kg database or config, the engine reads and writes the legacy folder in place, never creates one, and `init` refuses to run there.

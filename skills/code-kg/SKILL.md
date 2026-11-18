@@ -17,9 +17,13 @@ on drift, so answers track the live tree without you managing freshness.
 
 The graph holds every file under the repo root except build and dependency
 folders and what a `.kgignore` at or below the root excludes, in git's syntax.
-`.gitignore` is not read, and rules above the root are never read. Environment files are never read for values: the graph
-knows each exists and the variable names it defines. `search` and `query`
-take `--path GLOB` to keep only files under a folder.
+`.gitignore` is not read, and rules above the root are never read. Files that
+conventionally hold credentials (`.env*`, `*.config`, `*.tfvars`, keys) are
+listed by name and never read; the graph knows the variable names environment
+files define and the code reads, never a value. `search` and `query` take
+`--path GLOB` to keep only files under a folder and `--git
+tracked|untracked|ignored|all` (default `all`); every result row shows its
+file's `git` status, `none` outside a git work tree.
 
 The parsers cover python (AST-exact), javascript/typescript, bash, go, rust,
 c/c++, java, c#/msbuild, powershell, sql, terraform, dockerfile, compose,

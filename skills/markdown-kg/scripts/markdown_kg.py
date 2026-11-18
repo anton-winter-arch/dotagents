@@ -124,7 +124,7 @@ HEADING_MAX = 120
 # Bump when a parser or schema change must re-index a vault whose files have
 # not changed. The manifest folds it in, so the next read command re-ingests
 # once instead of serving sections the old parser cut.
-INDEX_REV = 6
+INDEX_REV = 7
 
 PROFILES = {"log-dated", "reference", "dimension", "list", "generated", "hub",
             "freeform"}
@@ -249,7 +249,8 @@ CREATE TABLE IF NOT EXISTS notes(
   profile      TEXT NOT NULL DEFAULT 'reference',
   weight       REAL NOT NULL DEFAULT 1.0,
   doc_date     TEXT NOT NULL DEFAULT '',  -- note-level date, if any
-  status       TEXT NOT NULL DEFAULT 'hot'
+  status       TEXT NOT NULL DEFAULT 'hot',
+  git          TEXT NOT NULL DEFAULT 'none'  -- tracked|untracked|ignored|none
   -- deliberately no observed_at: this table is wiped and rebuilt every ingest,
   -- so a per-note timestamp only restates meta.ingested_at while adding a
   -- second value that changes between two ingests of unchanged bytes. The
@@ -596,6 +597,7 @@ _ADDED_COLUMNS = {
     "sections": [("weight", "REAL NOT NULL DEFAULT 1.0"),
                  ("setext", "INTEGER NOT NULL DEFAULT 0")],
     "entities": [("origin", "TEXT NOT NULL DEFAULT 'config'")],
+    "notes": [("git", "TEXT NOT NULL DEFAULT 'none'")],
 }
 
 
@@ -2879,6 +2881,10 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
             " WHERE note_id IN (SELECT id FROM dirty_notes)")
     else:
         con.execute("INSERT INTO sections_fts(sections_fts) VALUES ('rebuild')")
+    # Every note, not only the dirty ones: `git add` changes a label, never bytes.
+    paths = [parsed[nid]["rel"] for nid in ids]
+    con.executemany("UPDATE notes SET git = ? WHERE path = ?",
+                    [(g, p) for p, g in git_status(vault, paths).items()])
     con.execute("INSERT INTO meta(key, value) VALUES ('ingest_basis', ?)", (basis,))
     con.execute("INSERT INTO meta(key, value) VALUES ('per_note_counts', ?)",
                 (_row_counts(con),))
@@ -3430,6 +3436,34 @@ def append_kgignore(root: Path, lines: list[str]) -> None:
         fh.write(lead + "\n".join(lines) + "\n")
 
 
+GIT_STATES = ("tracked", "untracked", "ignored", "none")
+
+
+def git_status(root: Path, rels: list[str]) -> dict[str, str]:
+    """Each path's git status under `root`: tracked, untracked or ignored,
+    or none for all of them outside a work tree or without git. It labels
+    files for `--git` and never decides membership. Two read-only calls per
+    ingest, with `core.fsmonitor=` because a repo is untrusted content and its
+    config must never run a command here. code-kg's `git_status` has the same
+    body; keep the two identical."""
+    base = ["git", "-c", "core.fsmonitor=", "--no-optional-locks",
+            "-C", str(root)]
+    try:
+        tracked = subprocess.run(base + ["ls-files", "-z", "--cached"],
+                                 capture_output=True, timeout=60)
+        if tracked.returncode != 0:
+            return dict.fromkeys(rels, "none")
+        ignored = subprocess.run(base + ["check-ignore", "-z", "--stdin"],
+                                 input="\0".join(rels).encode(),
+                                 capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return dict.fromkeys(rels, "none")
+    have = set(tracked.stdout.decode("utf-8", "replace").split("\0"))
+    ign = set(ignored.stdout.decode("utf-8", "replace").split("\0"))
+    return {r: "tracked" if r in have else "ignored" if r in ign
+            else "untracked" for r in rels}
+
+
 def path_filter(con: sqlite3.Connection, pattern: str | None,
                 column: str) -> str:
     """SQL keeping only rows whose `column` matches the `--path` glob, or ''.
@@ -3446,7 +3480,7 @@ def path_filter(con: sqlite3.Connection, pattern: str | None,
 def search(vault: Path, question: str, limit: int = 10,
            per_note: int = 3, budget: int | None = None,
            slot: str | None = None, recency_k: float | None = None,
-           path: str | None = None) -> dict:
+           path: str | None = None, git: str = "all") -> dict:
     con = open_fresh(vault)
     if recency_k is None:
         recency_k = load_config(vault).get("recency_k", RECENCY_K)
@@ -3464,15 +3498,16 @@ def search(vault: Path, question: str, limit: int = 10,
     # copied book, a quotes file), and a long generated section of a journal
     # ranked past the cap among all matches was dropped before the filter
     # could keep it.
-    slot_sql = (" AND s.slot = ?" if slot else "") + path_filter(con, path,
-                                                                 "n.path")
+    slot_sql = ((" AND s.slot = ?" if slot else "")
+                + " AND (? = 'all' OR n.git = ?)"
+                + path_filter(con, path, "n.path"))
     for name, expr in search_rungs(phrases, terms):
-        params = (expr, slot) if slot else (expr,)
+        params = (expr,) + ((slot,) if slot else ()) + (git, git)
         try:
             rows = con.execute(
                 "SELECT s.id, s.note_id, s.heading_path, s.doc_date, s.slot,"
                 " s.line_start, s.line_end, s.words, s.is_unit, s.oversize,"
-                " n.title, n.weight, n.path,"
+                " n.title, n.weight, n.path, n.git,"
                 " bm25(sections_fts) AS rank,"
                 " snippet(sections_fts, 2, '[', ']', ' ... ', 14)"
                 " FROM sections_fts"
@@ -3502,7 +3537,7 @@ def search(vault: Path, question: str, limit: int = 10,
     scored = []
     for r in rows:
         (sid, nid, hpath, ddate, sslot, lstart, lend, words, is_unit,
-         oversize, title, weight, npath, rank, snip) = r
+         oversize, title, weight, npath, ngit, rank, snip) = r
         score = -float(rank)
         low_title = (title or "").lower()
         low_head = (hpath or "").lower()
@@ -3535,7 +3570,8 @@ def search(vault: Path, question: str, limit: int = 10,
         if sslot == "superseded":
             score *= SUPERSEDED_WEIGHT
         scored.append({
-            "section_id": sid, "note_id": nid, "path": npath, "title": title,
+            "section_id": sid, "note_id": nid, "path": npath, "git": ngit,
+            "title": title,
             "heading_path": hpath or "(top)", "doc_date": ddate, "slot": sslot,
             "lines": f"{lstart}-{lend}", "line_start": lstart,
             "line_end": lend, "words": words, "is_unit": bool(is_unit),
@@ -4556,12 +4592,13 @@ def cmd_profile(args: argparse.Namespace) -> int:
 def cmd_query(args: argparse.Namespace) -> int:
     vault = vault_dir(args.vault)
     try:
-        rows = query(vault, args.fts_query, args.limit, args.path)
+        rows = query(vault, args.fts_query, args.limit, args.path, args.git)
     except ValueError as e:
         sys.exit(f"error: {e}")
     payload = [{"section_id": r["section_id"], "note_id": r["note_id"],
                 "heading_path": r["heading_path"] or "(top)",
-                "lines": r["lines"], "snippet": r["snippet"]} for r in rows]
+                "lines": r["lines"], "snippet": r["snippet"], "git": r["git"]}
+               for r in rows]
     record_session_reads(vault, args.session,
                          [h["section_id"] for h in payload], "query")
 
@@ -4576,32 +4613,33 @@ def cmd_query(args: argparse.Namespace) -> int:
 
 
 def query(vault: Path, q: str, limit: int = 20,
-          path: str | None = None) -> list[dict]:
+          path: str | None = None, git: str = "all") -> list[dict]:
     """Library entry point for raw FTS5 search over sections."""
     con = open_fresh(vault)
     try:
         rows = con.execute(
             "SELECT s.id, s.note_id, s.heading_path, s.line_start, s.line_end,"
-            " snippet(sections_fts, 2, '[', ']', ' ... ', 14)"
+            " snippet(sections_fts, 2, '[', ']', ' ... ', 14), n.git"
             " FROM sections_fts JOIN sections s ON s.rowid = sections_fts.rowid"
             " JOIN notes n ON n.id = s.note_id"
-            " WHERE sections_fts MATCH ?" + path_filter(con, path, "n.path")
+            " WHERE sections_fts MATCH ? AND (? = 'all' OR n.git = ?)"
+            + path_filter(con, path, "n.path")
             + " ORDER BY bm25(sections_fts) LIMIT ?",
-            (q, limit)).fetchall()
+            (q, git, git, limit)).fetchall()
     except sqlite3.OperationalError as e:
         con.close()
         raise ValueError(f"invalid FTS5 query {q!r}: {e}") from e
     con.close()
     return [{"section_id": r[0], "id": r[1], "note_id": r[1],
-             "heading_path": r[2], "lines": f"{r[3]}-{r[4]}", "snippet": r[5]}
-            for r in rows]
+             "heading_path": r[2], "lines": f"{r[3]}-{r[4]}", "snippet": r[5],
+             "git": r[6]} for r in rows]
 
 
 def cmd_search(args: argparse.Namespace) -> int:
     vault = vault_dir(args.vault)
     payload = search(vault, args.question, args.limit,
                      args.per_note, args.budget, args.slot, args.recency_k,
-                     args.path)
+                     args.path, args.git)
     record_session_reads(vault, args.session,
                          [h["section_id"] for h in payload["results"]],
                          "search")
@@ -6666,10 +6704,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--session", default=None, metavar="ID", help=session_help)
     p.add_argument("--path", default=None, metavar="GLOB", help=path_help)
+    p.add_argument("--git", default="all", choices=("all",) + GIT_STATES,
+                   help="only notes with this git status; every row shows it")
 
     p = add("search", cmd_search, "natural-language section search")
     p.add_argument("question")
     p.add_argument("--path", default=None, metavar="GLOB", help=path_help)
+    p.add_argument("--git", default="all", choices=("all",) + GIT_STATES,
+                   help="only notes with this git status; every row shows it")
     p.add_argument("--session", default=None, metavar="ID", help=session_help)
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--per-note", type=int, default=3,

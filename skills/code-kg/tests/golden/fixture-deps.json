@@ -141,7 +141,7 @@
  },
  "query <REPO> main --json": {
   "err": "",
-  "out": "[\n  {\n    \"file\": \"app.py\",\n    \"score\": -0.0\n  }\n]\n",
+  "out": "[\n  {\n    \"file\": \"app.py\",\n    \"git\": \"none\",\n    \"score\": -0.0\n  }\n]\n",
   "rc": 0
  },
  "query <REPO> render --json": {
@@ -186,7 +186,7 @@
  },
  "search <REPO> main --json": {
   "err": "",
-  "out": "{\n  \"question\": \"main\",\n  \"results\": [\n    {\n      \"file\": \"app.py\",\n      \"kind\": \"function\",\n      \"lines\": \"7-9\",\n      \"qualname\": \"main\",\n      \"score\": -0.0,\n      \"symbol\": \"app.py::main\"\n    },\n    {\n      \"file\": \"app.py\",\n      \"language\": \"python\",\n      \"lines\": \"1-14\",\n      \"role\": \"source\",\n      \"rung\": \"files/all-terms\",\n      \"score\": -0.0\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE; +1 relaxed\"\n}\n",
+  "out": "{\n  \"question\": \"main\",\n  \"results\": [\n    {\n      \"file\": \"app.py\",\n      \"git\": \"none\",\n      \"kind\": \"function\",\n      \"lines\": \"7-9\",\n      \"qualname\": \"main\",\n      \"score\": -0.0,\n      \"symbol\": \"app.py::main\"\n    },\n    {\n      \"file\": \"app.py\",\n      \"git\": \"none\",\n      \"language\": \"python\",\n      \"lines\": \"1-14\",\n      \"role\": \"source\",\n      \"rung\": \"files/all-terms\",\n      \"score\": -0.0\n    }\n  ],\n  \"rung\": \"all-terms\",\n  \"scope\": \"symbols\",\n  \"status\": \"COMPLETE; +1 relaxed\"\n}\n",
   "rc": 0
  },
  "search <REPO> render": {

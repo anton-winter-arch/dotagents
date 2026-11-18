@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
@@ -1080,6 +1081,28 @@ class EnumerationTests(VaultCase):
         self.assertEqual({h["note_id"] for h in got["results"]}, {"one/a"})
         got = markdown_kg.query(self.vault, "zebrafish", path="two/**")
         self.assertEqual({h["note_id"] for h in got}, {"two/b"})
+
+    def test_every_note_carries_its_git_status_and_filters_on_it(self):
+        markdown_kg.ingest(self.vault)
+        self.assertEqual({r[0] for r in self.rows("SELECT git FROM notes")},
+                         {"none"})                 # not a git work tree
+        def git(*a):
+            subprocess.run(["git", "-C", str(self.vault), *a], check=True,
+                           capture_output=True)
+        for name in ("tracked", "untracked", "ignored"):
+            self.note(f"{name}.md")
+        (self.vault / ".gitignore").write_text("ignored.md\n")
+        git("init", "-q")
+        git("add", "tracked.md")
+        markdown_kg.ingest(self.vault)
+        got = dict(self.rows("SELECT path, git FROM notes WHERE path IN"
+                             " ('tracked.md', 'untracked.md', 'ignored.md')"))
+        self.assertEqual(got, {"tracked.md": "tracked",
+                               "untracked.md": "untracked",
+                               "ignored.md": "ignored"})
+        hits = markdown_kg.search(self.vault, "body", git="ignored")
+        self.assertEqual({(h["path"], h["git"]) for h in hits["results"]},
+                         {("ignored.md", "ignored")})
 
     def test_rules_above_the_root_are_never_read(self):
         (self.vault / ".kgignore").write_text("inner/\n", encoding="utf-8")
