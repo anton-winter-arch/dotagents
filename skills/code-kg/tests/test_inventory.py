@@ -1,6 +1,8 @@
 """The file inventory and `tree`: every file the walk sees, by folder and
 language, including the ones no parser reads. Expected counts come from
 the tree built below."""
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -9,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_symbol_edges import run  # noqa: E402
@@ -93,43 +96,71 @@ class TestSecretNames(unittest.TestCase):
                      ".git-credentials", "id_ed25519", "credentials",
                      ".env.local", "secrets.yaml", "x.tfvars", "prod.env",
                      "web.config", "server.key", "cert.pem", "store.p12",
-                     ".htpasswd", "service-account-prod.json"):
+                     ".htpasswd", "service-account-prod.json", ".env",
+                     "app.secrets", ".secrets", "secrets", "secrets.env.json",
+                     "terraform.tfstate", "terraform.tfstate.backup",
+                     "kubeconfig", "dev.kubeconfig", "AuthKey.p8", "vpn.ovpn",
+                     ".vault-token", ".s3cfg", ".my.cnf"):
             self.assertEqual(code_kg.other_reason(name), "secret-name", name)
             self.assertIsNone(code_kg.language_of(name), name)
         self.assertEqual(code_kg.language_of("tsconfig.json"), "json")
 
 
-# Every value below carries the marker; none may reach the graph, in any
-# table, index or sidecar, while every name and the file it came from does.
+# Every credential-shaped file below holds the marker. The guarantee is that
+# no command ever opens one, so no value can reach the graph, a result or an
+# error; the test fails on the first attempt to open one, wherever in the
+# engine it happens, and then checks the stored bytes too.
 MARK = "VALUE-MUST-NOT-LEAK"
-ENV_FILES = {
-    ".env": f"SECRET_TOKEN={MARK}-1\n"
-            f"export DB_URL=\"{MARK}-2 quoted\"\n"
-            f"# COMMENTED={MARK}-3\n"
-            f"  SPACED = {MARK}-4\n"
-            f"MULTI=\"{MARK}-5\n{MARK}-6\"\n"
-            # Continuation lines shaped like NAME= are value, never names.
-            f"PEM=\"{MARK}-10\nTAILNAME==\ninner_name=1\n\"\n",
-    ".env.local": f"LOCAL_ONLY={MARK}-7\n",
-    ".envrc": f"export DIRENV_KEY={MARK}-8\n",
-    "config/prod.env": f"PROD_KEY={MARK}-9\n",
-    "app.py": "import os\nTOKEN = os.environ.get('SECRET_TOKEN')\n",
-}
+IS_SECRET = code_kg.is_secret    # bound here, so a broken engine gate shows
+SECRET_FILES = (".env", ".env.local", ".envrc", "config/prod.env",
+                "web.config", "server.key", "secrets.yaml",
+                "service-account-prod.json", "infra/x.tfvars")
+CODE = {"app.py": "import os\nTOKEN = os.environ.get('SECRET_TOKEN')\n",
+        "run.sh": "#!/bin/bash\necho \"$DEPLOY_KEY\"\n"}
 
 
-class TestEnvFiles(unittest.TestCase):
+class TestSecretFilesNeverOpened(unittest.TestCase):
     def setUp(self):
         self.repo = Path(tempfile.mkdtemp(prefix="ckg-env-")).resolve()
         self.addCleanup(shutil.rmtree, self.repo, ignore_errors=True)
-        for rel, text in ENV_FILES.items():
+        for rel in SECRET_FILES:
             p = self.repo / rel
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(text, encoding="utf-8")
-        for argv in (("ingest", "--keep-previous"), ("ingest",
-                     "--keep-previous"), ("data",), ("search", MARK),
-                     ("query", MARK), ("tree",)):
-            rc, out, err = run(argv[0], str(self.repo), *argv[1:])
-            self.assertNotIn(MARK, out + err, argv)
+            p.write_text(f"KEY={MARK}\nexport OTHER=\"{MARK}\"\n")
+        for rel, text in CODE.items():
+            (self.repo / rel).write_text(text)
+        opened: list[str] = []
+
+        def guard(real):
+            def wrapped(path, *a, **kw):
+                if isinstance(path, (str, os.PathLike)) \
+                        and IS_SECRET(os.fspath(path)):
+                    opened.append(os.fspath(path))
+                    raise AssertionError(f"opened {path}")
+                return real(path, *a, **kw)
+            return wrapped
+        with mock.patch("builtins.open", guard(open)), \
+                mock.patch("io.open", guard(io.open)), \
+                mock.patch("os.open", guard(os.open)), \
+                mock.patch.object(Path, "open",
+                                  lambda self, *a, **kw: guard(io.open)(
+                                      self, *a, **kw)):
+            for argv in (("ingest", "--keep-previous"),
+                         ("ingest", "--keep-previous"), ("data",),
+                         ("search", MARK), ("query", MARK), ("tree",),
+                         ("read", ".env"), ("file", "web.config")):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf), \
+                        contextlib.redirect_stderr(buf):
+                    try:
+                        code_kg.main([argv[0], str(self.repo), *argv[1:],
+                                      "--json"])
+                    except SystemExit:
+                        pass
+                out = buf.getvalue().replace(f"'{MARK}'", "").replace(
+                    f'"{MARK}"', "")       # a query echoes its own term
+                self.assertNotIn(MARK, out, argv)
+        self.assertEqual(opened, [])
 
     def test_no_value_reaches_any_graph_file(self):
         stored = list(code_kg.kg_dir(self.repo).iterdir())
@@ -137,19 +168,15 @@ class TestEnvFiles(unittest.TestCase):
         for f in stored:
             self.assertNotIn(MARK.encode(), f.read_bytes(), f.name)
 
-    def test_names_are_known_with_the_file_they_come_from(self):
+    def test_files_are_listed_and_names_come_from_the_code(self):
         con = sqlite3.connect(code_kg.db_path(self.repo))
-        got = set(con.execute(
-            "SELECT src_file, node FROM data_edges WHERE node_kind='env'"
-            " AND kind='write'"))
+        listed = dict(con.execute("SELECT path, reason FROM other_files"))
+        names = {r[0] for r in con.execute(
+            "SELECT node FROM data_edges WHERE node_kind='env'")}
         con.close()
-        self.assertLessEqual({
-            (".env", "SECRET_TOKEN"), (".env", "DB_URL"), (".env", "SPACED"),
-            (".env", "MULTI"), (".env.local", "LOCAL_ONLY"),
-            (".envrc", "DIRENV_KEY"), ("config/prod.env", "PROD_KEY")}, got)
-        self.assertNotIn((".env", "COMMENTED"), got)
-        self.assertIn((".env", "PEM"), got)
-        self.assertFalse({n for _, n in got} & {"TAILNAME", "inner_name"})
+        for rel in SECRET_FILES:
+            self.assertEqual(listed.get(rel), "secret-name", rel)
+        self.assertLessEqual({"SECRET_TOKEN", "DEPLOY_KEY"}, names)
 
 
 class TestTree(InventoryCase):

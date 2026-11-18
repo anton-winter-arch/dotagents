@@ -3454,7 +3454,8 @@ def git_status(root: Path, rels: list[str]) -> dict[str, str]:
         if tracked.returncode != 0:
             return dict.fromkeys(rels, "none")
         ignored = subprocess.run(base + ["check-ignore", "-z", "--stdin"],
-                                 input="\0".join(rels).encode(),
+                                 input="\0".join(rels).encode(
+                                     "utf-8", "surrogateescape"),
                                  capture_output=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         return dict.fromkeys(rels, "none")

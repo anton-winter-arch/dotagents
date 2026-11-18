@@ -17,6 +17,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -3416,23 +3417,40 @@ class FolderNameTests(VaultCase):
 
 
 class EnvFileTests(VaultCase):
-    """No environment-file value reaches the graph, in any table, index or
-    sidecar, whatever command runs."""
+    """A credential file is never opened by any command, so no value in it
+    can reach the graph; the test fails on the first attempt to open one."""
 
     MARK = "VALUE-MUST-NOT-LEAK"
 
-    def test_no_value_reaches_any_graph_file(self):
-        for rel in (".env", ".env.local", "config/prod.env", "notes/.envrc"):
+    def test_credential_files_are_never_opened(self):
+        planted = set()
+        for rel in (".env", ".env.local", "config/prod.env", "notes/.envrc",
+                    "web.config", "server.key", "secrets.yaml"):
             p = self.vault / rel
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(f"KEY={self.MARK}\n", encoding="utf-8")
-        markdown_kg.ingest(self.vault, keep_previous=True)
-        markdown_kg.ingest(self.vault, keep_previous=True)
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            markdown_kg.main(["tree", str(self.vault)])
-        self.assertNotIn(self.MARK, buf.getvalue())
-        self.assertFalse(markdown_kg.search(self.vault, self.MARK)["results"])
+            planted.add(str(p))
+
+        def guard(real):
+            def wrapped(path, *a, **kw):
+                if isinstance(path, (str, os.PathLike)) \
+                        and os.fspath(path) in planted:
+                    raise AssertionError(f"opened {path}")
+                return real(path, *a, **kw)
+            return wrapped
+        with mock.patch("builtins.open", guard(open)), \
+                mock.patch("io.open", guard(io.open)), \
+                mock.patch("os.open", guard(os.open)), \
+                mock.patch.object(Path, "open", lambda self, *a, **kw:
+                                  guard(io.open)(self, *a, **kw)):
+            markdown_kg.ingest(self.vault, keep_previous=True)
+            markdown_kg.ingest(self.vault, keep_previous=True)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                markdown_kg.main(["tree", str(self.vault)])
+            self.assertNotIn(self.MARK, buf.getvalue())
+            self.assertFalse(
+                markdown_kg.search(self.vault, self.MARK)["results"])
         for f in markdown_kg.kg_dir(self.vault).iterdir():
             self.assertNotIn(self.MARK.encode(), f.read_bytes(), f.name)
 

@@ -31,10 +31,13 @@ matched. A config that still has an `ignore` array is refused with an error;
 
 Files whose names conventionally hold credentials (`.env*`, `*.env`, `.envrc`,
 `*.config`, `*.tfvars`, `secrets.*`, `credentials`, private keys and keystores,
-`service-account*.json`, `.netrc` and its kin) are never read: the graph lists
-them by name only. From environment files it also records the variable names
-each defines, as `data_edges` rows of kind `write` and node kind `env`; no value
-is stored. Variable names the code reads are recorded the same way.
+`service-account*.json`, `.netrc` and its kin) are never opened by any command:
+the graph lists them by name only, so no value in one can reach it. One
+predicate (`is_secret`) decides it, the ingest loop checks it before any parser
+sees a file, and a test fails if any command opens such a file. The environment
+variable names the graph knows come from the code that reads them (`os.environ`,
+`getenv`, `${VAR}`, compose `environment:`, Dockerfile `ENV`), as `data_edges`
+rows of node kind `env`.
 
 ## Fields
 

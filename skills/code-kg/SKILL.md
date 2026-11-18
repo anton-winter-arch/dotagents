@@ -19,8 +19,8 @@ The graph holds every file under the repo root except build and dependency
 folders and what a `.kgignore` at or below the root excludes, in git's syntax.
 `.gitignore` is not read, and rules above the root are never read. Files that
 conventionally hold credentials (`.env*`, `*.config`, `*.tfvars`, keys) are
-listed by name and never read; the graph knows the variable names environment
-files define and the code reads, never a value. `search` and `query` take
+listed by name and never opened by any command; the environment variable names
+the graph knows come from the code that reads them. `search` and `query` take
 `--path GLOB` to keep only files under a folder and `--git
 tracked|untracked|ignored|all` (default `all`); every result row shows its
 file's `git` status, `none` outside a git work tree.

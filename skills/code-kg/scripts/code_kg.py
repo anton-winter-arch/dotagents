@@ -1079,7 +1079,8 @@ def git_status(root: Path, rels: list[str]) -> dict[str, str]:
         if tracked.returncode != 0:
             return dict.fromkeys(rels, "none")
         ignored = subprocess.run(base + ["check-ignore", "-z", "--stdin"],
-                                 input="\0".join(rels).encode(),
+                                 input="\0".join(rels).encode(
+                                     "utf-8", "surrogateescape"),
                                  capture_output=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         return dict.fromkeys(rels, "none")
@@ -1103,47 +1104,24 @@ def path_filter(con: sqlite3.Connection, pattern: str | None,
 
 
 # ---------- repo walking (symlink refusal) ----------
-# File names that conventionally hold credentials: listed by name, never read.
+# File names that conventionally hold credentials. Such a file is listed by
+# name and never opened by any command, so no value in it can reach the
+# graph; the names of the environment variables a repo uses come from the
+# code that reads them. tests/test_inventory.py::TestSecretFilesNeverOpened
+# fails if any command opens one.
 SECRETISH_RE = re.compile(
     r"^\.env(rc|\.|$)|\.env$|^\.(netrc|npmrc|pypirc|pgpass|git-credentials"
-    r"|htpasswd|dockercfg)$|^id_(rsa|dsa|ecdsa|ed25519)$|^credentials$"
-    r"|^secrets?\.(ya?ml|json|toml)$|\.tfvars(\.json)?$|\.config$"
-    r"|\.(pem|key|p12|pfx|jks|keystore|kdbx)$|^service-account.*\.json$",
+    r"|htpasswd|dockercfg|vault-token|boto|s3cfg|my\.cnf)$"
+    r"|^id_(rsa|dsa|ecdsa|ed25519)$|^credentials$|^\.?secrets?$"
+    r"|^secrets?\.|\.secrets?$|\.tfvars(\.json)?$|\.tfstate(\.backup)?$"
+    r"|\.config$|kubeconfig$|^service-account.*\.json$"
+    r"|\.(pem|key|p8|p12|pfx|ppk|jks|keystore|kdbx|keychain|ovpn)$",
     re.IGNORECASE)
 
 
-# Environment files: the graph knows each one exists and the names it
-# defines, never a value. A line is matched up to its `=` and no further.
-ENV_FILE_RE = re.compile(r"^\.env(rc|\..+)?$|\.env$", re.IGNORECASE)
-ENV_NAME_RE = re.compile(
-    r"[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]{0,200})[ \t]*=")
-
-
-def env_file_rows(path: Path, rel: str) -> list[tuple]:
-    """data_edges rows for the names an environment file defines."""
-    try:
-        if path.stat().st_size > SIZE_CAP:
-            return []
-        lines = path.read_text(encoding="utf-8",
-                               errors="replace").splitlines()
-    except OSError:
-        return []
-    rows, quote = [], ""
-    for n, line in enumerate(lines, 1):
-        if quote:
-            # Inside a quoted value that spans lines: value, never a name.
-            if line.count(quote) % 2:
-                quote = ""
-            continue
-        m = ENV_NAME_RE.match(line)
-        if not m:
-            continue
-        rows.append((rel, f"{rel}::<module>", "write", "env", m.group(1), n,
-                     "resolved", "env-file"))
-        rest = line[m.end():].lstrip()
-        if rest[:1] in ("'", '"') and rest.count(rest[0]) % 2:
-            quote = rest[0]
-    return rows
+def is_secret(rel: str) -> bool:
+    """Whether a file's name marks it as holding credentials."""
+    return bool(SECRETISH_RE.search(posixpath.basename(rel)))
 
 
 def language_of(rel: str) -> str | None:
@@ -1152,7 +1130,7 @@ def language_of(rel: str) -> str | None:
         return None
     # Conventionally-secret files never enter the index: `search` would
     # otherwise hand their contents back without any file read occurring.
-    if SECRETISH_RE.search(name):
+    if is_secret(name):
         return None
     if name in NAME_LANG:
         return NAME_LANG[name]
@@ -1180,8 +1158,7 @@ def sniff_language(path: Path, rel: str) -> str | None:
     """The language an extension-less script names on its `#!` line, read
     from its first bytes only. Never a file whose name marks it secret."""
     name = posixpath.basename(rel)
-    if "." in name.lstrip(".") or name in SKIP_NAMES \
-            or SECRETISH_RE.search(name):
+    if "." in name.lstrip(".") or name in SKIP_NAMES or is_secret(name):
         return None
     try:
         with path.open("rb") as fh:
@@ -1204,7 +1181,7 @@ def sniff_language(path: Path, rel: str) -> str | None:
 def other_reason(rel: str) -> str:
     """Why a file the walk saw is listed but never read."""
     name = posixpath.basename(rel)
-    if SECRETISH_RE.search(name):
+    if is_secret(name):
         return "secret-name"
     if name in SKIP_NAMES:
         return "policy"
@@ -5465,17 +5442,16 @@ def ingest(repo: Path, keep_previous: bool = False) -> dict:
     ignored += [(e, "symlink-or-escape") for e in escapes]
     files: list[dict] = []
     others: list[tuple] = []     # files listed, never read: the inventory
-    env_rows: list[tuple] = []   # names environment files define
     for p in paths:
         rel = p.relative_to(repo).as_posix()
-        lang = language_of(rel) or sniff_language(p, rel)
+        # The gate for every corpus read: a secret-named file is listed by
+        # name and never opened, before any parser or sniffer sees it.
+        lang = None if is_secret(rel) else (language_of(rel)
+                                            or sniff_language(p, rel))
         if lang is None:
-            name = posixpath.basename(rel)
-            ext = posixpath.splitext(name)[1]
+            ext = posixpath.splitext(posixpath.basename(rel))[1]
             others.append((rel, ext.lower(), p.stat().st_size,
                            other_reason(rel)))
-            if ENV_FILE_RE.search(name):
-                env_rows += env_file_rows(p, rel)
             continue
         size = p.stat().st_size
         if size > SIZE_CAP:
@@ -5695,7 +5671,7 @@ def ingest(repo: Path, keep_previous: bool = False) -> dict:
         more_rows, more_data = LineSymbols(files, resolver,
                                            all_symbols).run()
         sym_rows += more_rows
-        data_rows += more_data + env_rows
+        data_rows += more_data
         con.executemany(
             "INSERT INTO symbol_edges(src_file, src, dst, target, kind, line,"
             " status, candidates) VALUES (?,?,?,?,?,?,?,?)", sym_rows)
