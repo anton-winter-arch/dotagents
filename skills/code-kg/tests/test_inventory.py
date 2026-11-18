@@ -238,7 +238,9 @@ class TestTree(InventoryCase):
 
 SHARED = ("glob_match", "tree_payload", "render_tree", "write_checkpoint",
           "_ro_connect", "classify_units", "est_tokens", "rank_from",
-          "linked_store", "seed_gitignore")
+          "linked_store", "seed_gitignore", "read_ignore_rules",
+          "ignored_by", "walk_tree", "append_kgignore", "path_filter",
+          "git_status")
 
 
 class TestSharedBodies(unittest.TestCase):
