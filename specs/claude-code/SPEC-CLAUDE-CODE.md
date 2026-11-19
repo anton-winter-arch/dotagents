@@ -698,8 +698,30 @@ gets no lane, because a link it makes does not exist yet when the hook checks.
 A quoted section or escaped character in the command leaves a placeholder in
 the scanned view, so a partly quoted target never reads as a lane path. The
 other operator families stay denied here too.
+
+**Nested code and copies out of temp.** Quoted text is data to the outer shell
+but code to a shell it starts. When the command has `bash`/`sh`/`zsh -c`,
+`eval`, a pipe or heredoc into a shell, or `$(...)`/backticks (which run even
+inside double quotes), that code is scanned again with its quotes removed,
+through the same scrub and checks: the whole command for a nested shell, only
+the substitution bodies for `$(...)`, so a quoted `>` elsewhere stays data.
+A copy that carries temp content to a real path is the same write by another
+route. `hooks/_copy_out.py` tokenizes the command once with shell quoting, finds
+`cp`, `mv`, `install`, `rsync`, `ditto`, `ln`, an extracting `tar`, `unzip`,
+`cpio`, `pax`, `patch` and `git apply` anywhere in a segment (after prefixes,
+`find -exec`, `xargs`, `if`, subshells, and inside nested code), and refuses
+when a source is temp or unknown (a variable, a glob, stdin, an operand fed by
+`find` or `xargs`, a folder reached through such a `cd` or `pushd`) and the
+destination is not a temp path that is free of links. It also refuses an `ln`
+that plants a link in temp pointing outside it. A command that does not
+tokenize is refused when it names one of these tools.
+
+**Limits.** This is a text check, so two classes stay out of its reach: a
+program that writes files itself (a script run by an interpreter), and text
+decoded at run time (`$(printf '\x3e')`). The OS-level boundary for both is
+Claude Code's Bash sandbox (`sandbox.enabled`), which confines child processes.
 Table-driven tests live in the skills repo at
-`tests/station-hooks/test-deny-bash-file-writes.sh` (119 cases); run after any
+`tests/station-hooks/test-deny-bash-file-writes.sh` (191 cases); run after any
 edit to this script.
 
 Script: [`claude-code/hooks/deny-bash-file-writes.sh`](hooks/deny-bash-file-writes.sh).

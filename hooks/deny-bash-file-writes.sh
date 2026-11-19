@@ -33,8 +33,9 @@ cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
 # SHELL (only characters OUTSIDE shell quotes) - for shell-level write
 # operators, which only act when unquoted. This is what lets innocent quoted
 # text pass: git commit -m "recall 73 > 90" writes nothing.
-# Accepted gap (habit-routing, not containment): a write nested entirely
-# inside quotes, e.g. bash -c 'echo x > f' - the deny text forbids evasion.
+# NESTED (quotes off) - for code a nested shell, eval or command substitution
+# will run, and a copy check for files carried out of the temp lane; both are
+# described where they run below.
 #
 # The SHELL view is built by a single-pass shell quote STATE MACHINE, not a
 # blind s/'…'//;s/"…"// strip. The blind strip was unsound - it treated an
@@ -81,7 +82,8 @@ scratch_sid=$(printf '%s' "$input" | jq -r '.session_id // ""')
 [ -z "$scratch_sid" ] && scratch_sid="no-such-session"
 
 raw="$cmd"
-shellview=$(printf '%s' "$cmd" | perl -0777 -ne '
+shell_view() {
+  printf '%s' "$cmd" | perl -0777 -ne '
   my $s = $_;
   # (1) remove heredoc bodies: <<WORD / <<-WORD / <<"WORD" / <<\x27WORD\x27.
   # Keep group 1 (the command line up to and including its newline) and the
@@ -109,8 +111,13 @@ shellview=$(printf '%s' "$cmd" | perl -0777 -ne '
     }
   }
   print join("", @o);
-' \
-  | sed -E 's;[0-9]*>{1,2}[[:space:]]*/dev/null([[:space:]&|;]|$);\1;g' \
+' | scrub
+}
+
+# The scrub: harmless redirects, then the two sanctioned lanes. A function so
+# the nested view below goes through the same rules.
+scrub() {
+  sed -E 's;[0-9]*>{1,2}[[:space:]]*/dev/null([[:space:]&|;)]|$);\1;g' \
   | sed -E 's;[0-9]*>&[0-9]+([^0-9A-Za-z_./-]|$);\1;g' \
   | SCRATCH_UID="$scratch_uid" SCRATCH_SID="$scratch_sid" perl -0777 -pe '
       # Scrub redirects into this session scratchpad (the sanctioned lane).
@@ -145,32 +152,95 @@ shellview=$(printf '%s' "$cmd" | perl -0777 -ne '
       }
       s{(?<![<])(?:\d*|&)>{1,2}[ \t]*((?:/private)?/(?:tmp|var/folders)/[A-Za-z0-9._/+-]+)(?=[ \t&|;)\n]|\z)}
        {temp_ok($1) ? "" : $&}ge;
-    ')
+    '
+}
 
-hit=""
-# --- SHELL view: unquoted shell-level writers ---
-# 1. Remaining > or >> redirect (writes/truncates a file)
-if printf '%s' "$shellview" | grep -qE '(^|[^<>])>{1,2}([^>]|$)'; then
-  hit="output redirection (> / >>)"
-# 1b. <> read-write open (creates/truncates; the > is preceded by <, so the
-#     main redirect pattern's boundary misses it)
-elif printf '%s' "$shellview" | grep -qE '<>'; then
-  hit="read-write redirect (<>)"
-# 2. tee (writes its stdin to files)
-elif printf '%s' "$shellview" | grep -qE '(^|[|&;[:space:]])tee([[:space:]]|$)'; then
-  hit="tee"
-# 3. in-place editors (bundled flags like -pi count; gsed = GNU sed)
-elif printf '%s' "$shellview" | grep -qE '(^|[|&;[:space:]])(sed|gsed|perl)[^|;&]*[[:space:]](-[a-zA-Z]*i[^|;&[:space:]]*|--in-place(=[^|;&[:space:]]*)?)([[:space:]]|$)'; then
-  hit="in-place edit (sed/gsed/perl -i)"
-# 4. inline patch application (heredoc-authored diffs bypass Edit review)
-elif printf '%s' "$shellview" | grep -qE '(^|[|&;[:space:]])(git[[:space:]]+apply|patch)([[:space:]]|$)' \
-  && printf '%s' "$raw" | grep -q '<<'; then
-  hit="inline patch (git apply/patch fed by heredoc)"
-# 5. raw writers
-elif printf '%s' "$shellview" | grep -qE '(^|[|&;[:space:]])dd[[:space:]][^|;&]*of='; then
-  hit="dd of="
-elif printf '%s' "$shellview" | grep -qE '(^|[|&;[:space:]])truncate([[:space:]]|$)'; then
-  hit="truncate"
+# Shell-level writers in a scanned view; prints the first hit.
+shell_checks() {
+  local v="$1"
+  # 1. Remaining > or >> redirect (writes/truncates a file)
+  if printf '%s' "$v" | grep -qE '(^|[^<>])>{1,2}([^>]|$)'; then
+    echo "output redirection (> / >>)"
+  # 1b. <> read-write open (the > is preceded by <, so check 1's boundary misses it)
+  elif printf '%s' "$v" | grep -qE '<>'; then
+    echo "read-write redirect (<>)"
+  # 2. tee (writes its stdin to files)
+  elif printf '%s' "$v" | grep -qE '(^|[|&;[:space:]])tee([[:space:]]|$)'; then
+    echo "tee"
+  # 3. in-place editors (bundled flags like -pi count; gsed = GNU sed)
+  elif printf '%s' "$v" | grep -qE '(^|[|&;[:space:]])(sed|gsed|perl)[^|;&]*[[:space:]](-[a-zA-Z]*i[^|;&[:space:]]*|--in-place(=[^|;&[:space:]]*)?)([[:space:]]|$)'; then
+    echo "in-place edit (sed/gsed/perl -i)"
+  # 4. inline patch application (heredoc-authored diffs bypass Edit review)
+  elif printf '%s' "$v" | grep -qE '(^|[|&;[:space:]])(git[[:space:]]+apply|patch)([[:space:]]|$)' \
+    && printf '%s' "$raw" | grep -q '<<'; then
+    echo "inline patch (git apply/patch fed by heredoc)"
+  # 5. raw writers
+  elif printf '%s' "$v" | grep -qE '(^|[|&;[:space:]])dd[[:space:]][^|;&]*of='; then
+    echo "dd of="
+  elif printf '%s' "$v" | grep -qE '(^|[|&;[:space:]])truncate([[:space:]]|$)'; then
+    echo "truncate"
+  fi
+}
+
+# NESTED view. Quoted text is data to the outer shell but code to a shell it
+# starts: bash/sh -c, eval, a script piped or fed by heredoc into a shell, and
+# $(...) or backticks, which run even inside double quotes. When the raw
+# command has one, the code it runs is scanned again with its quotes taken
+# off: the whole command for a nested shell (heredoc bodies kept when a shell
+# reads them), the substitution bodies alone for $(...) and backticks, so a
+# quoted ">" elsewhere in the command is not read as a redirect.
+SH='([^[:space:]]*/)?(bash|sh|zsh|dash|ksh|fish)'
+nested_whole=""; nested_subst=""; keep_hd=0
+if printf '%s' "$raw" | grep -qE "(^|[^A-Za-z0-9_.-])${SH}([[:space:]]+--?[A-Za-z-]+)*[[:space:]]+-[A-Za-z]*c([[:space:]]|\$)|(^|[;&|(\`[:space:]])(eval|source|\\.)([[:space:]]|\$)|\\\$\\{?SHELL"; then
+  nested_whole=1; keep_hd=1
+fi
+if printf '%s' "$raw" | grep -qE "\|[[:space:]]*${SH}([[:space:]]|\$)|(^|[;&|(\`[:space:]])${SH}([[:space:]]+--?[A-Za-z-]+)*[[:space:]]*<"; then
+  nested_whole=1; keep_hd=1
+fi
+if printf '%s' "$raw" | grep -qE '\$\(|`'; then
+  nested_subst=1
+fi
+inner_view() {
+  printf '%s' "$cmd" | INNER="$1" KEEP_HD="$keep_hd" perl -0777 -ne '
+    my $s = $_;
+    $s =~ s/(<<-?[ \t]*(["\x27]?)([A-Za-z_]\w*)\2[^\n]*\n)(.*?)(\n[ \t]*\3\b[^\n]*)/$1/gs unless $ENV{KEEP_HD};
+    if ($ENV{INNER} eq "subst") {
+      my @parts; my $n = length($s); my $BT = chr(96);
+      for (my $i = 0; $i < $n; $i++) {
+        if (substr($s, $i, 2) eq "\$(") {
+          my $d = 1; my $j = $i + 2;
+          while ($j < $n && $d > 0) { my $c = substr($s, $j, 1); $d++ if $c eq "("; $d-- if $c eq ")"; $j++; }
+          push @parts, substr($s, $i + 2, $j - $i - 2); $i = $j - 1;
+        } elsif (substr($s, $i, 1) eq $BT) {
+          my $j = index($s, $BT, $i + 1); $j = $n if $j < 0;
+          push @parts, substr($s, $i + 1, $j - $i - 1); $i = $j;
+        }
+      }
+      $s = join("\n", @parts);
+    }
+    $s =~ s/\\(.)/$1/gs;
+    $s =~ tr/\x22\x27//d;
+    print $s;
+  ' | scrub
+}
+
+shellview=$(shell_view)
+hit=$(shell_checks "$shellview")
+if [ -z "$hit" ] && [ -n "$nested_whole" ]; then
+  h=$(shell_checks "$(inner_view whole)"); [ -n "$h" ] && hit="$h inside a nested shell or eval"
+fi
+if [ -z "$hit" ] && [ -n "$nested_subst" ]; then
+  h=$(shell_checks "$(inner_view subst)"); [ -n "$h" ] && hit="$h inside a command substitution"
+fi
+# COPY-OUT: a copy, link, extract or patch that carries temp content to a real
+# path launders a temp write into it (_copy_out.py has the full rule).
+if [ -z "$hit" ] && printf '%s' "$raw" | grep -qE '(^|[^A-Za-z0-9_-])(cp|gcp|mv|gmv|install|rsync|ditto|ln|tar|gtar|bsdtar|unzip|cpio|pax|patch|apply)([^A-Za-z0-9_-]|$)'; then
+  h=$(printf '%s' "$input" | python3 "$(dirname "$0")/_copy_out.py" 2>/dev/null) || h="the copy check failed to run"
+  [ -n "$h" ] && hit="copy out of the temp folder: $h"
+fi
+
+if [ -n "$hit" ]; then
+  :
 # --- RAW view: interpreter one-liners and heredoc bodies ---
 # 6. python file-write: open() with write/append/exclusive-create mode
 elif printf '%s' "$raw" | grep -qE "open\([^)]*['\"](w|a|x|r\+|w\+|a\+|x\+|wb|ab|xb)"; then

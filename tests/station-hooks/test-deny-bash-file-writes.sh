@@ -221,6 +221,88 @@ check deny "tmp-ln-same-command"   'ln -s /Users/me/f /tmp/zz && echo hi > /tmp/
 touch "$TD/orig.txt"; ln "$TD/orig.txt" "$TD/hard.txt"
 check deny "tmp-hard-link"         "echo x > $TD/hard.txt"
 check pass "tmp-plain-file"        "echo x > $TD/orig-not-linked.txt"
+
+# ---- nested shells, eval and command substitution: the code they run is checked
+check deny "nested-bash-c"         "bash -c 'echo x > /Users/me/f'"
+check deny "nested-sh-c-append"    'sh -c "echo x >> ~/f"'
+check deny "nested-zsh-lc-tee"     "zsh -lc 'printf x | tee ~/f'"
+check deny "nested-eval"           'eval "echo x > /Users/me/f"'
+check deny "nested-eval-sed-i"     "eval 'sed -i s/a/b/ ~/.zshrc'"
+check deny "nested-pipe-to-bash"   "echo 'echo x > ~/f' | bash"
+check deny "nested-heredoc-bash"   "$(printf 'bash <<EOF\necho x > ~/f\nEOF')"
+check deny "nested-heredoc-pipe-sh" "$(printf 'cat <<EOF | sh\necho x > ~/f\nEOF')"
+check deny "subst-in-dquotes"      'echo "$(echo x > /Users/me/f)"'
+check deny "backtick-in-dquotes"   'echo "`echo x > /Users/me/f`"'
+check pass "nested-tmp-write"      "bash -c 'echo x > /tmp/ok2.txt'"
+check pass "nested-no-write"       "bash -c 'ls -la'"
+check pass "subst-read-only"       'echo "$(git rev-parse HEAD)"'
+check pass "subst-unquoted"        'ls $(pwd) | head'
+check pass "commit-heredoc-gt"     "$(printf 'git commit -m "$(cat <<%sEOF%s\nfix: a > b\nEOF\n)"' "'" "'")"
+check pass "devnull-in-subst"      'x=$(command -v jq 2>/dev/null)'
+
+# ---- copies out of the temp folder are refused (hooks/_copy_out.py) ----------
+touch "$TD/ok.txt"
+check deny "copy-out-cp"           "cp $TD/ok.txt /Users/me/f"
+check deny "copy-out-cp-tilde"     'cp /tmp/ok.txt ~/f'
+check deny "copy-out-mv-repo"      "mv $TD/ok.txt ~/.agents/x"
+check deny "copy-out-cp-t"         "cp -t ~/ $TD/ok.txt"
+check deny "copy-out-rsync"        "rsync -a $TD/ ~/x/"
+check deny "copy-out-install"      "install -m 644 $TD/ok.txt ~/bin/x"
+check deny "copy-out-ln"           "ln -s $TD/ok.txt ~/link"
+check deny "copy-out-after-cd"     'cd /tmp && cp ok.txt ~/f'
+check deny "copy-out-variable"     'cp $TMPDIR/ok.txt ~/f'
+check deny "copy-out-tar-x"        "tar -xzf $TD/a.tgz -C ~/x"
+check deny "copy-out-unzip"        "unzip $TD/a.zip -d ~/x"
+check deny "copy-out-unparsable"   "cp '$TD/ok.txt ~/f"
+check pass "copy-within-tmp"       "cp $TD/ok.txt $TD/copy.txt"
+check pass "copy-into-tmp"         'cp README.md /tmp/readme-copy.md'
+check pass "copy-within-home"      'cp ~/.agents/README.md ~/.agents/README.copy'
+check pass "archive-into-tmp"      "git archive HEAD | tar -x -C $TD"
+check pass "tar-list"              "tar -tzf $TD/a.tgz"
+check pass "mv-to-archive"         'mv notes.md __archive/notes.md'
+# Review round 2: forms the first copy check missed.
+check deny "copy-out-cp-f"         'cp -f /tmp/ok.txt ~/f'
+check deny "copy-out-mv-f"         'mv -f /tmp/ok.txt ~/.agents/x'
+check deny "copy-out-rsync-o"      'rsync -o /tmp/ok.txt ~/f'
+check deny "copy-out-unzip-P"      'unzip -P pw /tmp/a.zip -d ~/x'
+check deny "copy-out-dev-stdin"    'cp /dev/stdin ~/f <<< payload'
+check deny "copy-out-proc-subst"   'cp <(echo payload) ~/f'
+check deny "copy-out-tar-stdin"    'cat /tmp/a.tar | tar -xf - -C ~/x'
+check deny "copy-out-abs-cp"       '/bin/cp /tmp/ok.txt ~/f'
+check deny "copy-out-in-bash-c"    'bash -c "cp /tmp/ok.txt ~/f"'
+check deny "copy-out-in-eval"      'eval "cp /tmp/ok.txt ~/f"'
+check deny "copy-out-in-subst"     'echo $(cp /tmp/ok.txt ~/f)'
+check deny "copy-out-if-then"      'if true; then cp /tmp/ok.txt ~/f; fi'
+check deny "copy-out-subshell"     '(cp /tmp/ok.txt ~/f)'
+check deny "copy-out-exec"         'exec cp /tmp/ok.txt ~/f'
+check deny "copy-out-timeout"      'timeout 5 cp /tmp/ok.txt ~/f'
+check deny "copy-out-command-p"    'command -p cp /tmp/ok.txt ~/f'
+check deny "copy-out-env-i"        'env -i cp /tmp/ok.txt ~/f'
+check deny "copy-out-find-exec"    'find /tmp/ok.txt -exec cp {} ~/f +'
+check deny "copy-out-xargs"        'echo /tmp/ok.txt | xargs -I@ cp @ ~/f'
+check deny "copy-out-pushd"        'pushd /tmp && cp ok.txt ~/f'
+check deny "copy-out-git-apply"    'git apply /tmp/x.patch'
+check deny "copy-out-patch-stdin"  'patch -p1 < /tmp/x.patch'
+check deny "copy-out-cpio"         'cd /tmp && echo ok.txt | cpio -pdm ~/x'
+check deny "nested-abs-bash"       '/bin/bash -c "echo x > ~/f"'
+check deny "nested-pipe-abs-sh"    'echo "echo x > ~/f" | /bin/sh'
+check deny "nested-long-flag"      'bash --norc -c "echo x > ~/f"'
+check deny "nested-shell-var"      '$SHELL -c "echo x > ~/f"'
+check deny "nested-source-stdin"   '. /dev/stdin <<< "echo x > ~/f"'
+check deny "nested-c-heredoc"      "$(printf 'bash -c "$(cat <<%sEOF%s\necho x > ~/f\nEOF\n)"' "'" "'")"
+LT=$(mktemp -d /tmp/deny-bash-link.XXXXXX)
+ln -s "$REPO/README.md" "$LT/z"
+check deny "copy-onto-temp-link"   "cp /tmp/ok.txt $LT/z"
+check deny "ln-plants-outside"     "ln -s ~/.zshrc $LT/new"
+rm -rf "$LT"
+# Everyday commands the first copy check refused.
+check pass "commit-msg-semicolon"  'git commit -m "hooks: copy check covers cp and mv; tests added"'
+check pass "commit-msg-newline"    "$(printf 'git commit -m "x\n\nthe tar check is not new"')"
+check pass "rg-alternation"        'rg "cp|mv" hooks'
+check pass "grep-alternation"      'grep -nE "install|ln -s" README.md'
+check pass "cp-with-redirect"      'cp README.md /tmp/r.md 2>&1'
+check pass "find-exec-into-tmp"    'find . -name "*.md" -exec cp {} /tmp/ \;'
+check pass "ln-within-repo"        'ln -s ../README.md docs/README.md'
 rm -rf "$TD" "$VD"
 
 # ---- non-Bash tools pass through untouched ----------------------------------
