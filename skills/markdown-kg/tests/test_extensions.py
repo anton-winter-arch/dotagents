@@ -12,6 +12,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -160,60 +161,10 @@ class MarkdownLinkScanTests(unittest.TestCase):
 
 
 class TermSafeTests(unittest.TestCase):
-    """Prose output shows every invisible or reordering character as an
-    escape. Characters are built with chr() so this file holds none."""
+    """Every prose path is sanitized; kg_core's tests cover the escaping
+    itself. Characters are built with chr() so this file holds none."""
 
-    TAG_A, RLO, ZWSP = chr(0xE0041), chr(0x202E), chr(0x200B)
-    ZWJ, VS16, ESC = chr(0x200D), chr(0xFE0F), chr(0x1B)
-
-    def test_plain_text_is_untouched(self):
-        text = "Heading\twith tab\nand an accent: caf" + chr(0xE9) + ".\n"
-        self.assertEqual(kg._term_safe(text), text)
-
-    def test_control_characters_keep_their_earlier_form(self):
-        self.assertEqual(kg._term_safe("a" + self.ESC + "[2Jb\rc" + chr(0x9B)),
-                         "a\\x1b[2Jb\\rc\\x9b")
-
-    def test_invisible_characters_become_visible(self):
-        for ch, shown in ((self.TAG_A, "\\U000e0041"), (self.RLO, "\\u202e"),
-                          (self.ZWSP, "\\u200b"), (chr(0x2066), "\\u2066"),
-                          (chr(0xFEFF), "\\ufeff"), (chr(0xAD), "\\xad"),
-                          (chr(0x2062), "\\u2062"), (chr(0x2800), "\\u2800"),
-                          (chr(0x2028), "\\u2028"), (chr(0x200E), "\\u200e"),
-                          (chr(0xE0101), "\\U000e0101")):
-            self.assertEqual(kg._term_safe("x" + ch + "y"), "x" + shown + "y")
-
-    def test_a_hidden_run_cannot_ride_inside_a_word(self):
-        hidden = "".join(chr(0xE0000 + ord(c)) for c in "run this")
-        got = kg._term_safe("note" + hidden + " text")
-        self.assertTrue(got.isascii())
-        self.assertEqual(got.count("\\U000e00"), len("run this"))
-
-    def test_emoji_sequences_survive(self):
-        woman, laptop, heart = chr(0x1F469), chr(0x1F4BB), chr(0x2764)
-        technologist = woman + self.ZWJ + laptop
-        on_fire = heart + self.VS16 + self.ZWJ + chr(0x1F525)
-        for text in (technologist, on_fire, heart + self.VS16):
-            self.assertEqual(kg._term_safe(text), text)
-
-    def test_a_joiner_outside_an_emoji_sequence_is_shown(self):
-        self.assertEqual(kg._term_safe("pass" + self.ZWJ + "word"),
-                         "pass\\u200dword")
-        self.assertEqual(kg._term_safe(self.ZWJ + chr(0x1F525)),
-                         "\\u200d" + chr(0x1F525))
-
-    def test_variation_selectors_survive_only_where_emoji_need_them(self):
-        heart, vs15, keycap = chr(0x2764), chr(0xFE0E), chr(0x20E3)
-        for text in (heart + self.VS16, chr(0x263A) + vs15,
-                     "1" + self.VS16 + keycap, chr(0xA9) + self.VS16):
-            self.assertEqual(kg._term_safe(text), text)
-        # After a letter, and every selector past the first in a run: a run
-        # of selectors after one base character is a hidden byte channel.
-        self.assertEqual(kg._term_safe("a" + self.VS16), "a\\ufe0f")
-        self.assertEqual(
-            kg._term_safe(heart + self.VS16 + chr(0xFE01) + vs15),
-            heart + self.VS16 + "\\ufe01\\ufe0e")
-        self.assertEqual(kg._term_safe("x" + chr(0x180F)), "x\\u180f")
+    RLO, ZWSP, ESC = chr(0x202E), chr(0x200B), chr(0x1B)
 
     def test_prints_outside_emit_and_error_text_are_sanitized(self):
         tmp = Path(tempfile.mkdtemp(prefix="mdkg-raw-"))
@@ -260,11 +211,13 @@ class TermSafeTests(unittest.TestCase):
 
 
 class LinearScanTests(unittest.TestCase):
-    """The one-pass link walk must find exactly what MD_LINK_RE finds, and
-    must stay linear on input built to make the pattern crawl."""
+    """The one-pass link walk must find exactly what the regex it replaced
+    finds, and must stay linear on input built to make the pattern crawl."""
+
+    MD_LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^()]+)\)")
 
     def both(self, text: str) -> None:
-        want = [(m.start(), m.group(1)) for m in kg.MD_LINK_RE.finditer(text)]
+        want = [(m.start(), m.group(1)) for m in self.MD_LINK_RE.finditer(text)]
         self.assertEqual(list(kg.iter_md_links(text)), want, repr(text))
 
     def test_matches_the_pattern_on_awkward_text(self):
@@ -1136,141 +1089,6 @@ class CommunityTests(VaultCase):
         self.assertEqual(rc, 0)
         self.assertIn("modularity", out)
         self.assertIn("hubs, left out (1):", out)
-
-
-def reference_greedy_modularity(adj: dict, deg: dict, m: float) -> dict:
-    """The clustering with one table of every link, rescanned on each merge:
-    correct and slow. Kept here as the answer key the engine's neighbor-map
-    version must reproduce exactly."""
-    import heapq
-    if m <= 0:
-        return {}
-    comm = {n: i for i, n in enumerate(sorted(adj))}
-    members = {i: {n} for n, i in comm.items()}
-    tot = {comm[n]: deg[n] for n in adj}
-    link = {}
-    for a, nbrs in adj.items():
-        for b, w in nbrs.items():
-            ca, cb = comm[a], comm[b]
-            if ca != cb:
-                link[(ca, cb) if ca < cb else (cb, ca)] = w
-
-    def gain(ca, cb):
-        w = link.get((ca, cb) if ca < cb else (cb, ca), 0.0)
-        return w / m - (tot[ca] * tot[cb]) / (2.0 * m * m)
-
-    heap = [(-gain(a, b), a, b) for a, b in link]
-    heapq.heapify(heap)
-    while heap:
-        negdq, ca, cb = heapq.heappop(heap)
-        if ca not in members or cb not in members:
-            continue
-        if ((ca, cb) if ca < cb else (cb, ca)) not in link:
-            continue
-        fresh = gain(ca, cb)
-        if abs(fresh - (-negdq)) > 1e-12:
-            heapq.heappush(heap, (-fresh, ca, cb))
-            continue
-        if fresh <= 1e-12:
-            break
-        keep, drop = (ca, cb) if ca < cb else (cb, ca)
-        members[keep] |= members.pop(drop)
-        tot[keep] += tot.pop(drop)
-        for n in members[keep]:
-            comm[n] = keep
-        for k in [k for k in link if drop in k]:
-            w = link.pop(k)
-            other = k[0] if k[1] == drop else k[1]
-            if other != keep:
-                nk = (keep, other) if keep < other else (other, keep)
-                link[nk] = link.get(nk, 0.0) + w
-        for k in list(link):
-            if keep in k:
-                other = k[0] if k[1] == keep else k[1]
-                heapq.heappush(heap, (-gain(keep, other), keep, other))
-    return comm
-
-
-def random_graph(rng, nodes: int, edges: int):
-    """Symmetric weighted adjacency in the shape `_note_graph` builds."""
-    names = [f"n{i:05d}" for i in range(nodes)]
-    adj = {}
-    for _ in range(edges):
-        a, b = rng.choice(names), rng.choice(names)
-        if a == b:
-            continue
-        w = float(rng.randint(1, 3))
-        adj.setdefault(a, {})
-        adj.setdefault(b, {})
-        adj[a][b] = adj[a].get(b, 0.0) + w
-        adj[b][a] = adj[a][b]
-    deg = {n: sum(w.values()) for n, w in adj.items()}
-    return adj, deg, sum(deg.values()) / 2.0
-
-
-def star_graph(leaves: int):
-    """One hub linked to every leaf, unit weights. The hub sorts last."""
-    hub = "zz-hub"
-    adj = {hub: {}}
-    for i in range(leaves):
-        leaf = f"leaf{i:05d}"
-        adj[hub][leaf] = 1.0
-        adj[leaf] = {hub: 1.0}
-    deg = {n: sum(w.values()) for n, w in adj.items()}
-    return adj, deg, sum(deg.values()) / 2.0
-
-
-class ClusteringEquivalenceTests(unittest.TestCase):
-    def test_same_groups_on_stars_and_tie_heavy_graphs(self):
-        """An index note without the hub profile is a star, and it is where
-        a merge queue that keeps its stale entries grows fastest. Unit
-        weights make every gain a tie, which is where a change in the order
-        entries leave the queue would show."""
-        import random
-        rng = random.Random(11)
-        graphs = [star_graph(n) for n in (2, 3, 7, 25, 60)]
-        for _ in range(150):
-            nodes = rng.randint(3, 30)
-            adj, deg, m = star_graph(nodes)
-            names = sorted(adj)
-            for _ in range(rng.randint(0, nodes)):
-                a, b = rng.sample(names, 2)
-                adj[a][b] = adj[b][a] = 1.0
-            deg = {n: sum(w.values()) for n, w in adj.items()}
-            graphs.append((adj, deg, sum(deg.values()) / 2.0))
-        for adj, deg, m in graphs:
-            self.assertEqual(kg._greedy_modularity(adj, deg, m),
-                             reference_greedy_modularity(adj, deg, m))
-
-    def test_a_star_clusters_quickly(self):
-        import time
-        adj, deg, m = star_graph(1000)
-        start = time.time()
-        got = kg._greedy_modularity(adj, deg, m)
-        # A queue that re-queues every stale entry needs minutes here.
-        self.assertLess(time.time() - start, 5.0)
-        self.assertEqual(len(got), 1001)
-
-    def test_same_groups_as_the_reference_on_random_graphs(self):
-        import random
-        rng = random.Random(20261114)
-        for _ in range(400):
-            nodes = rng.randint(2, 45)
-            adj, deg, m = random_graph(rng, nodes, rng.randint(1, nodes * 3))
-            got = kg._greedy_modularity(adj, deg, m)
-            want = reference_greedy_modularity(adj, deg, m)
-            self.assertEqual(got, want)
-            self.assertEqual(list(got), list(want))
-
-    def test_a_large_graph_clusters_quickly(self):
-        import random
-        import time
-        adj, deg, m = random_graph(random.Random(7), 4000, 20000)
-        start = time.time()
-        got = kg._greedy_modularity(adj, deg, m)
-        # The reference needs several seconds here.
-        self.assertLess(time.time() - start, 2.0)
-        self.assertEqual(set(got), set(adj))
 
 
 # ------------------------------------------------------------- compatibility

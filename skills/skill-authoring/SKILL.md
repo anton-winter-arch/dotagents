@@ -24,7 +24,8 @@ Re-verify before trusting version-sensitive details.
 | `name` | lowercase a-z 0-9 hyphens, 1-64 chars, **must match the directory name**, no leading/trailing/consecutive hyphens, no "anthropic"/"claude" |
 | `description` | **at most 800 chars, the house cap** (the standard allows 1024; aim for 600-800), checked by `scripts/check_descriptions.py`, **third person**, states what the skill does AND the concrete conditions that should trigger it, no XML tags. A plain scalar must contain no `: ` (colon followed by space) or the YAML fails to parse; use a spaced hyphen, or a `>-` folded block. |
 | `license` | optional, include when a skill may be shared |
-| `metadata` | optional string map; put custom keys (e.g. `version`) HERE, not top-level |
+| `compatibility` | optional, at most 500 chars; only for real environment requirements, such as `lib/` for a `repo-lib` skill |
+| `metadata` | optional string map; put custom keys HERE, not top-level. `ships: repo-lib` marks a skill that imports this repo's `lib/` (see `skills/AGENTS.md`) |
 | `allowed-tools` | optional, experimental in the standard |
 
 ### Claude Code extensions (use deliberately; no-ops elsewhere)

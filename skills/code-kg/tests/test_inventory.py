@@ -236,44 +236,5 @@ class TestTree(InventoryCase):
         self.assertEqual(got["folders"][0]["other"], {".png": 1, ".svg": 1})
 
 
-SHARED = ("glob_match", "tree_payload", "render_tree", "write_checkpoint",
-          "_ro_connect", "classify_units", "est_tokens", "rank_from",
-          "linked_store", "seed_folder", "read_ignore_rules",
-          "ignored_by", "walk_tree", "append_kgignore", "path_filter",
-          "git_status", "KG_DIR", "KG_FOLDER_FILES", "OLD_GITIGNORE_SEED")
-
-
-class TestSharedBodies(unittest.TestCase):
-    """Functions both engines carry with the same body, docstrings aside,
-    and constants with the same value: a fix to one copy must reach the
-    other."""
-
-    def test_the_two_engines_agree(self):
-        import ast
-        if not code_kg.SIBLING_CLI.is_file():
-            self.skipTest("markdown-kg is not installed beside code-kg")
-
-        def bodies(path: Path) -> dict:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            out = {}
-            for node in tree.body:
-                if isinstance(node, ast.FunctionDef) and node.name in SHARED:
-                    body = node.body
-                    if body and isinstance(body[0], ast.Expr) and isinstance(
-                            getattr(body[0], "value", None), ast.Constant):
-                        body = body[1:]
-                    out[node.name] = ast.dump(ast.Module(body=body,
-                                                         type_ignores=[]))
-                elif isinstance(node, ast.Assign) and len(node.targets) == 1 \
-                        and getattr(node.targets[0], "id", None) in SHARED:
-                    out[node.targets[0].id] = ast.dump(node.value)
-            return out
-        mine = bodies(Path(code_kg.__file__))
-        theirs = bodies(code_kg.SIBLING_CLI)
-        self.assertEqual(sorted(mine), sorted(SHARED))
-        for name in mine:
-            self.assertEqual(mine[name], theirs.get(name), name)
-
-
 if __name__ == "__main__":
     unittest.main()

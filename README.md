@@ -204,6 +204,7 @@ Judgment stays in the prose.
 ~/.agents/
   skills/          one folder per skill, each with a SKILL.md and its own scripts and tests
   skills-archive/  retired skills; not synced, restored with git mv
+  lib/             python modules more than one skill imports (`ships: repo-lib`)
   agents/          one .md per subagent
   commands/        one .md per slash command
   hooks/           cross-harness hook scripts and their manifest

@@ -1,12 +1,15 @@
 ---
 name: markdown-kg
 description: Builds and queries a SQLite+FTS5 knowledge graph over any markdown corpus - an Obsidian vault, a docs tree, a knowledge base - addressing sections rather than whole files. Parses wikilinks, embeds, markdown links, frontmatter properties/aliases/tags and heading structure. Use when asked to index, search, query or traverse a vault or markdown corpus ("make this vault queryable", "what links to note Y", "backlinks for Z", "how are these notes connected"), when answering a factual question from a corpus too large to read, when a corpus needs summarizing over time, when a note needs its history traced, when generating an index of a vault, or when diagnosing link problems an ingest reported. Prefer it over grep for any corpus larger than context. Fully offline and deterministic.
+compatibility: Needs the lib/ folder of the repo it ships in (lib/kg_core.py, shared with code-kg) and python3 3.9 or newer.
+metadata:
+  ships: repo-lib
 ---
 
 # markdown-kg
 
 Turn a markdown corpus into a queryable SQLite knowledge graph, then answer from
-it. One engine, no dependencies beyond Python 3.10+ stdlib: EXECUTE
+it. One stdlib engine on python3 3.9+, sharing `lib/kg_core.py` with code-kg: EXECUTE
 `scripts/markdown_kg.py` via Bash for every operation - never reimplement its
 parsing or query logic inline.
 

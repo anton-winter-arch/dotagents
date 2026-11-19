@@ -187,11 +187,13 @@ def test_cmd_down_leaves_a_recycled_pid_alone(tmp_path, monkeypatch, token):
 
 def test_cmd_down_stops_a_group_whose_leader_died(tmp_path, monkeypatch, token):
     """The leader exits and is reaped; a member it started lives on in
-    its group. down probes and signals the group, not the dead pid."""
+    its group. down probes and signals the group, not the dead pid. The
+    member names agents_app in its arguments, as the app's own processes
+    do, because down signals a leaderless group only when it is the app's."""
     leader = subprocess.Popen(
         [sys.executable, "-c",
          "import subprocess, sys; subprocess.Popen([sys.executable, '-c', "
-         f"'import time; time.sleep(300)', '{token}'])"],
+         f"'import time; time.sleep(300)', 'agents_app', '{token}'])"],
         start_new_session=True)
     leader.wait(timeout=10)
     assert wait_for(lambda: tokened(token)), "the member never started"

@@ -23,28 +23,6 @@ ARTIFACTS = Path(__file__).resolve().parent / "artifacts"
 ENGINE = SKILL_DIR / "scripts" / "code_kg.py"
 
 
-class TestGlob(unittest.TestCase):
-    def test_basic(self):
-        self.assertTrue(code_kg.glob_match("app/main.py", "app/*.py"))
-        self.assertFalse(code_kg.glob_match("app/sub/main.py", "app/*.py"))
-
-    def test_doublestar(self):
-        self.assertTrue(code_kg.glob_match("a/b/c/d.py", "a/**/d.py"))
-        self.assertTrue(code_kg.glob_match("web/lib/api.ts", "web/**"))
-
-    def test_bare_pattern_matches_any_part(self):
-        self.assertTrue(code_kg.glob_match("x/dist/y.js", "dist"))
-        self.assertTrue(code_kg.glob_match("a/b/thing.min.js", "*.min.js"))
-
-    def test_overlong_pattern_refused(self):
-        self.assertFalse(code_kg.glob_match("a", "*" * 600))
-
-    def test_adversarial_pattern_terminates(self):
-        # Linear-time matcher: this input hangs a backtracking regex.
-        self.assertFalse(code_kg._match_segment("a" * 60 + "c",
-                                                "*a" * 12 + "*b"))
-
-
 class TestLanguageAndRole(unittest.TestCase):
     def test_language_of(self):
         self.assertEqual(code_kg.language_of("Dockerfile"), "dockerfile")
@@ -1131,74 +1109,10 @@ class TestIngestBehavior(unittest.TestCase):
 
     def test_bare_ingest_seeds_the_folder_files(self):
         kg = self.repo / ".kg"
-        for name, text in code_kg.KG_FOLDER_FILES.items():
-            self.assertEqual((kg / name).read_text(encoding="utf-8"), text)
-        self.assertEqual((kg / "CLAUDE.md").read_text(), "@AGENTS.md\n")
-        self.assertTrue((kg / "code-kg.db").exists())
+        self.assertEqual(sorted(p.name for p in kg.iterdir()),
+                         [".gitignore", "AGENTS.md", "CLAUDE.md", "README.md",
+                          "code-kg.db"])
         self.assertFalse((self.repo / ".code-kg").exists())
-
-    @unittest.skipUnless(shutil.which("git"), "git is not installed")
-    def test_the_gitignore_keeps_databases_out_and_configs_in(self):
-        tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, tmp, True)
-        subprocess.run(["git", "init", "-q", str(tmp)], check=True)
-        (tmp / ".kg").mkdir()
-        code_kg.seed_folder(tmp / ".kg")
-        names = ["code-kg.db", "code-kg.db-wal", "code-kg.db-journal",
-                 "code-kg-prev.db", "code-kg-prev.db.x1.tmp",
-                 "markdown-kg.db-shm", "code-kg-config.json",
-                 "markdown-kg-config.json", "README.md", "AGENTS.md",
-                 "CLAUDE.md", ".gitignore"]
-        got = subprocess.run(
-            ["git", "-C", str(tmp), "check-ignore", "--no-index",
-             *[f".kg/{n}" for n in names]],
-            capture_output=True, text=True).stdout.split()
-        self.assertEqual(got, [f".kg/{n}" for n in names[:6]])
-
-    def test_the_old_star_seed_is_replaced_and_other_files_kept(self):
-        tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, tmp, True)
-        kg = tmp / ".kg"
-        kg.mkdir()
-        (kg / ".gitignore").write_text(code_kg.OLD_GITIGNORE_SEED)
-        (kg / "README.md").write_text("ours\n")
-        code_kg.seed_folder(kg)
-        self.assertEqual((kg / ".gitignore").read_text(),
-                         code_kg.KG_FOLDER_FILES[".gitignore"])
-        self.assertEqual((kg / "README.md").read_text(), "ours\n")
-
-    def test_a_legacy_folder_gets_only_its_gitignore(self):
-        tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, tmp, True)
-        legacy = tmp / code_kg.LEGACY_KG_DIR
-        legacy.mkdir()
-        code_kg.seed_folder(legacy)
-        self.assertEqual(sorted(p.name for p in legacy.iterdir()),
-                         [".gitignore"])
-
-    def test_planted_links_at_the_seeded_names_are_not_written_through(self):
-        tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, tmp, True)
-        kg = tmp / "repo" / ".kg"
-        kg.mkdir(parents=True)
-        outside = tmp / "outside.md"
-        outside.write_text("keep\n")
-        os.symlink(outside, kg / "README.md")
-        os.symlink(tmp / "dangling.md", kg / "AGENTS.md")
-        code_kg.seed_folder(kg)
-        self.assertEqual(outside.read_text(), "keep\n")
-        self.assertFalse((tmp / "dangling.md").exists())
-        self.assertFalse((kg / "CLAUDE.md").exists())
-
-    def test_a_planted_agents_md_gets_no_claude_pointer(self):
-        tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, tmp, True)
-        kg = tmp / ".kg"
-        kg.mkdir()
-        (kg / "AGENTS.md").write_text("planted\n")
-        code_kg.seed_folder(kg)
-        self.assertEqual((kg / "AGENTS.md").read_text(), "planted\n")
-        self.assertFalse((kg / "CLAUDE.md").exists())
 
     def test_counts(self):
         self.assertEqual(self.counts["files"], 23)

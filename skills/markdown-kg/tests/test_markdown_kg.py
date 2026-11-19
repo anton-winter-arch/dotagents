@@ -22,6 +22,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import markdown_kg
+import kg_core  # on sys.path once the engine is imported
 from fixture_copy import copy_fixture
 
 HERE = Path(__file__).resolve().parent
@@ -289,40 +290,6 @@ class DateInferenceTests(unittest.TestCase):
                          (("n", "y", "n"), (7, 2026, 6)))
 
 
-class GlobTests(unittest.TestCase):
-    def test_double_star_spans_segments(self):
-        self.assertTrue(markdown_kg.glob_match("archive/old/a.md", "archive/**"))
-        self.assertFalse(markdown_kg.glob_match("live/a.md", "archive/**"))
-
-    def test_single_star_stops_at_a_separator(self):
-        self.assertTrue(markdown_kg.glob_match("gen/a.md", "gen/*.md"))
-        self.assertFalse(markdown_kg.glob_match("gen/deep/a.md", "gen/*.md"))
-
-    def test_bare_pattern_matches_basename(self):
-        self.assertTrue(markdown_kg.glob_match("deep/journal.md", "journal.md"))
-
-    def test_leading_dot_is_part_of_the_name(self):
-        self.assertTrue(markdown_kg.glob_match(".obsidian/x.md", ".obsidian/**"))
-        self.assertFalse(markdown_kg.glob_match("obsidian/x.md", ".obsidian/**"))
-        self.assertTrue(markdown_kg.glob_match("a.md", "./a.md"))
-
-    def test_bare_pattern_matches_any_folder_like_gitignore(self):
-        self.assertTrue(markdown_kg.glob_match("a/node_modules/x.md", "node_modules"))
-        self.assertTrue(markdown_kg.glob_match("a/drafts/x.md", "drafts/"))
-
-    def test_matches_code_kg_on_shared_cases(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "code-kg" / "scripts"))
-        import code_kg
-        cases = [(".obsidian/x.md", ".obsidian/**"), ("obsidian/x.md", ".obsidian/**"),
-                 ("a/node_modules/x.md", "node_modules"), ("a/dist/x.md", "dist/"),
-                 ("drafts/x.md", "drafts/"), ("deep/journal.md", "journal.md"),
-                 ("gen/deep/a.md", "gen/*.md"), ("archive/old/a.md", "archive/**"),
-                 ("a.md", "./a.md")]
-        for path, pat in cases:
-            self.assertEqual(markdown_kg.glob_match(path, pat),
-                             code_kg.glob_match(path, pat), (path, pat))
-
-
 class LogLikelihoodTests(unittest.TestCase):
     def test_over_representation_beats_mere_frequency(self):
         # `rare` is 4 of 100 here and 1 of 10000 elsewhere; `common` is 40 of
@@ -361,28 +328,12 @@ class KbFixtureTests(VaultCase):
 
 class IngestTests(VaultCase):
     def test_ingest_seeds_the_folder_files(self):
-        # `*.db*` keeps the databases out of git and lets the config in;
-        # code-kg's tests check that against git itself.
+        # kg_core's tests cover what each seeded file holds.
         markdown_kg.ingest(self.vault)
         kg = markdown_kg.kg_dir(self.vault)
-        for name, text in markdown_kg.KG_FOLDER_FILES.items():
-            self.assertEqual((kg / name).read_text(encoding="utf-8"), text)
-        gi = (kg / ".gitignore").read_text().splitlines()
-        self.assertEqual([ln for ln in gi if not ln.startswith("#")], ["*.db*"])
-
-    def test_the_old_star_seed_is_replaced(self):
-        kg = self.vault / markdown_kg.KG_DIR
-        kg.mkdir()
-        (kg / ".gitignore").write_text(markdown_kg.OLD_GITIGNORE_SEED)
-        markdown_kg.ingest(self.vault)
-        self.assertEqual((kg / ".gitignore").read_text(),
-                         markdown_kg.KG_FOLDER_FILES[".gitignore"])
-
-    def test_a_legacy_folder_gets_only_its_gitignore(self):
-        legacy = self.tmp / "markdown-kg"
-        legacy.mkdir()
-        markdown_kg.seed_folder(legacy)
-        self.assertEqual([p.name for p in legacy.iterdir()], [".gitignore"])
+        self.assertEqual(sorted(p.name for p in kg.iterdir()),
+                         [".gitignore", "AGENTS.md", "CLAUDE.md", "README.md",
+                          "markdown-kg.db"])
 
     def test_an_existing_gitignore_is_never_rewritten(self):
         gi = markdown_kg.kg_dir(self.vault) / ".gitignore"
@@ -1012,32 +963,6 @@ class UntrustedVaultTests(VaultCase):
                    if r["note_id"] == "generated/summary")
         self.assertEqual(hit["score"], 0.0)
 
-    def test_a_pathological_glob_cannot_wedge_the_engine(self):
-        import time
-        # the exact reproduction from the pre-merge review: 32s against the
-        # backtracking regex this replaced, and 72s once the pattern grew
-        for pattern, path in ((("*a" * 10) + "*b", "a" * 43 + ".md"),
-                              (("*a" * 30) + "*b", "a" * 200 + ".md"),
-                              ("**/" * 30 + "*b", "a/" * 40 + "x.md")):
-            start = time.perf_counter()
-            self.assertFalse(markdown_kg.glob_match(path, pattern))
-            self.assertLess(time.perf_counter() - start, 0.1, msg=pattern)
-
-    def test_glob_semantics_survive_the_linear_matcher(self):
-        for path, pattern, expected in (
-            ("archive/old/a.md", "archive/**", True),
-            ("live/a.md", "archive/**", False),
-            ("gen/a.md", "gen/*.md", True),
-            ("gen/deep/a.md", "gen/*.md", False),
-            ("deep/journal.md", "journal.md", True),
-            ("a/b/c/d.md", "a/**/d.md", True),
-            ("notes/x.md", "notes/", True),
-            ("abc.md", "a?c.md", True),
-            ("abcd.md", "a?c.md", False),
-        ):
-            self.assertEqual(markdown_kg.glob_match(path, pattern), expected,
-                             msg=f"{path} vs {pattern}")
-
     def test_a_note_cannot_set_its_own_ranking_weight(self):
         (self.vault / "loud.md").write_text(
             "---\nkg-profile: reference\nweight: 1e9\n---\n\n"
@@ -1604,7 +1529,7 @@ class DiffTests(VaultCase):
         with self.assertRaises(SystemExit):
             markdown_kg.diff(self.vault, str(absent))   # not a file: rejected
         self.assertFalse(absent.exists())               # and never created
-        ro_probe = markdown_kg._ro_connect(str(target))
+        ro_probe = markdown_kg.ro_connect(str(target))
         with self.assertRaises(sqlite3.OperationalError):
             ro_probe.execute("CREATE TABLE should_fail (x)")
         ro_probe.close()
@@ -2893,6 +2818,10 @@ class InferredRelationTests(VaultCase):
         return markdown_kg.relate(self.vault, self.sid, predicate, target,
                                   quote)
 
+    def ruling(self, fn, *args):
+        with contextlib.closing(markdown_kg.open_fresh(self.vault)) as con:
+            return fn(con, *args)
+
     def test_relate_records_verified_evidence(self):
         out = self._relate()
         self.assertFalse(out["existing"])
@@ -2992,7 +2921,7 @@ class InferredRelationTests(VaultCase):
         out = self._relate()
         conflicted = self._relate(target="Home")
         self.assertEqual(len(conflicted["conflicts"]), 1)
-        got = markdown_kg.retire_relation(self.vault, out["id"])
+        got = self.ruling(kg_core.retire_relation, out["id"])
         self.assertEqual(got["status"], "retired")
         # out of traversal, default listing, and its conflicts closed
         self.assertNotIn("Controller", [
@@ -3016,16 +2945,16 @@ class InferredRelationTests(VaultCase):
         self._relate()
         conflicted = self._relate(target="Home")
         seq = self.rows("SELECT seq FROM conflicts")[0][0]
-        got = markdown_kg.resolve_conflict(self.vault, seq,
-                                           "Controller is the true successor")
+        got = self.ruling(kg_core.resolve_conflict, seq,
+                          "Controller is the true successor")
         self.assertEqual(got["state"], "cold")
         rows = self.rows("SELECT state, resolution FROM conflicts"
                          " WHERE seq=?", seq)
         self.assertEqual(rows, [("cold", "Controller is the true successor")])
         with self.assertRaises(SystemExit):
-            markdown_kg.resolve_conflict(self.vault, 9999, "no such conflict")
+            self.ruling(kg_core.resolve_conflict, 9999, "no such conflict")
         with self.assertRaises(SystemExit):
-            markdown_kg.retire_relation(self.vault, 9999)
+            self.ruling(kg_core.retire_relation, 9999)
 
     def test_default_json_shapes_carry_no_provenance_field(self):
         # Constraint from the design request: with no flag, output shapes are

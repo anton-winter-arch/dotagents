@@ -23,10 +23,11 @@ The reliable form of a skill capability is a deterministic script - usually stdl
 Code runs the gate outside the model; prose asks the model to remember.
 A paragraph of instructions that a script could enforce is a defect in the skill, not a style choice.
 
-**A skill is self-contained.**
+**A skill is self-contained unless it declares the repo's lib/.**
 Everything its scripts import lives inside its own folder or in the stdlib, and its tests run with `python3 -m unittest discover -s tests`.
 That `python3` can be the 3.9 that stock macOS ships, so skill scripts follow the Python version rule in [`../hooks/AGENTS.md`](../hooks/AGENTS.md).
-The one outside dependency allowed is another skill, referenced by name: its CLI, or its `scripts/` found as a sibling folder.
+The outside dependencies allowed are another skill, referenced by name (its CLI, or its `scripts/` found as a sibling folder), and a module in [`../lib/`](../lib/AGENTS.md).
+A skill that imports from `lib/` sets `metadata.ships: repo-lib` and a `compatibility` line naming the module, because it no longer ships on its own; `tests/test_repo_lib.py` holds the marker to the imports.
 A skill that must read the repo itself, such as the seeder or the skill checkers, says so in its SKILL.md.
 
 **A skill that starts processes or loads models owns their whole life.**

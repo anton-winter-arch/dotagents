@@ -1,6 +1,9 @@
 ---
 name: code-kg
 description: Builds and queries a SQLite+FTS5 knowledge graph over any codebase - import/dependency edges, symbols with line ranges, entry points, liveness tiers that shortlist dead code, subsystem communities, coupling hotspots, agent-tooling layer, data-store inventory. Parses 20+ languages including python, typescript, go, rust, java, c/c++, bash, sql and terraform, stdlib only; understands tsconfig aliases and Django/Next.js wiring. Use to index, map or query a repo ("what imports X", "blast radius", "what subsystems exist", "find dead code", "what databases does this use"), orient in an unfamiliar repo, trace how two files connect, or fold test coverage in to find never-executed code. Markdown corpora go to markdown-kg. Fully offline except `coverage run` and `data --inspect`, both consent-gated.
+compatibility: Needs the lib/ folder of the repo it ships in (lib/kg_core.py, shared with markdown-kg) and python3 3.9 or newer.
+metadata:
+  ships: repo-lib
 ---
 
 # code-kg
