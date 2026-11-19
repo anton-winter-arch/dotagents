@@ -104,6 +104,63 @@ LEGACY_LAYOUTS = {
                  PREV_DB_NAME: "vault-kg-prev.db"},
 }
 KG_DIRS = (KG_DIR, *LEGACY_LAYOUTS)
+# The files a .kg/ folder ships with, the same whichever engine writes them
+# first; code-kg carries the same two constants. The .gitignore keeps the
+# databases out of git and lets the configs and these docs in.
+KG_FOLDER_FILES = {
+    ".gitignore": (
+        "# The knowledge-graph databases, their checkpoints and SQLite sidecars"
+        " are local and rebuildable.\n"
+        "# The configs and docs in this folder are committed.\n"
+        "*.db*\n"),
+    "README.md": (
+        "# .kg\n\n"
+        "This folder holds the knowledge graphs that the code-kg and"
+        " markdown-kg agent skills build over this project.\n"
+        "Either engine writes this README, `AGENTS.md`, `CLAUDE.md` and"
+        " `.gitignore` when they are missing.\n\n"
+        "| File | Engine | In git |\n"
+        "| --- | --- | --- |\n"
+        "| `code-kg-config.json` | code-kg | yes |\n"
+        "| `markdown-kg-config.json` | markdown-kg | yes |\n"
+        "| `*.db` files and their SQLite sidecars | either | no |\n"
+        "| `README.md`, `AGENTS.md`, `CLAUDE.md`, `.gitignore` | both | yes |\n\n"
+        "The databases hold the full text of every indexed file and rebuild"
+        " from the tree, so `.gitignore` keeps them out of git.\n"
+        "The configs hold this project's tuned settings, so they are"
+        " committed with it.\n"
+        "`.kgignore` at the project root excludes paths from both graphs, in"
+        " gitignore syntax.\n\n"
+        "## code-kg\n\n"
+        "code-kg maps source code: imports, symbols, entry points, subsystems"
+        " and data stores.\n"
+        "`code-kg-config.json` declares source roots, entry points, import"
+        " aliases and the test command, and `code-kg.db` holds the graph.\n\n"
+        "## markdown-kg\n\n"
+        "markdown-kg maps markdown notes by section: links, embeds,"
+        " frontmatter and headings.\n"
+        "`markdown-kg-config.json` declares note profiles, entities and"
+        " markers, and `markdown-kg.db` holds the graph.\n"),
+    "AGENTS.md": (
+        "# .kg\n\n"
+        "Rules for agents working in this folder; `README.md` describes its"
+        " files.\n\n"
+        "- Build and query the graphs with the code-kg and markdown-kg"
+        " skills.\n"
+        "- Never edit or commit a `.db` file. To rebuild a graph, run its"
+        " skill's `ingest` on the project.\n"
+        "- Edit a config as plain JSON and commit it with the change that"
+        " needed it.\n"
+        "- Put path exclusions in `.kgignore` at the project root, because"
+        " both engines refuse a config with `ignore` rows.\n"
+        "- Keep every file name here unchanged, because each engine finds its"
+        " files by name.\n"),
+    "CLAUDE.md": "@AGENTS.md\n",
+}
+# What .gitignore held before the configs were committed; a folder still
+# holding it gets the current one.
+OLD_GITIGNORE_SEED = ("# Local and rebuildable: knowledge-graph databases,"
+                      " their checkpoints and configs.\n*\n")
 
 # Folders Obsidian hides or that are never vault notes; any dot folder/file is
 # excluded too.
@@ -527,7 +584,7 @@ def db_path(vault: Path) -> Path:
 def prev_db_path(vault: Path) -> Path:
     """The one-deep checkpoint `ingest --keep-previous` writes and a bare
     `diff` compares against. Lives beside the live db, where the folder's
-    `*` .gitignore covers it and the SQLite journal/wal sidecars too."""
+    `*.db*` .gitignore covers it and the SQLite journal/wal sidecars too."""
     return _kg_file(vault, PREV_DB_NAME)
 
 
@@ -553,21 +610,37 @@ def linked_store(root: Path, folder: Path, db: Path) -> str | None:
     return None
 
 
-def seed_gitignore(folder: Path) -> None:
-    """Give the engine's folder a .gitignore of `*` when it has none, so the
-    folder, its config and every database in it stay out of the repo. A
-    .gitignore already there is the repo's own choice and is never rewritten;
-    a config someone wants shared is added with `git add -f`. O_EXCL and
-    O_NOFOLLOW in one open: a link planted at the path, dangling or not, is
-    never written through, with no gap between a check and the write."""
-    gi = folder / ".gitignore"
-    try:
-        fd = os.open(gi, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
-    except OSError:
-        return
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write("# Local and rebuildable: knowledge-graph databases, their"
-                 " checkpoints and configs.\n*\n")
+def seed_folder(folder: Path) -> None:
+    """Write the engine's folder files that are missing: in .kg/ every file
+    of KG_FOLDER_FILES, in a legacy folder its .gitignore only. A file
+    already there is the vault's own choice and is never rewritten, except a
+    .gitignore still holding OLD_GITIGNORE_SEED, whose `*` would keep the
+    configs out of git. O_EXCL and O_NOFOLLOW in one open: a link planted at
+    a path, dangling or not, is never written through, with no gap between
+    a check and the write. code-kg's `seed_folder` has the same body; keep
+    the two identical."""
+    def holds(path: Path, text: str) -> bool:
+        return (path.is_file() and not path.is_symlink()
+                and path.stat().st_size == len(text.encode("utf-8"))
+                and path.read_text(encoding="utf-8", errors="replace") == text)
+
+    names = KG_FOLDER_FILES if folder.name == KG_DIR else (".gitignore",)
+    for name in names:
+        path = folder / name
+        if name == ".gitignore" and holds(path, OLD_GITIGNORE_SEED):
+            path.unlink(missing_ok=True)
+        # The pointer imports only the AGENTS.md the engines write, never
+        # one a cloned repo planted.
+        if name == "CLAUDE.md" and not holds(folder / "AGENTS.md",
+                                             KG_FOLDER_FILES["AGENTS.md"]):
+            continue
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | os.O_NOFOLLOW, 0o644)
+        except OSError:
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(KG_FOLDER_FILES[name])
 
 
 def connect(vault: Path, must_exist: bool = False) -> sqlite3.Connection:
@@ -580,7 +653,7 @@ def connect(vault: Path, must_exist: bool = False) -> sqlite3.Connection:
     db.parent.mkdir(parents=True, exist_ok=True)
     # Seeded on first contact, not only by `init`: the db must never be
     # committable in the vault's repo however the folder came to exist.
-    seed_gitignore(db.parent)
+    seed_folder(db.parent)
     con = sqlite3.connect(db)
     con.executescript(SCHEMA)
     _add_missing_columns(con)
@@ -4478,8 +4551,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     print(f"init: wrote {cfg_file} with {len(cfg['profiles'])} confident "
           f"profile rows ({len(found['dated_logs'])} dated logs, "
           f"{len(found['generated'])} generated)")
-    print(f"      db at {db_path(vault)}; {kg_dir(vault).name}/.gitignore keeps the folder,"
-          " its config and its databases out of git (`git add -f` the config to share it)")
+    print(f"      db at {db_path(vault)}; {kg_dir(vault).name}/.gitignore keeps the databases"
+          " out of git, and the config is committed with the vault")
     return 0
 
 
@@ -4533,7 +4606,7 @@ def migrate(vault: Path) -> dict:
         moved.append([f"{cfg_src.relative_to(vault).as_posix()} ignore rows",
                       ".kgignore"])
     new.mkdir(exist_ok=True)
-    seed_gitignore(new)
+    seed_folder(new)
     for src, dst in moves:
         if src == cfg_src:
             fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL

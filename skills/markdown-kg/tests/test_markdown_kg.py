@@ -360,11 +360,29 @@ class KbFixtureTests(VaultCase):
 
 
 class IngestTests(VaultCase):
-    def test_ingest_seeds_a_gitignore_that_covers_the_whole_folder(self):
-        # `*` keeps the folder, its config and every database out of the repo.
+    def test_ingest_seeds_the_folder_files(self):
+        # `*.db*` keeps the databases out of git and lets the config in;
+        # code-kg's tests check that against git itself.
         markdown_kg.ingest(self.vault)
-        gi = markdown_kg.kg_dir(self.vault) / ".gitignore"
-        self.assertEqual([ln for ln in gi.read_text().splitlines() if not ln.startswith("#")], ["*"])
+        kg = markdown_kg.kg_dir(self.vault)
+        for name, text in markdown_kg.KG_FOLDER_FILES.items():
+            self.assertEqual((kg / name).read_text(encoding="utf-8"), text)
+        gi = (kg / ".gitignore").read_text().splitlines()
+        self.assertEqual([ln for ln in gi if not ln.startswith("#")], ["*.db*"])
+
+    def test_the_old_star_seed_is_replaced(self):
+        kg = self.vault / markdown_kg.KG_DIR
+        kg.mkdir()
+        (kg / ".gitignore").write_text(markdown_kg.OLD_GITIGNORE_SEED)
+        markdown_kg.ingest(self.vault)
+        self.assertEqual((kg / ".gitignore").read_text(),
+                         markdown_kg.KG_FOLDER_FILES[".gitignore"])
+
+    def test_a_legacy_folder_gets_only_its_gitignore(self):
+        legacy = self.tmp / "markdown-kg"
+        legacy.mkdir()
+        markdown_kg.seed_folder(legacy)
+        self.assertEqual([p.name for p in legacy.iterdir()], [".gitignore"])
 
     def test_an_existing_gitignore_is_never_rewritten(self):
         gi = markdown_kg.kg_dir(self.vault) / ".gitignore"

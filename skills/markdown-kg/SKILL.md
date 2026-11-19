@@ -26,13 +26,15 @@ Two things make it worth reaching for over `grep` or `Read`:
 
 ```
 <vault>/.kg/                 shared with code-kg; each file carries its engine's name
-    .gitignore               `*`: the whole folder stays out of git
-    markdown-kg-config.json  profiles, entities, markers - one file
+    .gitignore               `*.db*`: the databases stay out of git
+    README.md, AGENTS.md     the folder's files and rules, shared with code-kg
+    CLAUDE.md                `@AGENTS.md`
+    markdown-kg-config.json  profiles, entities, markers - one file, committed
     markdown-kg.db           SQLite + FTS5, rebuildable
     markdown-kg-prev.db      diff checkpoint from `ingest --keep-previous`
 ```
 
-The engine writes the `.gitignore` when the folder has none, and never rewrites one that exists. To share a config across machines, `git add -f` it.
+Either engine writes the `.gitignore` and the three docs when they are missing, with the same text, and never rewrites one that exists; a `.gitignore` still holding the earlier `*` seed is replaced.
 
 **What gets indexed:** every note under the vault root except dot folders and what a `.kgignore` at or below the root excludes, in git's syntax. `.gitignore` is not read, so gitignored notes stay searchable, and rules above the root are never read. An environment file (`.env`, `*.env`) is never read.
 

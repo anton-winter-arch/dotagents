@@ -9,8 +9,9 @@ X-ray a codebase once, then answer from the graph instead of grepping. One
 stdlib engine: EXECUTE `scripts/code_kg.py` via Bash for every operation -
 never reimplement its parsing inline. Storage is `<repo>/.kg/`, shared with
 markdown-kg (`code-kg-config.json` + a rebuildable `code-kg.db`; the folder's
-own `.gitignore` of `*`, written when none exists, keeps all of it out of git,
-and `git add -f` shares a config). A repo with a legacy `.code-kg/` keeps
+own `.gitignore` of `*.db*` keeps the databases out of git and lets the config
+in, and a README.md, AGENTS.md and `@AGENTS.md` CLAUDE.md describe the folder,
+each written when missing). A repo with a legacy `.code-kg/` keeps
 using it in place until `migrate <repo>` moves its files into `.kg/` and any
 config `ignore` patterns into `.kgignore`. Every read command re-ingests
 on drift, so answers track the live tree without you managing freshness.

@@ -133,7 +133,7 @@ class CheckpointTests(DiffCase):
     def test_the_checkpoint_is_gitignored(self):
         self.changed()
         gi = code_kg.kg_dir(self.repo) / ".gitignore"
-        self.assertEqual([ln for ln in gi.read_text().splitlines() if not ln.startswith("#")], ["*"])
+        self.assertEqual([ln for ln in gi.read_text().splitlines() if not ln.startswith("#")], ["*.db*"])
 
     def test_an_older_gitignore_gains_the_checkpoint_line(self):
         self.cli("ingest")

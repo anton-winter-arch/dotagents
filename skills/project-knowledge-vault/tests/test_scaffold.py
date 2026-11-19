@@ -213,7 +213,7 @@ class TestInto(Base):
         result = run("--into", str(dest), graph=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((dest / ".kg" / "markdown-kg-config.json").is_file())
-        self.assertIn("*", (dest / ".kg" / ".gitignore").read_text().split())
+        self.assertIn("*.db*", (dest / ".kg" / ".gitignore").read_text().split())
 
 
 class TestDeliverables(Base):
@@ -380,7 +380,7 @@ class TestGraph(Base):
         self.assertEqual(found.returncode, 0, found.stderr)
         ids = [h["section_id"] for h in json.loads(found.stdout)["results"]]
         self.assertTrue(ids and not any(i.startswith(("AGENTS", "CLAUDE")) for i in ids), ids)
-        self.assertIn("*", (vault / ".kg" / ".gitignore").read_text().split())
+        self.assertIn("*.db*", (vault / ".kg" / ".gitignore").read_text().split())
 
     def test_shipped_slots_survive_init_on_a_folder_with_dated_notes(self) -> None:
         # init writes an exact-path row for each dated log it finds, which would outrank notes-*.md

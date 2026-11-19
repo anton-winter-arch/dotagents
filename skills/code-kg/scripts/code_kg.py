@@ -29,7 +29,7 @@ Design goals (mirrored from markdown_kg.py, the markdown sibling):
                     to one repo lives in its config, never in code.
 
 Commands:
-  init <repo>                            scaffold .kg/ (config + gitignore)
+  init <repo>                            scaffold .kg/ (config, gitignore, docs)
   migrate <repo>                         move a legacy .code-kg/ graph into .kg/
   ingest <repo>                          full rebuild: files, symbols, edges
   search <repo> <question>               natural-language search, symbols first
@@ -85,6 +85,63 @@ CONFIG_NAME = "code-kg-config.json"
 LEGACY_KG_DIR = ".code-kg"
 LEGACY_NAMES = {CONFIG_NAME: "config.json"}
 KG_DIRS = (KG_DIR, LEGACY_KG_DIR)
+# The files a .kg/ folder ships with, the same whichever engine writes them
+# first; markdown-kg carries the same two constants. The .gitignore keeps
+# the databases out of git and lets the configs and these docs in.
+KG_FOLDER_FILES = {
+    ".gitignore": (
+        "# The knowledge-graph databases, their checkpoints and SQLite sidecars"
+        " are local and rebuildable.\n"
+        "# The configs and docs in this folder are committed.\n"
+        "*.db*\n"),
+    "README.md": (
+        "# .kg\n\n"
+        "This folder holds the knowledge graphs that the code-kg and"
+        " markdown-kg agent skills build over this project.\n"
+        "Either engine writes this README, `AGENTS.md`, `CLAUDE.md` and"
+        " `.gitignore` when they are missing.\n\n"
+        "| File | Engine | In git |\n"
+        "| --- | --- | --- |\n"
+        "| `code-kg-config.json` | code-kg | yes |\n"
+        "| `markdown-kg-config.json` | markdown-kg | yes |\n"
+        "| `*.db` files and their SQLite sidecars | either | no |\n"
+        "| `README.md`, `AGENTS.md`, `CLAUDE.md`, `.gitignore` | both | yes |\n\n"
+        "The databases hold the full text of every indexed file and rebuild"
+        " from the tree, so `.gitignore` keeps them out of git.\n"
+        "The configs hold this project's tuned settings, so they are"
+        " committed with it.\n"
+        "`.kgignore` at the project root excludes paths from both graphs, in"
+        " gitignore syntax.\n\n"
+        "## code-kg\n\n"
+        "code-kg maps source code: imports, symbols, entry points, subsystems"
+        " and data stores.\n"
+        "`code-kg-config.json` declares source roots, entry points, import"
+        " aliases and the test command, and `code-kg.db` holds the graph.\n\n"
+        "## markdown-kg\n\n"
+        "markdown-kg maps markdown notes by section: links, embeds,"
+        " frontmatter and headings.\n"
+        "`markdown-kg-config.json` declares note profiles, entities and"
+        " markers, and `markdown-kg.db` holds the graph.\n"),
+    "AGENTS.md": (
+        "# .kg\n\n"
+        "Rules for agents working in this folder; `README.md` describes its"
+        " files.\n\n"
+        "- Build and query the graphs with the code-kg and markdown-kg"
+        " skills.\n"
+        "- Never edit or commit a `.db` file. To rebuild a graph, run its"
+        " skill's `ingest` on the project.\n"
+        "- Edit a config as plain JSON and commit it with the change that"
+        " needed it.\n"
+        "- Put path exclusions in `.kgignore` at the project root, because"
+        " both engines refuse a config with `ignore` rows.\n"
+        "- Keep every file name here unchanged, because each engine finds its"
+        " files by name.\n"),
+    "CLAUDE.md": "@AGENTS.md\n",
+}
+# What .gitignore held before the configs were committed; a folder still
+# holding it gets the current one.
+OLD_GITIGNORE_SEED = ("# Local and rebuildable: knowledge-graph databases,"
+                      " their checkpoints and configs.\n*\n")
 # Bump when a parser or schema change must re-index a repo whose files have
 # not changed. The manifest folds it in, so the next read command re-ingests
 # once instead of answering from tables the old engine never filled.
@@ -523,21 +580,37 @@ def linked_store(root: Path, folder: Path, db: Path) -> str | None:
     return None
 
 
-def seed_gitignore(folder: Path) -> None:
-    """Give the engine's folder a .gitignore of `*` when it has none, so the
-    folder, its config and every database in it stay out of the repo. A
-    .gitignore already there is the repo's own choice and is never rewritten;
-    a config someone wants shared is added with `git add -f`. O_EXCL and
-    O_NOFOLLOW in one open: a link planted at the path, dangling or not, is
-    never written through, with no gap between a check and the write."""
-    gi = folder / ".gitignore"
-    try:
-        fd = os.open(gi, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
-    except OSError:
-        return
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write("# Local and rebuildable: knowledge-graph databases, their"
-                 " checkpoints and configs.\n*\n")
+def seed_folder(folder: Path) -> None:
+    """Write the engine's folder files that are missing: in .kg/ every file
+    of KG_FOLDER_FILES, in a legacy folder its .gitignore only. A file
+    already there is the repo's own choice and is never rewritten, except a
+    .gitignore still holding OLD_GITIGNORE_SEED, whose `*` would keep the
+    configs out of git. O_EXCL and O_NOFOLLOW in one open: a link planted at
+    a path, dangling or not, is never written through, with no gap between
+    a check and the write. markdown-kg's `seed_folder` has the same body;
+    keep the two identical."""
+    def holds(path: Path, text: str) -> bool:
+        return (path.is_file() and not path.is_symlink()
+                and path.stat().st_size == len(text.encode("utf-8"))
+                and path.read_text(encoding="utf-8", errors="replace") == text)
+
+    names = KG_FOLDER_FILES if folder.name == KG_DIR else (".gitignore",)
+    for name in names:
+        path = folder / name
+        if name == ".gitignore" and holds(path, OLD_GITIGNORE_SEED):
+            path.unlink(missing_ok=True)
+        # The pointer imports only the AGENTS.md the engines write, never
+        # one a cloned repo planted.
+        if name == "CLAUDE.md" and not holds(folder / "AGENTS.md",
+                                             KG_FOLDER_FILES["AGENTS.md"]):
+            continue
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | os.O_NOFOLLOW, 0o644)
+        except OSError:
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(KG_FOLDER_FILES[name])
 
 
 def connect(repo: Path, must_exist: bool = False) -> sqlite3.Connection:
@@ -550,7 +623,7 @@ def connect(repo: Path, must_exist: bool = False) -> sqlite3.Connection:
     db.parent.mkdir(parents=True, exist_ok=True)
     # Seeded on first contact, not only by `init`: the db must never be
     # committable in the target repo however the folder came to exist.
-    seed_gitignore(db.parent)
+    seed_folder(db.parent)
     con = sqlite3.connect(db)
     con.executescript(SCHEMA)
     for col in ("origin TEXT NOT NULL DEFAULT 'project'",
@@ -5434,7 +5507,7 @@ def ingest(repo: Path, keep_previous: bool = False) -> dict:
         # A .gitignore seeded before checkpoints existed gains the line.
         lines = gi.read_text(encoding="utf-8", errors="replace").split() \
             if gi.is_file() and not gi.is_symlink() else []
-        if lines and "*" not in lines and PREV_DB_NAME not in lines:
+        if lines and not any(glob_match(PREV_DB_NAME, ln) for ln in lines):
             with gi.open("a", encoding="utf-8") as fh:
                 fh.write(f"\n{PREV_DB_NAME}\n")
     cfg = load_config(repo)
@@ -6761,20 +6834,27 @@ def coverage_run(repo: Path, yes: bool, timeout: int = 900,
                          encoding="utf-8", errors="replace",
                          timeout=timeout, env=env)
     tail = "\n".join((run.stdout + "\n" + run.stderr).splitlines()[-15:])
-    art = kg_dir(repo) / "coverage-tmp.json"
     result: dict = {"command": " ".join(cmd), "exit_code": run.returncode,
                     "output_tail": tail}
     if coverage_wrapped(cmd):
-        conv = subprocess.run(
-            [cmd[0], "-m", "coverage", "json", "-o", str(art)],
-            cwd=repo, capture_output=True, encoding="utf-8",
-            errors="replace", timeout=120, env=env)
-        if conv.returncode == 0 and art.exists():
-            result["ingest"] = coverage_ingest(repo, art,
-                                               " ".join(cmd))
-            art.unlink()
-        else:
-            result["ingest_error"] = conv.stderr.strip()[:500]
+        import shutil
+        import tempfile
+        # Outside the tree: .kg/ is committable, and a failed run must not
+        # leave an artifact there.
+        tdir = Path(tempfile.mkdtemp(prefix="code-kg-coverage-"))
+        art = tdir / "coverage.json"
+        try:
+            conv = subprocess.run(
+                [cmd[0], "-m", "coverage", "json", "-o", str(art)],
+                cwd=repo, capture_output=True, encoding="utf-8",
+                errors="replace", timeout=120, env=env)
+            if conv.returncode == 0 and art.exists():
+                result["ingest"] = coverage_ingest(repo, art,
+                                                   " ".join(cmd))
+            else:
+                result["ingest_error"] = conv.stderr.strip()[:500]
+        finally:
+            shutil.rmtree(tdir, ignore_errors=True)
     else:
         # A custom test_command is expected to leave an artifact; look for
         # the standard ones.
@@ -7249,7 +7329,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         cfg_file.write_text(json.dumps(DEFAULT_CONFIG, indent=2,
                                        sort_keys=True) + "\n",
                             encoding="utf-8")
-    counts = ingest(repo)      # connect() seeds .kg/.gitignore
+    counts = ingest(repo)      # connect() seeds .kg/'s gitignore and docs
     print(f"initialized {kg}")
     print_readout(repo, counts)
     print("ingest:", json.dumps(counts, sort_keys=True))
@@ -7301,7 +7381,7 @@ def migrate(repo: Path) -> dict:
         moved.append([f"{cfg_src.relative_to(repo).as_posix()} ignore rows",
                       ".kgignore"])
     new.mkdir(exist_ok=True)
-    seed_gitignore(new)
+    seed_folder(new)
     for src, dst in moves:
         if src == cfg_src and lines:
             fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL

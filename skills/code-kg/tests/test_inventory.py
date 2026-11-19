@@ -238,14 +238,15 @@ class TestTree(InventoryCase):
 
 SHARED = ("glob_match", "tree_payload", "render_tree", "write_checkpoint",
           "_ro_connect", "classify_units", "est_tokens", "rank_from",
-          "linked_store", "seed_gitignore", "read_ignore_rules",
+          "linked_store", "seed_folder", "read_ignore_rules",
           "ignored_by", "walk_tree", "append_kgignore", "path_filter",
-          "git_status")
+          "git_status", "KG_DIR", "KG_FOLDER_FILES", "OLD_GITIGNORE_SEED")
 
 
 class TestSharedBodies(unittest.TestCase):
-    """Functions both engines carry with the same body, docstrings aside:
-    a fix to one copy must reach the other."""
+    """Functions both engines carry with the same body, docstrings aside,
+    and constants with the same value: a fix to one copy must reach the
+    other."""
 
     def test_the_two_engines_agree(self):
         import ast
@@ -263,6 +264,9 @@ class TestSharedBodies(unittest.TestCase):
                         body = body[1:]
                     out[node.name] = ast.dump(ast.Module(body=body,
                                                          type_ignores=[]))
+                elif isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                        and getattr(node.targets[0], "id", None) in SHARED:
+                    out[node.targets[0].id] = ast.dump(node.value)
             return out
         mine = bodies(Path(code_kg.__file__))
         theirs = bodies(code_kg.SIBLING_CLI)

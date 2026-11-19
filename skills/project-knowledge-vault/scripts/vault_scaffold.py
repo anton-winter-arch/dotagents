@@ -259,7 +259,8 @@ def replace_file(path: Path, text: str) -> None:
 
 def ignore_databases(kg_dir: Path) -> bool:
     """Check .kg/.gitignore keeps the graph database, which holds every note's full text, out of git, seeding
-    `*` when the file is missing. Returns whether it does (`*` or `*.db*`); an existing file is never rewritten."""
+    `*.db*` when the file is missing so the config stays committable. Returns whether it does (`*` or `*.db*`);
+    an existing file is never rewritten."""
     gitignore = kg_dir / ".gitignore"
     try:
         fd = os.open(gitignore, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
@@ -267,7 +268,7 @@ def ignore_databases(kg_dir: Path) -> bool:
         lines = gitignore.read_text(encoding="utf-8").split()
         return "*" in lines or "*.db*" in lines
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write("*\n")
+        fh.write("*.db*\n")
     return True
 
 
