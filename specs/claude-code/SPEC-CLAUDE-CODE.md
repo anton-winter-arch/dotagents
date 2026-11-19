@@ -362,8 +362,9 @@ The principles each block enforces:
    on the Bash matcher (§8). File content goes through Write/Edit, deletion
    through `mv` to `__archive/` - the paths that carry diff review and
    `/rewind` checkpointing, which shell writes/deletes silently bypass.
-   One scoped exception: `>`/`>>` into the session scratchpad tree, where
-   neither protection has anything to protect.
+   Two scoped exceptions: `>`/`>>` into the session scratchpad tree or to a
+   literal path under the system temp roots, where neither protection has
+   anything to protect.
 6. **Global config is guarded** - any Write/Edit inside `~/.claude` is forced
    to an "ask" permission prompt (`ask-before-claude-folder-edits.sh`), so
    nothing silently changes how every session behaves.
@@ -513,7 +514,7 @@ key of [`settings.json`](settings.json) from the two manifests, and
 entries only. The build plan and the hook-input captures are in
 `tasks/SPEC-HARNESS-SEEDING.md`.
 
-Thirty-three wired hooks: three Bash-write/delete guards (`deny-bash-file-writes.sh`,
+Thirty-two wired hooks: three Bash-write/delete guards (`deny-bash-file-writes.sh`,
 `guard-rm.sh`, `block-env-files.sh`), the clipboard-read prompt
 (`ask-clipboard-reads.sh`), the `~/.claude`-edit prompt
 (`ask-before-claude-folder-edits.sh`), the SessionStart inbox check
@@ -535,8 +536,7 @@ are denied on all three in settings.json instead), the two identifier guards (`r
 `published-copy-paths.txt` seeded from the `.example.txt`), the two
 resource gates (`memory_pressure_gate.py`, `daemon_restart_storm.py`), the
 claude-mem health notice (`claude_mem_health.py`), the cross-repo git
-warning (`warn_cross_repo_git.py`), the foreign-edit warning
-(`warn_foreign_edits.py`), the git-hook bypass guard
+warning (`warn_cross_repo_git.py`), the git-hook bypass guard
 (`guard_git_bypass.py`, refusing an agent's `--no-verify` and hooks-path overrides),
 the debugger guard (`deny_debugger_attach.py`, refusing an agent's `lldb`, `gdb`,
 `debugserver` and `DevToolsSecurity` commands), the background guard
@@ -546,8 +546,8 @@ the orphan report (`reaper.py`, SessionStart), the dialog guard
 and the three web hooks (`web_fetch_guard.py`, remembering a host's refusal and spacing page fetches;
 `download_guard.py`, governing shell fetches and where a download lands; `web_session_end.py`, scanning
 the session's downloads and removing its web state).
-Eleven are advisory/non-blocking (`read-size-advisory`,
-`cmon_nudge`, `harness_version_check`, `claude_mem_health`, `reaper`, `warn_cross_repo_git`, `warn_foreign_edits`, both `no-meta-commentary` sides,
+Ten are advisory/non-blocking (`read-size-advisory`,
+`cmon_nudge`, `harness_version_check`, `claude_mem_health`, `reaper`, `warn_cross_repo_git`, both `no-meta-commentary` sides,
 `memory_lint`'s judgment checks, and `reject_identifiers`), and
 `memory-routing` is advisory until a memory folder reaches its cap;
 the rest can block.
@@ -673,8 +673,7 @@ The lane fails closed on every other axis: the target charset `[A-Za-z0-9._/-]`
 excludes `$`, backticks, `~`, quotes and whitespace, so no expansion or command
 substitution can hide in an allowed path; any `..` keeps the redirect
 (traversal denies); a quoted target is already absent from the shell view and
-denies; a wrong, glued or absent uid or session id denies; plain `/tmp/foo`
-denies; a `(?<![<])` guard keeps `<>` read-write opens out of the lane so
+denies; a wrong, glued or absent uid or session id denies; a `(?<![<])` guard keeps `<>` read-write opens out of the lane so
 check 1b still sees them. `tee`, in-place editors, `dd of=`, and interpreter
 writes stay denied everywhere, scratchpad included - the lane is exactly one
 operator family to exactly one directory. Deletion by the scrub cannot mask an
@@ -686,9 +685,22 @@ mitigating one, and the measured rate of genuine mass-edit attempts was two in
 sixteen days. Accepted in the documented gap tier: redirect into the
 scratchpad then `cp` the result to a tracked path, which is an overt second
 command in the same visibility class as `bash -c 'echo x > f'`.
+
+**Temp-root lane.** A second relaxation, scrubbed after the scratchpad lane:
+`>`/`>>` to a literal path under `/tmp`, `/private/tmp` or macOS's per-user
+`/var/folders/<a>/<b>/T`, outside the `/tmp/claude-*` tree. Most denied shell
+writes in transcripts were scratch output bound for these paths, and each
+denial cost a turn and a retry. The lane checks the filesystem as well as the
+text: the target must not be a symlink or a hard link, its parent must exist,
+and the parent's real path must stay inside the same temp root, so a link
+planted before the call cannot redirect the write. A command that runs `ln`
+gets no lane, because a link it makes does not exist yet when the hook checks.
+A quoted section or escaped character in the command leaves a placeholder in
+the scanned view, so a partly quoted target never reads as a lane path. The
+other operator families stay denied here too.
 Table-driven tests live in the skills repo at
-`tests/station-hooks/test-deny-bash-file-writes.sh` (99 cases: 54 deny, 42
-pass, 3 structural); run after any edit to this script.
+`tests/station-hooks/test-deny-bash-file-writes.sh` (119 cases); run after any
+edit to this script.
 
 Script: [`claude-code/hooks/deny-bash-file-writes.sh`](hooks/deny-bash-file-writes.sh).
 

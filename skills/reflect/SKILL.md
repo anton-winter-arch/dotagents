@@ -125,7 +125,7 @@ Past 50 entries, propose a few section headers grouping related memories.
 
 ## Step 3 - Play it back (gate)
 
-Present the complete slate, grouped and skimmable, then **stop and wait**:
+Present the complete slate, grouped and skimmable, then **stop and wait**. Under `wrap-up`, hand the slate back instead: wrap-up asks it with its one closing question.
 
 - **What I now believe is true** - each fact, where it came from, the file it
   creates or updates, which of the five tests it passed. For an update, why that

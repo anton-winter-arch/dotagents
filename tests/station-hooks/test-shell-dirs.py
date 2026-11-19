@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for hooks/_shell_dirs.py, the shell-command folder walk shared by warn_cross_repo_git.py and
-warn_foreign_edits.py.
+"""Tests for hooks/_shell_dirs.py, the shell-command folder walk used by warn_cross_repo_git.py.
 Target: the repo's hooks/_shell_dirs.py by default; HOOK_UNDER_TEST points the run at a station copy.
 Run: python3 tests/station-hooks/test-shell-dirs.py
 

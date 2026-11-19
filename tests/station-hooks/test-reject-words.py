@@ -208,7 +208,7 @@ class Hook(unittest.TestCase):
 
     def test_shipped_list_rejects_figurative_load_with_the_question(self):
         env = {k: v for k, v in self.env.items() if k != "REJECT_WORDS_FILE"}
-        res = self.run_hook({"file_path": self.doc(), "content": "Rows carry keys."}, env=env)
+        res = self.run_hook({"file_path": self.doc(), "content": "A load-bearing table."}, env=env)
         msg = res["hookSpecificOutput"]["permissionDecisionReason"]
         self.assertIn("[figurative-load]", msg)
         self.assertIn("literal physical object", msg)

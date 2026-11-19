@@ -67,6 +67,14 @@ cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
 # ask-before-claude-folder-edits.sh guards - reachable by accident, not just by
 # malice. Anchoring on the session id also stops one session from clobbering a
 # concurrently running session's working files.
+#
+# A second lane: a > or >> whose literal target sits in the system temp roots
+# (/tmp, /private/tmp, or macOS's per-user /var/folders/<a>/<b>/T), outside the
+# /tmp/claude-* tree above. Most denied shell writes were scratch output bound
+# for exactly these paths, and none of them has a diff to review. The target
+# must not be a symlink or a hard link and its parent must resolve inside the
+# same temp root, so a link planted before the call cannot turn the lane into a
+# write elsewhere, and a command that makes a link gets no lane at all.
 scratch_uid=$(id -u 2>/dev/null)
 [ -z "$scratch_uid" ] && scratch_uid="no-such-uid"   # fail closed: never matches
 scratch_sid=$(printf '%s' "$input" | jq -r '.session_id // ""')
@@ -80,14 +88,18 @@ shellview=$(printf '%s' "$cmd" | perl -0777 -ne '
   # <<WORD marker; drop the body and the terminator line.
   $s =~ s/(<<-?[ \t]*(["\x27]?)([A-Za-z_]\w*)\2[^\n]*\n)(.*?)(\n[ \t]*\3\b[^\n]*)/$1/gs;
   # (2) emit only unquoted, unescaped characters (shell quoting state machine).
+  # A quoted section and an escaped character each leave one $DQ placeholder,
+  # so text on either side never joins into a path the shell will not open:
+  # > /tmp/."./../x" reads as /tmp/." and misses both lanes, and >"f" keeps a
+  # character after the > for check 1.
   my $SQ = chr(39); my $DQ = chr(34); my $BS = chr(92);
   my @o; my $n = length($s); my $i = 0; my $st = 0;  # st: 0 normal, 1 single, 2 double
   while ($i < $n) {
     my $c = substr($s, $i, 1);
     if ($st == 0) {
-      if    ($c eq $BS) { $i += 2; next; }           # escape: next char is literal
-      elsif ($c eq $SQ) { $st = 1; $i++; next; }
-      elsif ($c eq $DQ) { $st = 2; $i++; next; }
+      if    ($c eq $BS) { push @o, $DQ; $i += 2; next; }   # escape: next char is literal
+      elsif ($c eq $SQ) { push @o, $DQ; $st = 1; $i++; next; }
+      elsif ($c eq $DQ) { push @o, $DQ; $st = 2; $i++; next; }
       else { push @o, $c; $i++; next; }
     } elsif ($st == 1) {                             # single quotes: literal, no escapes
       $st = 0 if $c eq $SQ; $i++; next;
@@ -104,19 +116,41 @@ shellview=$(printf '%s' "$cmd" | perl -0777 -ne '
       # Scrub redirects into this session scratchpad (the sanctioned lane).
       # The target charset excludes $ ` ~ quotes and whitespace, so no expansion
       # or command substitution can hide inside an allowed path - what this
-      # matches is what the shell will open. A quoted target is already absent
-      # from this view (the state machine dropped it), so it still denies; that
-      # is deliberate, not a gap. Any ".." in the path keeps the redirect, so
+      # matches is what the shell will open. A quoted or escaped part of a
+      # target is a placeholder in this view, outside the charset, so it still
+      # denies; that is deliberate, not a gap. Any ".." in the path keeps the redirect, so
       # traversal out of the scratchpad denies. The (?<![<]) guard keeps <>
       # read-write opens out of the lane, so check 1b below still sees them.
       s{(?<![<])(?:\d*|&)>{1,2}[ \t]*((?:/private)?/tmp/claude-\Q$ENV{SCRATCH_UID}\E/[A-Za-z0-9._-]+/\Q$ENV{SCRATCH_SID}\E/scratchpad/[A-Za-z0-9._/-]+)(?=[ \t&|;)\n]|\z)}
        {index($1, "..") >= 0 ? $& : ""}ge;
+      # Temp-root lane: same target charset, then a filesystem check. A link
+      # made in the same command does not exist yet when this runs, so a
+      # command that runs ln gets no lane; an existing hard link (count > 1)
+      # gets none either.
+      use Cwd qw(realpath); use File::Basename qw(dirname);
+      $main::makes_link = /(?:^|[\s;&|(])(?:ln|link)\s/ ? 1 : 0;
+      sub temp_ok {
+        my ($p) = @_;
+        return 0 if $main::makes_link || index($p, "..") >= 0 || -l $p;
+        return 0 if -e $p && (stat($p))[3] > 1;
+        return 0 if $p =~ m{^(?:/private)?/tmp/claude-};
+        return 0 unless -d dirname($p);
+        my $d = realpath(dirname($p));
+        return 0 unless defined $d;
+        return 0 if $d =~ m{^(?:/private)?/tmp/claude-};
+        return 1 if $p =~ m{^(?:/private)?/tmp/} && $d =~ m{^(?:/private)?/tmp(?:/|\z)};
+        return 1 if $p =~ m{^(?:/private)?/var/folders/[A-Za-z0-9_+-]+/[A-Za-z0-9_+-]+/T/}
+                 && $d =~ m{^(?:/private)?/var/folders/[A-Za-z0-9_+-]+/[A-Za-z0-9_+-]+/T(?:/|\z)};
+        return 0;
+      }
+      s{(?<![<])(?:\d*|&)>{1,2}[ \t]*((?:/private)?/(?:tmp|var/folders)/[A-Za-z0-9._/+-]+)(?=[ \t&|;)\n]|\z)}
+       {temp_ok($1) ? "" : $&}ge;
     ')
 
 hit=""
 # --- SHELL view: unquoted shell-level writers ---
 # 1. Remaining > or >> redirect (writes/truncates a file)
-if printf '%s' "$shellview" | grep -qE '(^|[^<>])>{1,2}[^>]'; then
+if printf '%s' "$shellview" | grep -qE '(^|[^<>])>{1,2}([^>]|$)'; then
   hit="output redirection (> / >>)"
 # 1b. <> read-write open (creates/truncates; the > is preceded by <, so the
 #     main redirect pattern's boundary misses it)
@@ -151,6 +185,6 @@ fi
 
 [ -z "$hit" ] && exit 0
 
-reason="Blocked: this Bash command writes file content via the shell (${hit}). File content changes go through the Write/Edit tools ONLY - they carry diff review, the ~/.claude folder guard, file-state tracking, and /rewind checkpointing; shell writes bypass all of them. Do NOT rephrase the command to evade this. Reformulate: author the content with Write/Edit, or read program output from stdout instead of a file. Program output and intermediates may be redirected to a literal path inside the session scratchpad (/tmp/claude-<uid>/...) - unquoted, absolute, no variables, no '..'; copying that output into a tracked path afterwards is the same violation as writing there directly. If a program's own output genuinely must land on a tracked path, tell the user what and why, and let them run it."
+reason="Blocked: this Bash command writes file content via the shell (${hit}). File content changes go through the Write/Edit tools ONLY - they carry diff review, the ~/.claude folder guard, file-state tracking, and /rewind checkpointing; shell writes bypass all of them. Do NOT rephrase the command to evade this. Reformulate: author the content with Write/Edit, or read program output from stdout instead of a file. Program output and intermediates may be redirected with > or >> to a literal path under /tmp or the macOS temp folder (/var/folders/.../T) - unquoted, absolute, no variables, no '..', parent directory already existing; copying that output into a tracked path afterwards is the same violation as writing there directly. If a program's own output genuinely must land on a tracked path, tell the user what and why, and let them run it."
 jq -n --arg r "$reason" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
 exit 0

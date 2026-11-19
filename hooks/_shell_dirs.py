@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The folder each part of a shell command runs in, shared by warn_cross_repo_git.py and warn_foreign_edits.py.
+"""The folder each part of a shell command runs in, used by warn_cross_repo_git.py.
 
 walk(command, cwd) splits a command on `&&`, `||`, `;`, `|` and newlines, drops leading prefixes
 (sudo, env, command, nohup, time, rtk, proxy) and variable assignments, and yields each simple

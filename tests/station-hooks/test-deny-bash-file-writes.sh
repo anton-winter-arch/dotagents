@@ -32,7 +32,7 @@ check() {
 }
 
 # ---- must DENY: shell file-write forms -------------------------------------
-check deny "redirect-create"     'cat > /tmp/x.md'
+check deny "redirect-create"     'cat > x.md'
 check deny "redirect-append"     'echo hi >> notes.md'
 check deny "redirect-midpipe"    'grep foo bar.txt > out.txt'
 check deny "ampersand-redirect"  'make &> build.log'
@@ -166,7 +166,6 @@ check deny "scratch-slug-traversal" "echo x > /private/tmp/claude-$(id -u)/-proj
 check deny "scratch-traversal"     "echo x > $SP/../../../../../$HOME/.agents/f.md"
 check deny "scratch-wrong-uid"     "echo x > /tmp/claude-999999/-proj-slug/$SID/scratchpad/f"
 check deny "scratch-prefix-glued"  "echo x > /tmp/claude-$(id -u)x/-proj-slug/$SID/scratchpad/f"
-check deny "scratch-plain-tmp"     'echo x > /tmp/slop_test_out.txt'
 check deny "scratch-var-target"    'echo x > $SP/f.json'
 check deny "scratch-quoted-target" "echo x > \"$SP/f.json\""
 check deny "scratch-cmdsub-target" "echo x > $SP/\$(whoami).json"
@@ -187,6 +186,42 @@ if printf '%s' "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"'
 else
   fail=$((fail+1)); echo "FAIL [scratch-no-session-id] expected deny, got: $out"
 fi
+
+# ---- temp-root lane: > and >> into /tmp or the macOS temp folder PASS --------
+# The lane checks the filesystem, so these cases use a real temp directory.
+TD=$(mktemp -d /tmp/deny-bash-test.XXXXXX)
+VD=$(mktemp -d "${TMPDIR:-/tmp}/deny-bash-test.XXXXXX")
+mkdir "$TD/sub"
+ln -s "$REPO/README.md" "$TD/link.md"
+ln -s "$REPO" "$TD/repo-link"
+check pass "tmp-plain"             'echo x > /tmp/slop_test_out.txt'
+check pass "tmp-private"           'pytest -q > /private/tmp/run.log 2>&1'
+check pass "tmp-subdir"            "python3 eval.py >> $TD/sub/out.json"
+case "$VD" in /var/folders/*|/private/var/folders/*)
+  check pass "tmp-var-folders"     "python3 eval.py > $VD/out.json" ;;
+esac
+check deny "tmp-symlink-target"    "echo x > $TD/link.md"
+check deny "tmp-symlink-parent"    "echo x > $TD/repo-link/f.md"
+check deny "tmp-missing-parent"    "echo x > $TD/nope/f.md"
+check deny "tmp-traversal"         "echo x > /tmp/../$HOME/f.md"
+check deny "tmp-claude-tree"       "echo x > /tmp/claude-$(id -u)/f.md"
+check deny "tmp-var-target"        'echo x > $TMPDIR/f.md'
+check deny "tmp-then-repo"         'echo x > /tmp/a.txt && echo y > b.md'
+check deny "tmp-tee"               'echo x | tee /tmp/a.txt'
+check deny "tmp-sed-inplace"       'sed -i s/a/b/ /tmp/a.txt'
+# Partly quoted or escaped targets: the view must not join the pieces around
+# the quotes into a lane path the shell never opens.
+check deny "tmp-partial-quote"     'echo hi > /tmp/."./../Users/me/f"'
+check deny "tmp-partial-quote-and" 'echo hi > /tmp/."./../Users/me/f" && ls'
+check deny "tmp-escaped-dots"      "echo hi > $TD/sub/\\.\\./\\.\\./f"
+check deny "quoted-target-at-end"  'echo hi >"/Users/me/f"'
+check deny "squoted-target-at-end" "echo hi >'/Users/me/f'"
+# Links: one made in the same command, and an existing hard link.
+check deny "tmp-ln-same-command"   'ln -s /Users/me/f /tmp/zz && echo hi > /tmp/zz'
+touch "$TD/orig.txt"; ln "$TD/orig.txt" "$TD/hard.txt"
+check deny "tmp-hard-link"         "echo x > $TD/hard.txt"
+check pass "tmp-plain-file"        "echo x > $TD/orig-not-linked.txt"
+rm -rf "$TD" "$VD"
 
 # ---- non-Bash tools pass through untouched ----------------------------------
 out=$(printf '{"tool_name":"Read","tool_input":{"file_path":"/tmp/x"}}' | bash "$HOOK")

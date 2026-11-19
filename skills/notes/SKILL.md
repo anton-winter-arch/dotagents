@@ -153,7 +153,10 @@ nothing else - no session history, no regeneration, no end-to-end read.
 session changed, one `git grep -n` for the old form finds every file still
 asserting it - skill bodies, `references/`, `AGENTS.md`, specs, code comments,
 configs. Present these as `file:line` → old → new and apply on approval, since a
-config or comment changes what other tools and sessions do. The new text is
+config or comment changes what other tools and sessions do. Under `wrap-up`, a
+markdown prose correction that only follows this session's own change is applied
+without asking and listed in the report; a config, script or hook correction goes
+to wrap-up's one question. The new text is
 shorter or equal: rewrite in place, never annotate.
 
 ## Step 7 - Re-measure and report

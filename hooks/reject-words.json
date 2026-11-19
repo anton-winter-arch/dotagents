@@ -4,8 +4,8 @@
     "tags": ["verbatim"]
   },
   "figurative-load": {
-    "words": ["carry", "carries", "carried", "carrying", "load-bearing"],
-    "why": "Used figuratively, these read as machine-written filler and are cringeworthy in documentation.",
+    "words": ["load-bearing"],
+    "why": "Used figuratively, this reads as machine-written filler and is cringeworthy in documentation.",
     "instead": "Name the actual relation: holds, stores, includes, names, sets, depends on, is required for.",
     "ask": "do these words describe carrying or propping up a literal physical object or structure? if not, use other words and stop generating AI slop, please and thank you!"
   },

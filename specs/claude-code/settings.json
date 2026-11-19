@@ -175,16 +175,6 @@
         ]
       },
       {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create|Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/warn_foreign_edits.py",
-            "timeout": 10
-          }
-        ]
-      },
-      {
         "matcher": "WebFetch",
         "hooks": [
           {
@@ -227,11 +217,6 @@
           {
             "type": "command",
             "command": "python3 ~/.claude/hooks/daemon_restart_storm.py",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/warn_foreign_edits.py",
             "timeout": 10
           }
         ]
@@ -287,11 +272,6 @@
           },
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/warn_foreign_edits.py",
-            "timeout": 10
-          },
-          {
-            "type": "command",
             "command": "python3 ~/.claude/hooks/cmon_nudge.py",
             "timeout": 5
           }
@@ -320,16 +300,6 @@
         ]
       },
       {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create|Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/warn_foreign_edits.py",
-            "timeout": 10
-          }
-        ]
-      },
-      {
         "matcher": "WebFetch",
         "hooks": [
           {
@@ -342,55 +312,12 @@
     ],
     "PostToolUseFailure": [
       {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create|Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/warn_foreign_edits.py",
-            "timeout": 10
-          }
-        ]
-      },
-      {
         "matcher": "WebFetch",
         "hooks": [
           {
             "type": "command",
             "command": "python3 ~/.claude/hooks/web_fetch_guard.py",
             "timeout": 5
-          }
-        ]
-      }
-    ],
-    "PostToolBatch": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/warn_foreign_edits.py",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/warn_foreign_edits.py",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.claude/hooks/warn_foreign_edits.py",
-            "timeout": 10
           }
         ]
       }

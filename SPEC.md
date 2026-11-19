@@ -193,8 +193,9 @@ foothold. This is not a preference to weigh against convenience.
 
 ## `markdown-kg` scope
 
-One engine for every markdown corpus: `skills/markdown-kg/`, stdlib-only single
-script, SQLite+FTS5, no network and no embeddings. The skill was named
+One engine for every markdown corpus: `skills/markdown-kg/`, a stdlib-only
+script sharing `lib/kg_core.py` with code-kg, SQLite+FTS5, no network and no
+embeddings. The skill was named
 `obsidian-kg` until the engine's reach outgrew the editor's name; `skills/obsidian-kg/`
 is a pointer whose `scripts/obsidian_kg.py` forwards to the engine, kept until no
 live caller in a sibling repo names the old path, then removed. Retrieval addresses sections

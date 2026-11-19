@@ -1,5 +1,5 @@
 {
-  "about": "The hooks key of specs/claude-code/settings.json before the manifests existed (2026-10-13). The oracle: what seed_hooks.py renders for claude-code must equal this in effect, as the set of (event, matcher set, command, timeout).",
+  "about": "The hooks key of specs/claude-code/settings.json as captured before the manifests existed (2026-10-13), minus hooks retired since. The oracle: what seed_hooks.py renders for claude-code must equal this in effect, as the set of (event, matcher set, command, timeout).",
   "hooks": {
     "PreToolUse": [
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/deny-bash-file-writes.sh", "timeout": 10}]},
@@ -23,29 +23,15 @@
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/reject_bad_commit_message.py", "timeout": 10}]},
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/guard_git_bypass.py", "timeout": 10}]},
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_cross_repo_git.py", "timeout": 10}]},
-      {"matcher": "Bash|Agent|Workflow|mcp__.*", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/memory_pressure_gate.py", "timeout": 10}]},
-      {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create|Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}]}
+      {"matcher": "Bash|Agent|Workflow|mcp__.*", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/memory_pressure_gate.py", "timeout": 10}]}
     ],
     "PostToolUseFailure": [
-      {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create|Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}]},
       {"matcher": "WebFetch", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/web_fetch_guard.py", "timeout": 5}]}
     ],
     "SessionEnd": [
       {"hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/web_session_end.py", "timeout": 10}]}
     ],
-    "PostToolBatch": [
-      {"hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}]}
-    ],
-    "SubagentStop": [
-      {"hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}]}
-    ],
-    "Stop": [
-      {"hooks": [
-        {"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}
-      ]}
-    ],
     "PostToolUse": [
-      {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create|Bash", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}]},
       {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/memory_lint.py", "timeout": 10}]},
       {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-meta-commentary-check.sh", "timeout": 5}]},
       {"matcher": "Write|Edit|MultiEdit|NotebookEdit|Update|Create", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/skill_description_lint.py", "timeout": 10}]},
@@ -61,15 +47,13 @@
       {"matcher": "startup|resume", "hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/reaper.py", "timeout": 10}]},
       {"matcher": "startup|resume|clear|compact", "hooks": [
         {"type": "command", "command": "python3 ~/.claude/hooks/daemon_restart_storm.py", "timeout": 10},
-        {"type": "command", "command": "python3 ~/.claude/hooks/memory_pressure_gate.py", "timeout": 10},
-        {"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10}
+        {"type": "command", "command": "python3 ~/.claude/hooks/memory_pressure_gate.py", "timeout": 10}
       ]}
     ],
     "UserPromptSubmit": [
       {"hooks": [
         {"type": "command", "command": "python3 ~/.claude/hooks/daemon_restart_storm.py", "timeout": 10},
         {"type": "command", "command": "python3 ~/.claude/hooks/memory_pressure_gate.py", "timeout": 10},
-        {"type": "command", "command": "python3 ~/.claude/hooks/warn_foreign_edits.py", "timeout": 10},
         {"type": "command", "command": "python3 ~/.claude/hooks/cmon_nudge.py", "timeout": 5}
       ]}
     ]

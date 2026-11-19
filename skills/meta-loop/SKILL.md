@@ -1,23 +1,25 @@
 ---
 name: meta-loop
-description: Orchestration loop - plan, delegate to parallel workers, verify, synthesize - with a premium advisor consulted off the hot path. The session model orchestrates, fan-out runs as Agent calls against two pinned subagents (`reader` for read-only gathering, `worker` for anything that changes the tree), and the advisor agent is pulled in for decomposition critique, risk, and proportion. MUST be used whenever the user asks to run something as a loop, orchestrate, fan out, or delegate to workers, whenever a requested task visibly splits into three or more independent subtasks, and for any mid-loop situation - verifying a worker's result against its claims, re-delegating a rejected subtask, or critiquing a decomposition. Also on "/meta-loop". Not for single-step tasks.
+description: Orchestration loop - plan, delegate to parallel workers, verify, synthesize - with a premium advisor consulted off the hot path. The session model orchestrates, fan-out runs as Agent calls against two pinned subagents (`reader` for read-only gathering, `worker` for changes to the tree), and a subtask is delegated only when it needs a fresh context - reading that would flood the session, or independent work too large for one context. MUST be used whenever the user asks to run something as a loop, orchestrate, fan out, or delegate to workers, and for any mid-loop situation - verifying a worker's result against its claims, re-delegating a rejected subtask, or critiquing a decomposition. Also on "/meta-loop". Not for single-step tasks or work the session can do directly.
 ---
 
 # meta-loop
 
 Three-tier loop: **orchestrator** (this session) runs the hot path
-plan → delegate → verify → synthesize; **workers** (`reader` on sonnet,
-`worker` on opus) do parallel execution; **advisor** (fable, fresh context)
-is a consulted advisor off the
-hot path. The economics: parallelism is the leverage, not a cheaper worker. A
-worker runs on the same tier the orchestrator would have used doing the work
-itself, so fanning out costs wall-clock and context - never quality. The saving
-is structural rather than per-token: no single agent fills a context window, so
-several shorter threads cost less in aggregate than one long thread that maxes
-out and compacts repeatedly.
+plan → delegate → verify → synthesize; **workers** (`reader` and `worker`,
+both on sonnet) do parallel execution; **advisor** (fable, fresh context)
+is a consulted advisor off the hot path.
+
+**A subagent exists to buy a fresh context, and that is the only reason to spawn one.**
+Delegate a subtask when its reading would flood this session, when it must not
+be anchored on this session's view, or when independent pieces are each too
+large to share one context. Everything else the orchestrator does itself: a
+subtask it could finish in a handful of tool calls, or one that needs what this
+session already knows, is never delegated. Every handoff drops detail and adds a
+verify step, so a fan-out that does not save context costs more than it returns.
 
 Session-model note: a skill cannot set the main-thread model. Run the session
-on Opus (`/model opus`) so the orchestrator matches its writers; on a Fable
+on Opus (`/model opus`), since the orchestrator keeps the judgment work; on a Fable
 session the loop still works - the advisor then buys a fresh, unanchored
 context rather than a model upgrade. Worker tier never follows the session:
 `reader` and `worker` pin their own models in frontmatter, because an agent
@@ -29,9 +31,10 @@ a cheap session and silently runs it on the priciest tier on an expensive one.
 Write the plan before spawning anything: subtasks, each with a concrete
 deliverable and acceptance criteria the orchestrator can check from evidence
 (diff, test output, file list - not the worker's own say-so). Mark which
-subtasks are independent (parallel) and which chain. If fewer than ~3
-independent subtasks fall out, stop - do the work directly; the loop is
-overhead, not leverage.
+subtasks are independent (parallel) and which chain. Apply the fresh-context
+test to each subtask and keep the ones that fail it for the orchestrator. If
+fewer than ~3 delegated subtasks remain, stop - do the work directly; the loop
+is overhead, not leverage.
 
 Where the goal is too vague to write acceptance criteria against, clarify it before planning rather than handing the same ambiguity to five workers at once.
 `interview-me` is the tool when the gap is in the ask itself.
@@ -89,7 +92,7 @@ Apply the verdict - proceed / revise / stop - before any worker starts.
 - **Check the roster before spawning a generic worker.** `agents/` is the list
   of record; read it if this is stale. It currently holds:
   - `reader` - read-only gathering and tracing (sonnet)
-  - `worker` - anything that changes the tree (opus)
+  - `worker` - anything that changes the tree (sonnet)
   - `researcher` - source-cited research on one bounded angle, capsule return
   - `advisor` - strategy, decomposition, risk and proportion, off the hot path
   - `supervisor` - re-derives the user's requests when the user fires `/focus`; spawned by that skill only
@@ -105,20 +108,16 @@ Apply the verdict - proceed / revise / stop - before any worker starts.
   `skill-authoring` rather than papering over the gap with a longer prompt.
   Name which existing agents you rejected and why before doing it: a definition
   is a durable addition to the repo, not a throwaway for one loop.
-- **The tier comes from the definition, not the call.** `reader` is pinned to
-  sonnet and `worker` to opus, so a fan-out cannot silently inherit whatever
-  model the session happens to be running. Gathering facts against a cited
-  source is well-specified work the orchestrator verifies anyway; changing the
-  tree is not, and a writer's output is only as trustworthy as the model that
-  wrote it. A weak writer does not save money - it moves the cost into
-  re-delegation, missed edge cases, and defects the verify step may not catch.
+- **The tier comes from the definition, not the call.** `reader` and `worker`
+  are pinned to sonnet, so a fan-out cannot silently inherit whatever model the
+  session happens to be running. A delegated subtask is fully specified and
+  verified against evidence in Phase 4, which is the work sonnet does well;
+  judgment-heavy work stays with the orchestrator by the fresh-context test.
 - **Override per call only with a reason, stated in the plan.** A call-site
-  `model` beats the frontmatter. Raise a reader to opus when the question needs
-  real judgment rather than retrieval (tracing intent across a subsystem,
-  reconciling sources that disagree). Drop a writer to sonnet only when the
-  subtask is mechanical and fully specified, trivially reversible, and
-  machine-checkable - a rename sweep, a formatting pass. Never re-tier a whole
-  fan-out at once.
+  `model` beats the frontmatter. Raise a reader or a writer to opus when the
+  subtask needs real judgment that still has to run in a fresh context
+  (tracing intent across a subsystem, reconciling sources that disagree,
+  security-sensitive code). Never re-tier a whole fan-out at once.
 - Each worker prompt is self-contained: context, exact deliverable,
   acceptance criteria, what NOT to touch.
 - **A worker prompt carries task content only.** It is an input to a fresh
@@ -164,9 +163,10 @@ proportion pass before shipping - within the Phase 2 budget, not on top of it.
 
 ## When NOT to use
 
-Single-file edits, single-step tasks, tasks under ~3 independent subtasks,
-or anything where reading the fan-out reports would cost more than doing the
-work. The loop pays for itself only when workers run in parallel.
+Single-file edits, single-step tasks, tasks under ~3 delegated subtasks,
+work the session already holds the context for, or anything where reading the
+fan-out reports would cost more than doing the work. The loop pays for itself
+only when workers save context and run in parallel.
 
 ## Boundaries
 
