@@ -173,7 +173,21 @@ innermost symbol containing the line or `''`. Capped at 20000 rows per ingest;
 ### meta
 `manifest` is the fingerprint read commands compare before answering: every
 file the walk sees, the config, lockfiles and the engine's `INDEX_REV`, so a
-parser or schema change re-ingests an unchanged repo once.
+parser or schema change re-ingests an unchanged repo once. `per_file_basis`
+holds the engine fingerprint and per-file row counts the last ingest wrote.
+Both are sealed with a per-machine salt, so a database that arrives from
+elsewhere is rebuilt in full on its first read.
+
+### Incremental ingest
+A re-ingest rewrites `files`, `symbols`, both FTS tables, `symbol_edges` and
+`data_edges` only for files added, changed or removed, and the graph it leaves
+equals a full rebuild (`tests/test_incremental.py`). `parse_cache` keeps each
+file's extraction and symbol rows by content hash, keyed with the engine
+fingerprint and a per-machine salt; symbol rows also record every other file
+their resolution read, and are made again when any of those changed. A changed
+engine or mismatched row counts fall back to a full rewrite. Reads that find
+drift at the same moment take `code-kg.db.lock` in turn: one rebuilds, the rest
+re-check and read its result.
 
 ### FTS
 `symbols_fts(id, qualname, body)` indexes each symbol's text slice;

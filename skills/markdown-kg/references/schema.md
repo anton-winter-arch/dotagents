@@ -314,10 +314,11 @@ whole-file matching is the failure this schema exists to fix, so there is no
 
 ## Conventions
 
-- `ingest` is an idempotent **full rebuild**: every derived table is wiped and
-  re-populated in sorted file order, so the same vault bytes always produce the
-  same rows. `extractions`, `conflicts` and `session_reads` are the
-  exceptions.
+- `ingest` is idempotent: the same vault bytes always produce the same rows.
+  After the first build it rewrites the per-note tables only for notes added,
+  changed or removed, rebuilds the cross-note tables from `parse_cache`, and
+  the result equals a full rebuild. `extractions`, `conflicts` and
+  `session_reads` are never wiped.
 - The DB is disposable: delete it and re-run `ingest`. The config file is not -
   it is the curation, which is exactly why it lives outside the database.
 - Read commands re-ingest on their own when the vault has drifted, and exit

@@ -48,7 +48,7 @@ machine-readable.
 |---|---|
 | `init <repo>` | scaffold `.kg/` + first ingest (once per repo) |
 | `migrate <repo>` | move a legacy `.code-kg/` graph into `.kg/`; run it while no other command is using the graph |
-| `ingest <repo>` | full rebuild, rarely needed because reads auto-refresh; `--keep-previous` first saves the current db as the checkpoint `diff` compares against |
+| `ingest <repo>` | rarely needed because reads auto-refresh, rewriting only changed files; `--keep-previous` first saves the current db as the checkpoint `diff` compares against |
 | `diff <repo> [--against DB]` | what changed since the checkpoint, or against another repo's db: files added, removed and edited; symbols added, removed, edited, renamed (same file, same body) and moved (same body, another file), and the unchanged count |
 | `search <repo> "question"` | ranked hits, symbols first, each with `file:start-end`. `--per-file N` caps hits per file (default off); `--budget TOKENS` returns each hit's whole text within that many estimated tokens, and a class or file too large to fit whole comes back as its methods or symbols |
 | `query <repo> 'fts5 AND terms'` | raw FTS5 over file text |
@@ -65,7 +65,7 @@ machine-readable.
 | `path <repo> <a> <b>` | shortest connection between two files |
 | `entrypoints <repo>` | detected roots, ranked: convention/config first, test main-guards last |
 | `dead <repo>` | liveness tiers (below) |
-| `dead <repo> --symbols` | python functions, classes and methods with no resolved use from another symbol, and those whose only callers are name matches on an unknown receiver; static evidence, not proof |
+| `dead <repo> --symbols` | python functions, classes and methods with no resolved use from another symbol, those whose only callers are name matches on an unknown receiver, and, apart, methods a stdlib or third-party base may call by name; static evidence, not proof |
 | `callers <repo> <symbol>` | what calls, references, imports, decorates or extends a symbol, plus `name_matched` calls on an unknown receiver; `--depth N` follows resolved edges |
 | `callees <repo> <symbol>` | every call site, reference, import, decorator and base class in a symbol, resolved or not; `<file>::<module>` names a file's top-level code |
 | `extends <repo> <class>` | a class's bases and subclasses |
@@ -184,8 +184,8 @@ watches lockfiles, so re-`ingest` after installing packages.
   the sharpest cut: live but never executed by any recorded run.
 - **Symbol edges (python, static):** each row has a `status`. `resolved`
   names the target symbol, reached through imports, a local def,
-  `self`/`cls`/`super()` and base classes in the repo, a local bound once
-  to a repo class, a parameter annotated with one, `self.attr.m()` when
+  `self`/`cls`/`super()` and base classes in the repo, a local or global bound
+  once to a repo class, a parameter annotated with one, `self.attr.m()` when
   the class's methods assign `attr` an instance of one repo class, or an import from a
   folder the file adds to `sys.path`. `weak` (one method of that name in
   the repo) and `ambiguous` (several, listed) are calls on a receiver whose

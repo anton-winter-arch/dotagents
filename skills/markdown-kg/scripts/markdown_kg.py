@@ -93,12 +93,14 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 try:
     from kg_core import (
-        GIT_STATES, KG_DIR, RELATED_DAMPING, TREE_LIMIT, WORD_RE, SafeStream,
+        GIT_STATES, KG_DIR, RELATED_DAMPING, TREE_LIMIT, WORD_RE, ParseCache,
         Store, bfs_path, changed_keys, config_json_text, doc_rank, emit,
-        est_tokens, git_status, glob_match, greedy_modularity, linked_store,
-        now_utc, other_file_rows, path_filter, rank_from, relation_ruling,
-        render_migrate, ro_connect, run_sibling, search_rungs, term_safe,
-        tokenize, tree_command, unit_diff, walk_tree, write_checkpoint)
+        engine_fingerprint, est_tokens, git_status, glob_match,
+        greedy_modularity, line_starts, linked_store,
+        now_utc, other_file_rows, path_filter, print_capped, rank_from,
+        relation_ruling, render_migrate, ro_connect, run_cli, run_sibling,
+        seal, search_rungs, tokenize, tree_command, unit_diff, walk_tree,
+        write_checkpoint)
 except ModuleNotFoundError as e:
     if e.name != "kg_core":
         raise
@@ -1938,16 +1940,22 @@ def _add_members(sections: list[dict], text: str, row: dict) -> None:
 
 
 # ---------- vault walking (dot folders excluded) ----------
-def scan_vault(vault: Path, every: bool = False) \
+def scan_vault(vault: Path, every: bool = False, walked: tuple | None = None) \
         -> tuple[list[Path], list[str], list[tuple[str, str]]]:
     """All vault .md files (with `every`, all files: the inventory `tree`
     tallies), sorted for determinism, the paths refused for pointing outside
     the vault, and (path, rule) for each one an ignore file excludes
     (`walk_tree`). Dot folders and files, SKIP_FOLDERS and the engine's
-    folders are never part of it."""
+    folders are never part of it. `walked`, a scan with `every` the caller
+    already made, is filtered instead of walking again."""
     def keep(rel: str) -> bool:
         return every or rel.endswith(".md")
 
+    if walked is not None:
+        files, escapes, ignored = walked
+        return ([p for p in files if keep(p.name)],
+                [r for r in escapes if keep(r)],
+                [(rel, why) for rel, why in ignored if keep(rel)])
     found, ignored = walk_tree(
         vault, lambda rel: rel in KG_DIRS or rel.rsplit("/", 1)[-1] in
         SKIP_FOLDERS or rel.rsplit("/", 1)[-1].startswith("."),
@@ -1955,6 +1963,7 @@ def scan_vault(vault: Path, every: bool = False) \
     files = [p for p in found if keep(p.name) and not p.name.startswith(".")]
     result = []
     escapes = []
+    root = vault.resolve()
     for p in files:
         # A vault is untrusted content. `is_file()` follows symlinks, so a link
         # named *.md pointing at ~/.ssh/id_rsa or a .env would otherwise be
@@ -1967,7 +1976,7 @@ def scan_vault(vault: Path, every: bool = False) \
         if not p.is_file():
             continue
         try:
-            if not p.resolve().is_relative_to(vault.resolve()):
+            if not p.resolve().is_relative_to(root):
                 escapes.append(p)
                 continue
         except (OSError, RuntimeError):
@@ -1983,12 +1992,13 @@ def walk_vault(vault: Path) -> list[Path]:
     return scan_vault(vault)[0]
 
 
-def manifest(vault: Path) -> str:
+def manifest(vault: Path, walked: tuple | None = None) -> str:
     """Cheap fingerprint of the vault's file set: path, size, mtime. Read
-    commands compare it to detect drift and re-ingest without being asked."""
+    commands compare it to detect drift and re-ingest without being asked.
+    `walked` is a scan with `every` the caller already made."""
     parts = []
     # Every file, not only notes: `tree` counts attachments too.
-    for p in scan_vault(vault, every=True)[0]:
+    for p in (walked or scan_vault(vault, every=True))[0]:
         st = p.stat()
         parts.append(f"{p.relative_to(vault).as_posix()}|{st.st_size}|"
                      f"{int(st.st_mtime_ns)}")
@@ -2001,7 +2011,9 @@ def manifest(vault: Path) -> str:
         # resolve (link_mode), so it has to count as drift.
         parts.append("__obsidian__")
     parts.append(f"__index__|{INDEX_REV}")
-    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+    digest = hashlib.sha256("\n".join(parts).encode()).hexdigest()
+    # Sealed, so a database that arrives with the vault re-ingests here once.
+    return seal(digest) or digest
 
 
 # ---------- ingest (idempotent full rebuild) ----------
@@ -2038,142 +2050,6 @@ def learn_note(text: str, row: dict) -> dict:
     return learned
 
 
-def _json_enc(value):
-    """JSON keeps lists but not tuples; a tuple is tagged so it comes back a tuple."""
-    if isinstance(value, tuple):
-        return {"__t": [_json_enc(v) for v in value]}
-    if isinstance(value, list):
-        return [_json_enc(v) for v in value]
-    if isinstance(value, dict):
-        return {k: _json_enc(v) for k, v in value.items()}
-    return value
-
-
-def _json_dec(value):
-    if isinstance(value, dict):
-        if set(value) == {"__t"}:
-            return tuple(_json_dec(v) for v in value["__t"])
-        return {k: _json_dec(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_json_dec(v) for v in value]
-    return value
-
-
-def engine_fingerprint() -> str:
-    """This engine's source, the Python version and the current value of every
-    module constant (a test or a flag may lower SIZE_CEILING): whatever can change
-    what an ingest produces from the same notes and config."""
-    def stable(v):
-        # Sets iterate in hash order, which changes per process; sort them.
-        if isinstance(v, (set, frozenset)):
-            return repr(sorted(map(stable, v)))
-        if isinstance(v, dict):
-            return repr(sorted((stable(k), stable(x)) for k, x in v.items()))
-        if isinstance(v, (list, tuple)):
-            return repr([stable(x) for x in v])
-        return repr(v)
-    # A snapshot: another thread may set a module global while this runs.
-    constants = sorted((k, stable(v)) for k, v in list(globals().items())
-                       if k.isupper() and isinstance(
-                           v, (int, float, str, tuple, list, set, frozenset, dict)))
-    return hashlib.sha256(Path(__file__).read_bytes() + sys.version.encode()
-                          + repr(constants).encode()).hexdigest()
-
-
-class ParseCache:
-    """Results of the pure per-note and per-section work, kept in the graph's
-    own database between ingests so an unchanged note is never parsed again.
-    The key is the engine fingerprint, a station salt and the inputs, so any
-    engine change starts cold. Values are JSON, never pickle: the database can
-    arrive with a synced vault. A value that does not survive the JSON round
-    trip exactly is computed every time and never stored. Keys not used by an
-    ingest are dropped at its end, so the cache holds one generation."""
-
-    _source = None
-
-    def __init__(self, con: sqlite3.Connection):
-        con.execute("CREATE TABLE IF NOT EXISTS parse_cache("
-                    "key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        if ParseCache._source is None:
-            # The station salt keeps the keys unguessable: a db that arrives with
-            # a synced vault can carry planted rows, and without it anyone who
-            # can write the vault could compute a key and have its value trusted.
-            ParseCache._source = _station_salt()
-        self.off = ParseCache._source is None
-        self.con, self.used, self.new = con, set(), []
-        if not self.off:
-            self._engine = hashlib.sha256(
-                ParseCache._source + engine_fingerprint().encode()).hexdigest()
-
-    def get(self, name: str, key_parts: list, compute, pack=None, unpack=None):
-        """`compute()` through the cache. `pack` shrinks a value before it is stored
-        and `unpack` restores it; a value is stored only when unpacking the stored
-        form gives back exactly what `compute()` returned."""
-        if self.off:
-            return compute()
-        pack = pack or (lambda v: v)
-        unpack = unpack or (lambda v: v)
-        key = hashlib.sha256(json.dumps([self._engine, name, key_parts],
-                                        sort_keys=True).encode()).hexdigest()
-        self.used.add(key)
-        row = self.con.execute("SELECT value FROM parse_cache WHERE key = ?",
-                               (key,)).fetchone()
-        if row is not None:
-            try:
-                return unpack(_json_dec(json.loads(row[0])))
-            except Exception:           # any unreadable value is recomputed, never trusted
-                pass
-        value = compute()
-        try:
-            blob = json.dumps(_json_enc(pack(value)))
-            if unpack(_json_dec(json.loads(blob))) == value:
-                self.new.append((key, blob))
-        except (TypeError, ValueError, KeyError):
-            pass
-        return value
-
-    def flush(self) -> None:
-        if self.off:
-            self.con.execute("DELETE FROM parse_cache")
-            return
-        self.con.executemany("INSERT OR REPLACE INTO parse_cache(key, value)"
-                             " VALUES (?,?)", self.new)
-        self.con.execute("CREATE TEMP TABLE IF NOT EXISTS used_keys(key TEXT PRIMARY KEY)")
-        self.con.execute("DELETE FROM used_keys")
-        self.con.executemany("INSERT OR IGNORE INTO used_keys(key) VALUES (?)",
-                             [(k,) for k in self.used])
-        self.con.execute("DELETE FROM parse_cache WHERE key NOT IN (SELECT key FROM used_keys)")
-
-
-def _station_salt() -> bytes | None:
-    """32 random bytes kept in this station's user state folder, outside every
-    vault, created on first use; None when the folder cannot be written, which
-    turns the parse cache off rather than leaving its keys guessable."""
-    base = (Path(os.environ["LOCALAPPDATA"]) if os.name == "nt" and os.environ.get("LOCALAPPDATA")
-            else Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"))
-    path = base / "markdown-kg" / "cache-salt"
-    try:
-        data = path.read_bytes()
-        if len(data) == 32:
-            return data
-    except OSError:
-        pass
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(os.urandom(32))
-    except FileExistsError:
-        pass                    # another process created it first; read theirs
-    except OSError:
-        return None
-    try:
-        data = path.read_bytes()
-    except OSError:
-        return None
-    return data if len(data) == 32 else None
-
-
 def _first_h1(text: str) -> str | None:
     return next((n.heading for n in parse_headings(text) if n.level == 1), None)
 
@@ -2204,7 +2080,10 @@ def _row_counts(con: sqlite3.Connection) -> str:
     return json.dumps(state)
 
 
-def ingest(vault: Path, keep_previous: bool = False) -> dict:
+def ingest(vault: Path, keep_previous: bool = False,
+           walked: tuple | None = None) -> dict:
+    """Index the vault, rewriting only the notes that changed. `walked` is a
+    `scan_vault(every=True)` result the caller already holds."""
     checkpoint = None
     refused = linked_store(vault, kg_dir(vault), db_path(vault))
     if refused:
@@ -2232,7 +2111,8 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
         except sqlite3.DatabaseError:
             prior_columns = None
     con = connect(vault)
-    memo = ParseCache(con)
+    engine = engine_fingerprint(__file__, globals())
+    memo = ParseCache(con, engine)
     cfg = load_config(vault)
     report = {"notes": 0, "sections": 0, "resolved": 0, "unresolved": 0,
               "ambiguous": 0, "ignored_files": 0, "ignored_links": 0,
@@ -2243,7 +2123,11 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
     cand_counts: dict[tuple, int] = {}
 
     parsed: dict[str, dict] = {}
-    files, escaped, ignored = scan_vault(vault)
+    walked = walked or scan_vault(vault, every=True)
+    # Taken before any note is read, so an edit made during this ingest
+    # still reads as drift afterwards.
+    fingerprint = manifest(vault, walked)
+    files, escaped, ignored = scan_vault(vault, walked=walked)
     for rel in escaped:
         ignored.append((rel, "symlink or path outside the vault"))
     for f in files:
@@ -2273,15 +2157,15 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
     # The cross-note tables (links, anchors, mentions, candidates) are rebuilt in
     # full every time, since a change in one note reaches them through the others;
     # they come from the parse cache, so that stays cheap.
-    basis = hashlib.sha256(json.dumps(
-        [engine_fingerprint(), cfg, link_mode(vault, cfg)],
-        sort_keys=True, default=str).encode()).hexdigest()
+    # Sealed to this machine: a database built elsewhere is rebuilt in full.
+    basis = seal(json.dumps([engine, cfg, link_mode(vault, cfg)],
+                            sort_keys=True, default=str)) or ""
     prev = con.execute("SELECT value FROM meta WHERE key = 'ingest_basis'").fetchone()
     counts = con.execute("SELECT value FROM meta WHERE key = 'per_note_counts'").fetchone()
     old = dict(con.execute("SELECT id, content_hash FROM notes"))
     # The last ingest's row counts must still hold: a table something else dropped,
     # recreated or edited since then cannot pass as up to date.
-    incremental = (prev is not None and prev[0] == basis
+    incremental = (bool(basis) and prev is not None and prev[0] == basis
                    and prior_columns == _table_columns(con)
                    and counts is not None and counts[0] == _row_counts(con))
     dirty = ({nid for nid in ids if old.get(nid) != parsed[nid]["hash"]} | (set(old) - set(ids))
@@ -2309,7 +2193,7 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
         "INSERT INTO other_files(path, ext, size, reason) VALUES (?,?,?,?)",
         [(rel, posixpath.splitext(posixpath.basename(rel))[1].lower(),
           p.stat().st_size, "no-parser")
-         for p in scan_vault(vault, every=True)[0]
+         for p in walked[0]
          if not (rel := p.relative_to(vault).as_posix()).endswith(".md")])
 
     for rel, rule in sorted(ignored):
@@ -2499,7 +2383,7 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
         # them falls short of its place in `text` by all the code above it.
         # The line is exact, so the section is found by line.
         h = doc["hash"]
-        starts = memo.get("line_starts", [h], lambda: _line_starts(strip_code(text)))
+        starts = memo.get("line_starts", [h], lambda: line_starts(strip_code(text)))
 
         def section_of(off: int) -> str:
             return _section_on_line(sections,
@@ -2619,7 +2503,7 @@ def ingest(vault: Path, keep_previous: bool = False) -> dict:
                 (now_utc(),))
     con.commit()
     con.execute("INSERT INTO meta(key, value) VALUES ('manifest', ?)",
-                (manifest(vault),))
+                (fingerprint,))
     reconcile_extractions(con)
     con.commit()
     con.close()
@@ -2644,12 +2528,6 @@ def _section_at(sections: list[dict], offset: int) -> str:
             if best_size is None or size < best_size:
                 best, best_size = sec["id"], size
     return best
-
-
-def _line_starts(text: str) -> list[int]:
-    """The offset each line of a text starts at, for `bisect`: the number
-    of starts at or before an offset is its 1-indexed line."""
-    return [0] + [m.end() for m in re.finditer("\n", text)]
 
 
 def _section_on_line(sections: list[dict], line: int) -> str:
@@ -2894,8 +2772,8 @@ def load_entities(con: sqlite3.Connection, cfg: dict, sections: list[dict],
 
 # ---------- staleness ----------
 def ensure_fresh(vault: Path) -> None:
-    if STORE.recorded_manifest(vault) != manifest(vault):
-        ingest(vault)
+    STORE.refresh(vault, lambda v: scan_vault(v, every=True), manifest,
+                  lambda v, w: ingest(v, walked=w))
 
 
 def open_fresh(vault: Path) -> sqlite3.Connection:
@@ -3814,7 +3692,9 @@ def render_index(vault: Path) -> str:
 
 # ---------- commands ----------
 def cmd_ingest(args: argparse.Namespace) -> int:
-    r = ingest(vault_dir(args.vault), keep_previous=args.keep_previous)
+    vault = vault_dir(args.vault)
+    with STORE.rebuild_lock(vault):
+        r = ingest(vault, keep_previous=args.keep_previous)
     if args.json:
         print(json.dumps(r, indent=2, sort_keys=True))
         return 0
@@ -3844,18 +3724,20 @@ def cmd_init(args: argparse.Namespace) -> int:
     if cfg_file.exists() and not args.force:
         sys.exit(f"error: {cfg_file} already exists - edit it directly, or "
                  f"pass --force to rewrite the scaffold")
-    ingest(vault)
-    found = detect(vault)
-    cfg = {"profiles": [], "entities": []}
-    for row in found["dated_logs"]:
-        cfg["profiles"].append({"path": row["path"], "profile": "log-dated",
-                                "date_from": "heading",
-                                "date_order": row["date_order"]})
-    for row in found["generated"]:
-        cfg["profiles"].append({"path": row["path"], "profile": "generated",
-                                "weight": 0.2})
-    write_config(vault, cfg)
-    ingest(vault)
+    with STORE.rebuild_lock(vault):
+        ingest(vault)
+        found = detect(vault)
+        cfg = {"profiles": [], "entities": []}
+        for row in found["dated_logs"]:
+            cfg["profiles"].append({"path": row["path"],
+                                    "profile": "log-dated",
+                                    "date_from": "heading",
+                                    "date_order": row["date_order"]})
+        for row in found["generated"]:
+            cfg["profiles"].append({"path": row["path"],
+                                    "profile": "generated", "weight": 0.2})
+        write_config(vault, cfg)
+        ingest(vault)
     print(f"init: wrote {cfg_file} with {len(cfg['profiles'])} confident "
           f"profile rows ({len(found['dated_logs'])} dated logs, "
           f"{len(found['generated'])} generated)")
@@ -5024,7 +4906,6 @@ def cmd_communities(args: argparse.Namespace) -> int:
                           include_inferred=args.include_inferred)
 
     def render(p):
-        lim = None if args.limit < 0 else args.limit
         q = p["modularity"]
         verdict = ("real structure" if q >= 0.3 else
                    "weak - read these groups as a hint, not a map")
@@ -5034,19 +4915,13 @@ def cmd_communities(args: argparse.Namespace) -> int:
             print(f"\naround {c['label']}  ({c['size']} notes,"
                   f" {c['internal_edges']} internal /"
                   f" {c['external_edges']} external links)")
-            for n in c["notes"][:lim]:
-                print(f"  {n}")
-            if lim is not None and c["size"] > lim:
-                print(f"  TRUNCATED: {c['size'] - lim} more")
+            print_capped(c["notes"], args.limit)
         for title, key in (("hubs, left out", "hubs"),
                            ("unplaced: no resolved link to cluster on",
                             "unplaced")):
             if p[key]:
                 print(f"\n{title} ({len(p[key])}):")
-                for n in p[key][:lim]:
-                    print(f"  {n}")
-                if lim is not None and len(p[key]) > lim:
-                    print(f"  TRUNCATED: {len(p[key]) - lim} more")
+                print_capped(p[key], args.limit)
         return 0
     return emit(args, payload, render)
 
@@ -5918,30 +5793,7 @@ def main(argv: list[str] | None = None) -> int:
                    help=f"folders, and files, shown; default {TREE_LIMIT},"
                         " 0 for all")
 
-    args = ap.parse_args(argv)
-    out, err = sys.stdout, sys.stderr
-    # stderr is always read by a person. stdout is too, unless json was
-    # asked for: that output is for a parser, and json.dumps escapes control
-    # characters itself.
-    sys.stderr = SafeStream(err)
-    if not getattr(args, "json", False):
-        sys.stdout = SafeStream(out)
-    try:
-        rc = args.fn(args)
-        out.flush()
-        return rc
-    except SystemExit as e:
-        if isinstance(e.code, str):
-            # The interpreter prints this after the streams are restored.
-            raise SystemExit(term_safe(e.code)) from None
-        raise
-    except BrokenPipeError:
-        # The reader stopped early (`| head`). Point stdout at devnull so
-        # the interpreter's last flush cannot raise again, and exit quietly.
-        os.dup2(os.open(os.devnull, os.O_WRONLY), out.fileno())
-        return 1
-    finally:
-        sys.stdout, sys.stderr = out, err
+    return run_cli(ap.parse_args(argv))
 
 
 if __name__ == "__main__":

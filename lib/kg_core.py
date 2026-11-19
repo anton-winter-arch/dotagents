@@ -2,25 +2,31 @@
 
 Everything here is engine-neutral: the `.kg/` folder both engines keep under
 a root, the `.kgignore` membership rule, git labels, terminal-safe printing,
-the FTS search ladder, the diff pairing passes, the graph algorithms and the
-`tree` view. Each engine imports it from this repo's `lib/` folder, which is
-why their SKILL.md files declare `metadata.ships: repo-lib`.
+the CLI runner, the FTS search ladder, the parse cache incremental ingest
+reuses, the diff pairing passes, the graph algorithms and the `tree` view.
+Each engine imports it from this repo's `lib/` folder, which is why their
+SKILL.md files declare `metadata.ships: repo-lib`.
 
 Stdlib only, and it runs on the python3 that stock macOS ships (3.9).
 """
 from __future__ import annotations
 
 import contextlib
+import errno
+import hashlib
 import heapq
+import hmac
 import json
 import os
 import posixpath
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +38,7 @@ def now_utc() -> str:
 
 # ---------- the .kg/ folder ----------
 KG_DIR = ".kg"     # shared by both engines; each file carries its engine's name
+REBUILD_WAIT = 600  # seconds a read waits on another process's rebuild
 # The files a .kg/ folder ships with, the same whichever engine writes them
 # first. The .gitignore keeps the databases out of git and lets the configs
 # and these docs in.
@@ -171,6 +178,7 @@ class Store:
         self.config = f"{engine}-config.json"
         self.legacy = legacy     # folder -> {current name: name there}, newest first
         self.dirs = (KG_DIR, *legacy)    # folders that are never corpus
+        self._held: set = set()          # databases whose lock this holds
 
     def folder(self, root: Path) -> Path:
         """`.kg/` when it holds this engine's database or config, else the
@@ -191,6 +199,76 @@ class Store:
 
     def db_path(self, root: Path) -> Path:
         return self._file(root, self.db)
+
+    @contextlib.contextmanager
+    def rebuild_lock(self, root: Path):
+        """Hold this graph's rebuild lock, so one process rebuilds at a time
+        and the rest wait instead of failing on a locked database. A wait
+        says so once on stderr and ends at REBUILD_WAIT seconds. The lock
+        file sits beside the database, under its `*.db*` ignore line; where
+        the system or filesystem cannot lock, the rebuild runs unlocked."""
+        try:
+            import fcntl
+        except ImportError:
+            yield
+            return
+        db = self.db_path(root)
+        if db in self._held:            # this process holds it already
+            yield
+            return
+        # The same refusal every write makes, before the lock file exists.
+        refused = linked_store(root, self.folder(root), db)
+        if refused:
+            sys.exit(f"error: {refused}")
+        db.parent.mkdir(parents=True, exist_ok=True)
+        if db.parent.name == KG_DIR:
+            seed_folder(db.parent)      # its .gitignore covers the lock
+        path = f"{db}.lock"
+        try:
+            # Read-only and non-blocking: a planted FIFO cannot stall the
+            # open, and nothing is ever written to the file.
+            fd = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NONBLOCK
+                         | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except OSError as e:
+            sys.exit(f"error: refusing lock file {path}: {e.strerror}")
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                sys.exit(f"error: refusing lock file {path}: not a file")
+            deadline, told = time.monotonic() + REBUILD_WAIT, False
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if not told:
+                        print(f"waiting for another rebuild of {db.name}",
+                              file=sys.stderr)
+                        told = True
+                    if time.monotonic() > deadline:
+                        sys.exit(f"error: another process has held {path}"
+                                 f" for over {REBUILD_WAIT} s")
+                    time.sleep(0.1)
+                except OSError as e:
+                    if e.errno not in (errno.ENOLCK, errno.EOPNOTSUPP):
+                        raise
+                    break
+            self._held.add(db)
+            yield
+        finally:
+            self._held.discard(db)
+            os.close(fd)
+
+    def refresh(self, root: Path, scan, fingerprint, rebuild) -> None:
+        """Rebuild when the tree drifted from what the database recorded.
+        A process that waited for another's rebuild walks again and checks
+        before rebuilding, so concurrent reads after an edit rebuild once."""
+        walked = scan(root)
+        if self.recorded_manifest(root) == fingerprint(root, walked):
+            return
+        with self.rebuild_lock(root):
+            walked = scan(root)
+            if self.recorded_manifest(root) != fingerprint(root, walked):
+                rebuild(root, walked)
 
     def prev_db_path(self, root: Path) -> Path:
         return self._file(root, self.prev_db)
@@ -459,7 +537,7 @@ def emit(args, payload, render) -> int:
     """Every command speaks json on demand and prose otherwise. The json path
     is for a parser: json.dumps escapes C0 controls but, with ensure_ascii
     off, passes C1 through, so pipe it to a parser, not a screen. Prose goes
-    out behind the SafeStream each engine's `main` installs."""
+    out behind the SafeStream `run_cli` installs."""
     if getattr(args, "json", False):
         print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
         return 0
@@ -467,9 +545,9 @@ def emit(args, payload, render) -> int:
 
 
 class SafeStream:
-    """A stdout or stderr that passes everything through `term_safe`. Each
-    engine's `main` puts every command behind it, so no renderer, present or
-    future, has to remember to."""
+    """A stdout or stderr that passes everything through `term_safe`.
+    `run_cli` puts every command of both engines behind it, so no renderer,
+    present or future, has to remember to."""
 
     def __init__(self, real):
         self._real = real
@@ -482,6 +560,45 @@ class SafeStream:
 
     def __getattr__(self, name):
         return getattr(self._real, name)
+
+
+def run_cli(args) -> int:
+    """Run the parsed command `args.fn` behind SafeStream. Both engines'
+    `main` ends here."""
+    out, err = sys.stdout, sys.stderr
+    # stderr is always read by a person: warnings, consent text, and every
+    # error message. stdout is too, unless json was asked for - that output
+    # is for a parser and json.dumps escapes control characters itself.
+    sys.stderr = SafeStream(err)
+    if not getattr(args, "json", False):
+        sys.stdout = SafeStream(out)
+    try:
+        rc = args.fn(args)
+        out.flush()
+        return rc
+    except SystemExit as e:
+        if isinstance(e.code, str):
+            # The interpreter prints this after the streams are restored.
+            raise SystemExit(term_safe(e.code)) from None
+        raise
+    except BrokenPipeError:
+        # The reader stopped early (`| head`). Point stdout at devnull so
+        # the interpreter's last flush cannot raise again, and exit quietly.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), out.fileno())
+        return 1
+    finally:
+        sys.stdout, sys.stderr = out, err
+
+
+def print_capped(items: list, limit: int | None, fmt=str) -> None:
+    """Print each item indented, at most `limit` of them, then how many were
+    cut. A negative or None limit prints all: slicing with a negative would
+    drop items from the end while the count claimed more were hidden."""
+    lim = None if limit is None or limit < 0 else limit
+    for item in items[:lim]:
+        print(f"  {fmt(item)}")
+    if lim is not None and len(items) > lim:
+        print(f"  TRUNCATED: {len(items) - lim} more")
 
 
 # ---------- glob matching (linear time; patterns are untrusted input) ----------
@@ -704,6 +821,12 @@ def git_status(root: Path, rels: list[str]) -> dict[str, str]:
             else "untracked" for r in rels}
 
 
+def line_starts(text: str) -> list[int]:
+    """The offset each line of a text starts at, for `bisect`: the number
+    of starts at or before an offset is its 1-indexed line."""
+    return [0] + [m.end() for m in re.finditer("\n", text)]
+
+
 # ---------- search ----------
 WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_'-]*")
 
@@ -758,6 +881,158 @@ def doc_rank(path: str) -> int:
         return 2
     base = path.rsplit("/", 1)[-1]
     return 0 if base in PRIMARY_DOCS or base.startswith("SPEC") else 1
+
+
+# ---------- parse cache: what an incremental ingest reuses ----------
+def _json_enc(value):
+    """JSON keeps lists but not tuples; a tuple is tagged so it comes back a tuple."""
+    if isinstance(value, tuple):
+        return {"__t": [_json_enc(v) for v in value]}
+    if isinstance(value, list):
+        return [_json_enc(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _json_enc(v) for k, v in value.items()}
+    return value
+
+
+def _json_dec(text: str):
+    """The value `_json_enc` stored. Tagged tuples come back as the parser
+    builds each object, so decoding never walks the value a second time."""
+    return json.loads(text, object_hook=lambda d: tuple(d["__t"])
+                      if d.keys() == {"__t"} else d)
+
+
+def engine_fingerprint(engine_file: str, namespace: dict) -> str:
+    """An engine's source and this module's, the Python version and the
+    current value of every upper-case constant in the engine's namespace (a
+    test or a flag may lower a cap): whatever can change what an ingest
+    produces from the same files and config."""
+    def stable(v):
+        # Sets iterate in hash order, which changes per process; sort them.
+        if isinstance(v, (set, frozenset)):
+            return repr(sorted(map(stable, v)))
+        if isinstance(v, dict):
+            return repr(sorted((stable(k), stable(x)) for k, x in v.items()))
+        if isinstance(v, (list, tuple)):
+            return repr([stable(x) for x in v])
+        # A function's repr carries its address, which changes every run.
+        return re.sub(r" at 0x[0-9a-fA-F]+", "", repr(v))
+    # A snapshot: another thread may set a module global while this runs.
+    constants = sorted((k, stable(v)) for k, v in list(namespace.items())
+                       if k.isupper() and isinstance(
+                           v, (int, float, str, tuple, list, set, frozenset, dict)))
+    return hashlib.sha256(
+        Path(engine_file).read_bytes() + Path(__file__).read_bytes()
+        + sys.version.encode() + repr(constants).encode()).hexdigest()
+
+
+def _station_salt() -> bytes | None:
+    """32 random bytes kept in this station's user state folder, outside every
+    corpus, created on first use; None when the folder cannot be written, which
+    turns the parse cache off rather than leaving its keys guessable."""
+    base = (Path(os.environ["LOCALAPPDATA"]) if os.name == "nt" and os.environ.get("LOCALAPPDATA")
+            else Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"))
+    path = base / "kg" / "cache-salt"
+    try:
+        data = path.read_bytes()
+        if len(data) == 32:
+            return data
+    except OSError:
+        pass
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(os.urandom(32))
+    except FileExistsError:
+        pass                    # another process created it first; read theirs
+    except OSError:
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return data if len(data) == 32 else None
+
+
+class ParseCache:
+    """Results of the pure per-file work, kept in the graph's own database
+    between ingests so an unchanged file is never parsed again. The key is
+    the engine fingerprint, a station salt and the inputs, so any engine
+    change starts cold. Values are JSON, never pickle: the database can
+    arrive with a synced corpus. A value that does not survive the JSON round
+    trip exactly is computed every time and never stored. Keys not used by an
+    ingest are dropped at its end, so the cache holds one generation."""
+
+    _source = None
+
+    def __init__(self, con: sqlite3.Connection, fingerprint: str):
+        con.execute("CREATE TABLE IF NOT EXISTS parse_cache("
+                    "key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        if ParseCache._source is None:
+            # The station salt keeps the keys unguessable: a db that arrives with
+            # a synced corpus can carry planted rows, and without it anyone who
+            # can write the corpus could compute a key and have its value trusted.
+            ParseCache._source = _station_salt()
+        self.off = ParseCache._source is None
+        self.con, self.used, self.new = con, set(), []
+        if not self.off:
+            self._engine = hashlib.sha256(
+                ParseCache._source + fingerprint.encode()).hexdigest()
+
+    def get(self, name: str, key_parts: list, compute, pack=None, unpack=None,
+            fresh=None):
+        """`compute()` through the cache. `pack` shrinks a value before it is stored
+        and `unpack` restores it; a value is stored only when unpacking the stored
+        form gives back exactly what `compute()` returned. `fresh(value)` false
+        means a stored value's other inputs changed, and it is recomputed."""
+        if self.off:
+            return compute()
+        pack = pack or (lambda v: v)
+        unpack = unpack or (lambda v: v)
+        key = hashlib.sha256(json.dumps([self._engine, name, key_parts],
+                                        sort_keys=True).encode()).hexdigest()
+        self.used.add(key)
+        row = self.con.execute("SELECT value FROM parse_cache WHERE key = ?",
+                               (key,)).fetchone()
+        if row is not None:
+            try:
+                value = unpack(_json_dec(row[0]))
+                if fresh is None or fresh(value):
+                    return value
+            except Exception:           # any unreadable value is recomputed, never trusted
+                pass
+        value = compute()
+        try:
+            blob = json.dumps(_json_enc(pack(value)))
+            if unpack(_json_dec(blob)) == value:
+                self.new.append((key, blob))
+        except (TypeError, ValueError, KeyError):
+            pass
+        return value
+
+    def flush(self) -> None:
+        if self.off:
+            self.con.execute("DELETE FROM parse_cache")
+            return
+        self.con.executemany("INSERT OR REPLACE INTO parse_cache(key, value)"
+                             " VALUES (?,?)", self.new)
+        self.con.execute("CREATE TEMP TABLE IF NOT EXISTS used_keys(key TEXT PRIMARY KEY)")
+        self.con.execute("DELETE FROM used_keys")
+        self.con.executemany("INSERT OR IGNORE INTO used_keys(key) VALUES (?)",
+                             [(k,) for k in self.used])
+        self.con.execute("DELETE FROM parse_cache WHERE key NOT IN (SELECT key FROM used_keys)")
+
+
+def seal(text: str) -> str | None:
+    """`text` bound to this machine by an HMAC under the station salt, so
+    what a database built elsewhere, or planted, records never matches what
+    this machine computes. None when the salt is unavailable."""
+    if ParseCache._source is None:
+        ParseCache._source = _station_salt()
+    salt = ParseCache._source
+    return hmac.new(salt, text.encode(), hashlib.sha256).hexdigest() \
+        if salt else None
 
 
 # ---------- diff ----------

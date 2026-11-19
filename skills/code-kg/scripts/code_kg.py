@@ -82,11 +82,13 @@ if LIB_DIR not in sys.path:
 try:
     from kg_core import (
         GIT_STATES, GLOB_MAX_LEN, RELATED_DAMPING, TREE_LIMIT, UNSAFE_RE,
-        SafeStream, Store, bfs_path, changed_keys, doc_rank, emit,
-        est_tokens, git_status, glob_match, greedy_modularity, linked_store,
-        now_utc, other_file_rows, path_filter, rank_from, relation_ruling,
-        render_migrate, run_sibling, search_rungs, term_safe, tokenize,
-        tree_command, unit_diff, walk_tree, write_checkpoint)
+        ParseCache, Store, bfs_path, changed_keys, doc_rank, emit,
+        engine_fingerprint, est_tokens, git_status, glob_match,
+        greedy_modularity, line_starts, linked_store,
+        now_utc, other_file_rows, path_filter, print_capped, rank_from,
+        relation_ruling, render_migrate, run_cli, run_sibling, seal,
+        search_rungs, tokenize, tree_command, unit_diff, walk_tree,
+        write_checkpoint)
 except ModuleNotFoundError as e:
     if e.name != "kg_core":
         raise
@@ -346,7 +348,7 @@ CREATE TABLE IF NOT EXISTS edges(
   PRIMARY KEY (src, kind, target, line)
 );
 CREATE INDEX IF NOT EXISTS edges_dst ON edges(dst);
-CREATE TABLE IF NOT EXISTS symbol_edges(  -- rebuilt by every ingest
+CREATE TABLE IF NOT EXISTS symbol_edges(  -- rewritten per source file
   src_file   TEXT NOT NULL,            -- the file the row was read from
   src        TEXT NOT NULL,            -- symbol id, or file::<module>
   dst        TEXT,                     -- symbol id; NULL unless resolved
@@ -360,7 +362,7 @@ CREATE TABLE IF NOT EXISTS symbol_edges(  -- rebuilt by every ingest
 );
 CREATE INDEX IF NOT EXISTS symbol_edges_src ON symbol_edges(src);
 CREATE INDEX IF NOT EXISTS symbol_edges_dst ON symbol_edges(dst);
-CREATE TABLE IF NOT EXISTS data_edges(    -- rebuilt by every ingest
+CREATE TABLE IF NOT EXISTS data_edges(    -- rewritten per source file
   src_file   TEXT NOT NULL,
   src        TEXT NOT NULL,            -- symbol id, or file::<module>
   kind       TEXT NOT NULL,            -- read|write|open|passes|param
@@ -767,12 +769,12 @@ def scan_repo(repo: Path) -> tuple[list[Path], list[str], list[tuple]]:
             sorted(p.relative_to(repo).as_posix() for p in escapes), ignored)
 
 
-def manifest(repo: Path) -> str:
+def manifest(repo: Path, paths: list[Path] | None = None) -> str:
     """Cheap fingerprint of every file the walk sees: path, size, mtime.
     Read commands compare it to detect drift and re-ingest without being
-    asked."""
+    asked. `paths` is a walk the caller already made."""
     parts = []
-    for p in scan_repo(repo)[0]:
+    for p in scan_repo(repo)[0] if paths is None else paths:
         st = p.stat()
         parts.append(f"{p.relative_to(repo).as_posix()}|{st.st_size}|"
                      f"{int(st.st_mtime_ns)}")
@@ -788,12 +790,14 @@ def manifest(repo: Path) -> str:
             st = lock.stat()
             parts.append(f"__lock__{name}|{st.st_size}|{int(st.st_mtime_ns)}")
     parts.append(f"__index__|{INDEX_REV}")
-    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+    digest = hashlib.sha256("\n".join(parts).encode()).hexdigest()
+    # Sealed, so a database that arrives with the repo re-ingests here once.
+    return seal(digest) or digest
 
 
 def ensure_fresh(repo: Path) -> None:
-    if STORE.recorded_manifest(repo) != manifest(repo):
-        ingest(repo)
+    STORE.refresh(repo, scan_repo, lambda r, s: manifest(r, s[0]),
+                  lambda r, s: ingest(r, scanned=s))
 
 
 def open_fresh(repo: Path) -> sqlite3.Connection:
@@ -836,6 +840,7 @@ class Extraction:
         self.symbols: list[dict] = []
         self.refs: list[dict] = []       # {target, kind, line}
         self.entries: list[tuple[str, str]] = []   # (kind, detail)
+        self.tree: ast.Module | None = None   # python: parsed once, reused
 
 
 def _add_ref(ex: Extraction, target: str, kind: str, line: int) -> None:
@@ -865,7 +870,7 @@ def _pathy_candidates(text: str, line_no: int, ex: Extraction,
 # -- python --
 def extract_python(rel: str, text: str, ex: Extraction) -> str:
     try:
-        tree = ast.parse(text)
+        tree = ex.tree = ast.parse(text)
     except (SyntaxError, ValueError) as e:
         return f"python parse error: {e}"
 
@@ -2303,6 +2308,17 @@ class Resolver:
             return inside[0], "resolved"
         return None, "unresolved"
 
+    def ending_in(self, tail: str) -> list[str]:
+        """The files whose path ends with `tail`, which starts with `/`,
+        looked up by file name in an index built on first use, so a lookup
+        does not scan every file."""
+        if not hasattr(self, "_by_name"):
+            self._by_name: dict[str, list] = {}
+            for f in self.files:
+                self._by_name.setdefault(posixpath.basename(f), []).append(f)
+        return [f for f in self._by_name.get(posixpath.basename(tail), [])
+                if f.endswith(tail)]
+
     def resolve(self, src: str, lang: str, ref: dict) -> tuple[str | None, str]:
         kind, target = ref["kind"], ref["target"]
         if lang == "go" and kind == "import":
@@ -2356,8 +2372,7 @@ class Resolver:
                 # Template-style relative paths ("emails/x.html") live in
                 # roots the referencing file cannot see; a unique suffix
                 # match is conservative enough for a weak edge.
-                tail = "/" + target.lstrip("/")
-                hits = [f for f in self.files if f.endswith(tail)]
+                hits = self.ending_in("/" + target.lstrip("/"))
                 if len(hits) == 1:
                     return hits[0], "resolved"
             # Textual candidates that do not exist in the repo are noise for
@@ -2631,27 +2646,57 @@ class PySymbols:
     module scope per file, built on demand and cached."""
 
     def __init__(self, resolver: "Resolver", trees: dict, ids: dict,
-                 methods: dict) -> None:
+                 methods: dict, kinds: dict) -> None:
         self.resolver = resolver
-        self.trees = trees            # file id -> ast.Module
+        self.trees = trees            # file id -> ast.Module, or its source
         self.ids = ids                # file id -> {qualname: symbol id}
         self.methods = methods        # method name -> [symbol id]
-        self.kinds: dict[str, str] = {}   # symbol id -> kind
+        self.kinds = kinds            # symbol id -> kind
         self.roots: dict[str, list] = {}  # file id -> sys.path folders
         self.attrs: dict[str, dict] = {}  # class id -> {attr: class id}
         self.envs: dict[str, dict] = {}
+        self.assigns: dict[str, dict] = {}  # file id -> {name: [statement]}
+        self.used: set = set()        # files read: a cached row's inputs
+        self.active: set = set()      # in_file calls in progress
+
+    def tree(self, fid: str) -> ast.Module | None:
+        """A file's module, parsed on first use; None when it does not
+        parse. Every read of a file goes through here or names the file in
+        `used` itself, so `used` lists what one file's edges depended on."""
+        self.used.add(fid)
+        t = self.trees.get(fid)
+        if isinstance(t, str):
+            try:
+                t = ast.parse(t)
+            except (SyntaxError, ValueError, RecursionError, MemoryError):
+                t = None
+            self.trees[fid] = t
+        return t
+
+    def statements(self, fid: str) -> list:
+        tree = self.tree(fid)
+        return list(_module_statements(tree.body)) if tree else []
+
+    def assigned(self, fid: str, name: str) -> list:
+        """The module-level statements that assign `name`."""
+        self.used.add(fid)
+        if fid not in self.assigns:
+            table: dict[str, list] = {}
+            for node in self.statements(fid):
+                for n in _stored_names(node):
+                    table.setdefault(n, []).append(node)
+            self.assigns[fid] = table
+        return self.assigns[fid].get(name, [])
 
     def env(self, fid: str) -> dict:
         """Module-level bindings: name -> ("sym", id) | ("mod", module) |
         ("from", module, name) | ("other",)."""
+        self.used.add(fid)
         if fid in self.envs:
             return self.envs[fid]
         env: dict[str, tuple] = {}
         self.envs[fid] = env
-        tree = self.trees.get(fid)
-        if tree is None:
-            return env
-        for node in _module_statements(tree.body):
+        for node in self.statements(fid):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
                                  ast.ClassDef)):
                 sid = self.ids.get(fid, {}).get(node.name)
@@ -2667,19 +2712,28 @@ class PySymbols:
         env = self.env(fid)
         return {n for n, b in env.items() if b == ("other",)}
 
+    def assigned_once(self, fid: str, name: str):
+        """The value expression of a module-level name assigned exactly
+        once, else None."""
+        found = self.assigned(fid, name)
+        return found[0].value if len(found) == 1 \
+            and isinstance(found[0], ast.Assign) else None
+
     def constant(self, fid: str, name: str) -> str | None:
         """The string a module-level name is assigned, when it is assigned
         exactly once, to a string literal."""
-        tree = self.trees.get(fid)
-        found = []
-        for node in _module_statements(tree.body if tree else []):
-            if name in _stored_names(node):
-                found.append(node)
-        if len(found) == 1 and isinstance(found[0], ast.Assign) \
-                and isinstance(found[0].value, ast.Constant) \
-                and isinstance(found[0].value.value, str):
-            return found[0].value.value
-        return None
+        v = self.assigned_once(fid, name)
+        return v.value if isinstance(v, ast.Constant) \
+            and isinstance(v.value, str) else None
+
+    def instance_of(self, fid: str, name: str, depth: int) -> str | None:
+        """The repo class a module-level name holds, when it is assigned
+        exactly once, from a call to that class."""
+        v = self.assigned_once(fid, name)
+        parts = _dotted(v.func) if isinstance(v, ast.Call) else None
+        sid, st = self.in_file(fid, parts, depth) if parts else (None, "")
+        return sid if st == "resolved" and self.kinds.get(sid) == "class" \
+            else None
 
     def module(self, src: str, module: str) -> tuple[str | None, str]:
         dst, status = self.resolver.resolve_python(src, module)
@@ -2699,12 +2753,12 @@ class PySymbols:
     def path_roots(self, fid: str) -> list[str]:
         """Repo folders a file adds with `sys.path.insert` or `append`,
         when the path is built from `__file__` and literals."""
+        self.used.add(fid)
         if fid in self.roots:
             return self.roots[fid]
         self.roots[fid] = []
-        tree = self.trees.get(fid)
         out = []
-        for node in _module_statements(tree.body if tree else []):
+        for node in self.statements(fid):
             call = node.value if isinstance(node, ast.Expr) else None
             if isinstance(call, ast.Call) and call.args \
                     and _dotted(call.func) in (["sys", "path", "insert"],
@@ -2725,10 +2779,9 @@ class PySymbols:
         if isinstance(e, ast.Name):
             if e.id == "__file__":
                 return fid
-            found = [n for n in _module_statements(self.trees[fid].body)
+            found = [n for n in self.assigned(fid, e.id)
                      if isinstance(n, ast.Assign) and len(n.targets) == 1
-                     and isinstance(n.targets[0], ast.Name)
-                     and n.targets[0].id == e.id]
+                     and isinstance(n.targets[0], ast.Name)]
             return sp(found[0].value) if len(found) == 1 else None
         if isinstance(e, ast.Constant) and isinstance(e.value, str):
             return e.value
@@ -2772,10 +2825,9 @@ class PySymbols:
     def dict_targets(self, fid: str, name: str) -> list[str]:
         """The functions a module-level dict literal maps to, for a call
         written `TABLE[key](...)`."""
-        found = [n for n in _module_statements(self.trees[fid].body)
+        found = [n for n in self.assigned(fid, name)
                  if isinstance(n, ast.Assign) and len(n.targets) == 1
-                 and isinstance(n.targets[0], ast.Name)
-                 and n.targets[0].id == name]
+                 and isinstance(n.targets[0], ast.Name)]
         if len(found) != 1 or not isinstance(found[0].value, ast.Dict):
             return []
         out = set()
@@ -2801,10 +2853,11 @@ class PySymbols:
         """`self.X` attributes whose class is known from the class's own
         methods: assigned a call to a repo class, or a parameter annotated
         with one. An attribute assigned two different classes is left out."""
+        fid, qual = cls_id.split("::", 1)
+        self.used.add(fid)
         if cls_id in self.attrs:
             return self.attrs[cls_id]
-        fid, qual = cls_id.split("::", 1)
-        node = _find_class(self.trees.get(fid), qual)
+        node = _find_class(self.tree(fid), qual)
         seen: dict[str, set] = {}
         for fn in (node.body if node else []):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -2836,14 +2889,26 @@ class PySymbols:
 
     def in_file(self, fid: str, parts: list, depth: int = 0) -> tuple:
         """(symbol id or None, status) for a dotted name read in `fid`'s
-        module scope."""
-        if depth > 4 or not parts:
+        module scope. A lookup that reaches itself again, as through a class
+        whose base is an attribute of itself, is unresolved: the depth
+        count alone restarts inside `method` and `bases`."""
+        key = (fid, tuple(parts or ()))
+        if depth > 4 or not parts or key in self.active:
             return None, "unresolved"
-        b = self.env(fid).get(parts[0])
-        if b is None:
-            return (None, "external") if parts[0] in BUILTIN_NAMES \
-                else (None, "unresolved")
-        return self.binding(fid, b, parts[1:], depth)
+        self.active.add(key)
+        try:
+            b = self.env(fid).get(parts[0])
+            if b is None:
+                return (None, "external") if parts[0] in BUILTIN_NAMES \
+                    else (None, "unresolved")
+            if b == ("other",) and len(parts) == 2:
+                cls = self.instance_of(fid, parts[0], depth + 1)
+                found = cls and self.method(cls, parts[1])
+                if found:
+                    return found, "resolved"
+            return self.binding(fid, b, parts[1:], depth)
+        finally:
+            self.active.discard(key)
 
     def binding(self, fid: str, b: tuple, rest: list, depth: int) -> tuple:
         if b[0] == "sym":
@@ -2888,7 +2953,7 @@ class PySymbols:
 
     def bases(self, cls_id: str) -> list[str]:
         fid, qual = cls_id.split("::", 1)
-        node = _find_class(self.trees.get(fid), qual)
+        node = _find_class(self.tree(fid), qual)
         out = []
         for base in (node.bases if node else []):
             parts = _dotted(base)
@@ -2995,10 +3060,12 @@ def _symbol_nodes(tree: ast.Module, fid: str) -> dict:
     return out
 
 
-def _function_locals(fn: ast.AST) -> tuple[set, dict]:
-    """Names local to a function (parameters, assignments, nested defs,
-    loop and with targets) and the imports made inside it."""
-    names, imports = set(), {}
+def _function_scope(fn: ast.AST) -> tuple[set, dict, dict, set, list]:
+    """One walk of a function: the names local to it (parameters,
+    assignments, nested defs, loop and with targets), the imports made
+    inside it, how many times each name is stored, the names it declares
+    global, and its `name = call(...)` statements."""
+    names, imports, stores, calls = set(), {}, {}, []
     a = fn.args
     for arg in a.posonlyargs + a.args + a.kwonlyargs:
         names.add(arg.arg)
@@ -3009,8 +3076,13 @@ def _function_locals(fn: ast.AST) -> tuple[set, dict]:
     for node in ast.walk(fn):
         if node is fn:
             continue
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                and isinstance(node.targets[0], ast.Name) \
+                and isinstance(node.value, ast.Call):
+            calls.append(node)
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             names.add(node.id)
+            stores[node.id] = stores.get(node.id, 0) + 1
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
                                ast.ClassDef)):
             names.add(node.name)
@@ -3022,7 +3094,7 @@ def _function_locals(fn: ast.AST) -> tuple[set, dict]:
             glob.update(node.names)
         elif isinstance(node, ast.arg):
             names.add(node.arg)
-    return names - glob - set(imports), imports
+    return names - glob - set(imports), imports, stores, glob, calls
 
 
 class _EdgeVisitor(ast.NodeVisitor):
@@ -3093,11 +3165,11 @@ class _EdgeVisitor(ast.NodeVisitor):
             if sid:
                 self.cls = sid
         else:
-            fn_locals, fn_imports = _function_locals(node)
+            fn_locals, fn_imports, stores, glob, calls = _function_scope(node)
             if sid:
                 self.locals, self.imports = fn_locals, fn_imports
-                self.types = self.receiver_types(node)
-                self.declare_params(node, sid)
+                self.types = self.receiver_types(node, stores, calls)
+                self.declare_params(node, sid, stores, glob)
             else:
                 self.locals = self.locals | fn_locals
                 self.imports = {**self.imports, **fn_imports}
@@ -3106,7 +3178,7 @@ class _EdgeVisitor(ast.NodeVisitor):
         (self.src, self.cls, self.locals, self.imports, self.types,
          self.params, self.declared_global) = saved
 
-    def declare_params(self, fn, sid: str) -> None:
+    def declare_params(self, fn, sid: str, stores: dict, glob: set) -> None:
         """One `param` row per parameter, numbered as a caller passes them
         (a method's `self` or `cls` is not counted), and the parameters
         the body never reassigns, whose value is what the caller passed."""
@@ -3114,25 +3186,19 @@ class _EdgeVisitor(ast.NodeVisitor):
         if self.g.kinds.get(sid) == "method" and args \
                 and args[0].arg in ("self", "cls"):
             args = args[1:]
-        stored = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)
-                  and isinstance(n.ctx, ast.Store)}
         for i, a in enumerate(args):
             self.data_row("param", "param", a.arg, fn.lineno, "resolved",
                           str(i))
         for a in fn.args.kwonlyargs:
             self.data_row("param", "param", a.arg, fn.lineno, "resolved",
                           a.arg)
-        self.params = {a.arg for a in args + fn.args.kwonlyargs} - stored
-        self.declared_global = {n for g in ast.walk(fn)
-                                if isinstance(g, ast.Global) for n in g.names}
+        self.params = {a.arg for a in args + fn.args.kwonlyargs} - set(stores)
+        self.declared_global = glob
 
-    def receiver_types(self, fn) -> dict:
+    def receiver_types(self, fn, stores: dict, calls: list) -> dict:
         """Locals whose class is known: a parameter annotated with a repo
         class, or a name assigned exactly once, from a call to one."""
-        out, stores = {}, {}
-        for node in ast.walk(fn):
-            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
-                stores[node.id] = stores.get(node.id, 0) + 1
+        out = {}
         for arg in fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs:
             ann = arg.annotation
             if isinstance(ann, ast.Constant) and isinstance(ann.value, str):
@@ -3143,11 +3209,8 @@ class _EdgeVisitor(ast.NodeVisitor):
             cls = self.class_of(ann)
             if cls and arg.arg not in stores:
                 out[arg.arg] = cls
-        for node in ast.walk(fn):
-            if isinstance(node, ast.Assign) and len(node.targets) == 1 \
-                    and isinstance(node.targets[0], ast.Name) \
-                    and stores.get(node.targets[0].id) == 1 \
-                    and isinstance(node.value, ast.Call):
+        for node in calls:
+            if stores.get(node.targets[0].id) == 1:
                 cls = self.class_of(node.value.func)
                 if cls:
                     out[node.targets[0].id] = cls
@@ -3439,39 +3502,57 @@ class _EdgeVisitor(ast.NodeVisitor):
             self.emit(dst, ".".join(parts), "ref", node.lineno, "resolved")
 
 
-def python_symbol_edges(files: list, resolver: "Resolver",
-                        all_symbols: list) -> tuple[list, list]:
+def python_symbol_edges(files: list, resolver: "Resolver", all_symbols: list,
+                        trees: dict, memo: ParseCache,
+                        redone: set) -> tuple[list, list]:
     """Static symbol edges and data rows for every python file, as rows for
-    `symbol_edges` and `data_edges`."""
-    data: list[tuple] = []
+    `symbol_edges` and `data_edges`. `trees` holds the modules extraction
+    already parsed; the rest are parsed only when needed. A file's rows come
+    from the parse cache while the file, every file its resolution read, and
+    the repo's file set, config and python symbol ids are unchanged; the
+    files whose rows were made again are added to `redone`."""
     py = [f for f in files if f["language"] == "python"]
-    trees = {}
-    for f in py:
-        try:
-            trees[f["id"]] = ast.parse(f["body"])
-        except (SyntaxError, ValueError, RecursionError, MemoryError):
-            # The repo is untrusted input: one file too deep to parse
-            # loses its own edges, never the ingest.
-            continue
+    py_ids = {f["id"] for f in py}
+    hashes = {f["id"]: f["hash"] for f in files}
     ids: dict[str, dict] = {}
     methods: dict[str, list] = {}
     for s in all_symbols:
-        if s["file_id"] in trees:
+        if s["file_id"] in py_ids:
             ids.setdefault(s["file_id"], {})[s["qualname"]] = s["id"]
             if s["kind"] == "method":
                 methods.setdefault(s["name"], []).append(s["id"])
-    graph = PySymbols(resolver, trees, ids, methods)
-    graph.kinds = {s["id"]: s["kind"] for s in all_symbols}
-    rows = []
-    for fid, tree in trees.items():
-        v = _EdgeVisitor(fid, graph, _symbol_nodes(tree, fid))
-        try:
-            for stmt in tree.body:
-                v.visit(stmt)
-        except RecursionError:
-            continue
-        rows += v.rows
-        data += v.data
+    graph = PySymbols(resolver, {f["id"]: trees.get(f["id"]) or f["body"]
+                                 for f in py}, ids, methods,
+                      {s["id"]: s["kind"] for s in all_symbols})
+    basis = hashlib.sha256(json.dumps(
+        [sorted(resolver.files), resolver.py_roots, sorted(resolver.profiles),
+         sorted((sid, graph.kinds[sid]) for q in ids.values()
+                for sid in q.values())]).encode()).hexdigest()
+
+    def visit(fid: str) -> dict:
+        redone.add(fid)
+        graph.used = set()
+        out = {"rows": [], "data": []}
+        tree = graph.tree(fid)
+        if tree is not None:
+            v = _EdgeVisitor(fid, graph, _symbol_nodes(tree, fid))
+            try:
+                for stmt in tree.body:
+                    v.visit(stmt)
+                out = {"rows": v.rows, "data": v.data}
+            except RecursionError:
+                pass    # the repo is untrusted: a file too deep loses its edges
+        out["deps"] = {d: hashes.get(d) for d in sorted(graph.used - {fid})}
+        return out
+
+    rows, data = [], []
+    for f in py:
+        got = memo.get("py-edges", [f["id"], f["hash"], basis],
+                       lambda: visit(f["id"]),
+                       fresh=lambda v: all(hashes.get(d) == h
+                                           for d, h in v["deps"].items()))
+        rows += got["rows"]
+        data += got["data"]
     return rows, data
 
 
@@ -3718,16 +3799,35 @@ def _blank(text: str, comment: tuple, block: tuple | None,
     return "".join(out)
 
 
-def _line_starts(text: str) -> list[int]:
-    starts = [0]
-    for m in re.finditer("\n", text):
-        starts.append(m.end())
-    return starts
-
-
 def _line_of(starts: list[int], offset: int) -> int:
     import bisect
     return bisect.bisect_right(starts, offset)
+
+
+# Language -> the LineSymbols method that reads it; json means package.json.
+LINE_READERS = {"javascript": "js", "typescript": "js", "bash": "bash",
+                "sql": "sql", "html": "html", "css": "css",
+                "dockerfile": "dockerfile", "yaml": "yaml",
+                "terraform": "terraform", "make": "make",
+                "json": "package_json"}
+SCANNED_LANGS = frozenset(("javascript", "typescript", "bash", "sql", "html",
+                           "css"))
+
+
+class _Reads(dict):
+    """A dict that notes each key read through `get` or `[]` in `used`."""
+
+    def __init__(self, used: set, *args) -> None:
+        super().__init__(*args)
+        self.used = used
+
+    def get(self, key, default=None):
+        self.used.add(key)
+        return super().get(key, default)
+
+    def __getitem__(self, key):
+        self.used.add(key)
+        return super().__getitem__(key)
 
 
 class LineSymbols:
@@ -3739,13 +3839,14 @@ class LineSymbols:
     def __init__(self, files: list, resolver: "Resolver",
                  all_symbols: list) -> None:
         self.resolver = resolver
-        self.by_file: dict[str, list] = {}
+        self.used: set = set()    # files read: a cached file's inputs
+        self.by_file: dict[str, list] = _Reads(self.used)
         self.by_name: dict[str, list] = {}
         for s in all_symbols:
             self.by_file.setdefault(s["file_id"], []).append(s)
             self.by_name.setdefault(s["name"], []).append(s)
         self.lang = {f["id"]: f["language"] for f in files}
-        self.body = {f["id"]: f["body"] for f in files}
+        self.body = _Reads(self.used, {f["id"]: f["body"] for f in files})
         self.rows: list[tuple] = []
         self.data: list[tuple] = []
         self.owners: dict[tuple, list] = {}
@@ -3792,44 +3893,66 @@ class LineSymbols:
                 if not kinds or s["kind"] in kinds]
         return hits[0] if len(hits) == 1 else None
 
-    def run(self) -> tuple[list, list]:
+    def run(self, files: list, memo: ParseCache,
+            redone: set) -> tuple[list, list]:
+        """Every file's rows, from the parse cache while the file, every
+        file its reading touched, and the repo's file set, symbol names
+        and import aliases are unchanged; the files whose rows were made
+        again are added to `redone`."""
+        self.redone = redone
+        hashes = self.hashes = {f["id"]: f["hash"] for f in files}
+        basis = hashlib.sha256(json.dumps(
+            [sorted(self.lang.items()), self.resolver.aliases,
+             self.resolver.base_url, self.resolver.py_roots,
+             sorted(self.resolver.profiles),
+             sorted((s["id"], s["kind"], s["name"])
+                    for group in self.by_name.values() for s in group)],
+            default=str).encode()).hexdigest()
+        rows, data = [], []
         for fid, lang in self.lang.items():
-            try:
-                if lang in ("javascript", "typescript"):
-                    self.js(fid)
-                elif lang == "bash":
-                    self.bash(fid)
-                elif lang == "sql":
-                    self.sql(fid)
-                elif lang == "html":
-                    self.html(fid)
-                elif lang == "css":
-                    self.css(fid)
-            except (RecursionError, MemoryError, ValueError):
+            if lang not in LINE_READERS or lang == "json" \
+                    and posixpath.basename(fid) != "package.json":
                 continue
-            try:
-                if lang == "dockerfile":
-                    self.dockerfile(fid)
-                elif lang == "yaml":
-                    self.yaml(fid)
-                elif lang == "terraform":
-                    self.terraform(fid)
-                elif lang == "make":
-                    self.make(fid)
-                elif lang == "json" and posixpath.basename(fid) \
-                        == "package.json":
-                    self.package_json(fid)
-            except Exception:  # noqa: BLE001 - one hostile config file
-                # must not take the whole ingest down.
-                continue
-        return self.rows, self.data
+            got = memo.get("line-edges", [fid, hashes[fid], basis],
+                           lambda: self.one(fid, lang),
+                           fresh=lambda v: all(hashes.get(d) == h
+                                               for d, h in v["deps"].items()))
+            rows += got["rows"]
+            data += got["data"]
+        return rows, data
+
+    def one(self, fid: str, lang: str) -> dict:
+        """One file's rows, and the other files read to make them. Caches
+        that hold other files' facts start empty, so every such read is
+        seen."""
+        self.redone.add(fid)
+        self.rows, self.data = [], []
+        self.owners, self.names, self.defaults = {}, {}, {}
+        for memo in [k for k in vars(self) if k.startswith("_")]:
+            del self.__dict__[memo]     # _docker, _tf and any later memo
+        self.used.clear()
+        self.read(fid, lang)
+        return {"rows": self.rows, "data": self.data,
+                "deps": {d: self.hashes.get(d)
+                         for d in sorted(self.used - {fid})}}
+
+    def read(self, fid: str, lang: str) -> None:
+        """Rows a failure leaves behind are kept. A hostile config file
+        must not take the whole ingest down; a source scanner fails only on
+        input too deep or too large."""
+        try:
+            getattr(self, LINE_READERS[lang])(fid)
+        except Exception as e:  # noqa: BLE001
+            if lang in SCANNED_LANGS and not isinstance(
+                    e, (RecursionError, MemoryError, ValueError)):
+                raise
 
     # -- javascript / typescript
     def js(self, fid: str) -> None:
         text = self.body[fid]
         bare = _blank(text, ("//",), ("/*", "*/"), "")
         code = _blank(text, ("//",), ("/*", "*/"), "'\"`", "`", JS_HOLES)
-        starts = _line_starts(text)
+        starts = line_starts(text)
         binds: dict[str, tuple] = {}     # name -> ("sym", id) | ("ns", file)
         external: set = set()
 
@@ -4014,7 +4137,7 @@ class LineSymbols:
         # quotes removed: a `$NAME` inside double quotes is still a read.
         vars_text = _blank("\n".join(keep), ("#",), None, "'", "'",
                            comment_after_space=True)
-        starts = _line_starts(code)
+        starts = line_starts(code)
         funcs = {s["name"]: s["id"] for s in self.by_file.get(fid, [])
                  if s["kind"] == "function"}
         for raw in lines:
@@ -4109,7 +4232,7 @@ class LineSymbols:
         a path under `workdir` (a container's WORKDIR) maps back to the
         build context; `$NAME/x` resolves when `dirs` maps NAME to a
         folder."""
-        starts = _line_starts(code)
+        starts = line_starts(code)
         dirs = dirs or {}
         seg: list[tuple[str, int]] = []
         segments = [seg]
@@ -4278,7 +4401,7 @@ class LineSymbols:
         text assigns NAME itself. A read is `resolved` when the file
         defines NAME as environment (`known`), else `weak` and only for an
         upper-case name, since a shell variable is not always environment."""
-        starts = _line_starts(text)
+        starts = line_starts(text)
         assigned = {m.group(1) for m in BASH_ASSIGN_RE.finditer(text)}
         for m in BASH_EXPORT_RE.finditer(text):
             line = line0 - 1 + _line_of(starts, m.start(1))
@@ -4394,7 +4517,7 @@ class LineSymbols:
         defined: dict[str, set] = {sid: set() for sid in info}
         for ins in self._docker_instructions(fid):
             line0, kw, args = ins["line"], ins["kw"], ins["args"]
-            starts = _line_starts(args)
+            starts = line_starts(args)
 
             def line_at(off: int) -> int:
                 return line0 - 1 + _line_of(starts, off)
@@ -4658,7 +4781,7 @@ class LineSymbols:
     def terraform(self, fid: str) -> None:
         text = self.body[fid]
         code = _blank(text, ("#", "//"), ("/*", "*/"), '"', "", TF_HOLES)
-        starts = _line_starts(code)
+        starts = line_starts(code)
         here = posixpath.dirname(fid)
         index = self.tf_index(here)
         # The `depends_on = [...]` spans, merged and in order, so each
@@ -4811,7 +4934,7 @@ class LineSymbols:
     def sql(self, fid: str) -> None:
         text = self.body[fid]
         code = _blank(text, ("--",), ("/*", "*/"), "'")
-        starts = _line_starts(code)
+        starts = line_starts(code)
         if self.tables is None:
             self.tables = {}
             for s in self.by_name.values():
@@ -4864,7 +4987,7 @@ class LineSymbols:
     def html(self, fid: str) -> None:
         text = self.body[fid]
         code = _blank(text, (), ("<!--", "-->"), "")
-        starts = _line_starts(code)
+        starts = line_starts(code)
         src = f"{fid}::<module>"
         # <style> blocks are stylesheets; <script> blocks are code. Neither
         # holds markup attributes, so both are blanked for the markup scan.
@@ -4916,7 +5039,7 @@ class LineSymbols:
         blanked."""
         text = self.body[fid] if text is None else text
         code = _blank(text, (), ("/*", "*/"), "'\"")
-        starts = _line_starts(code)
+        starts = line_starts(code)
         src = f"{fid}::<module>"
         depth, sel_start = 0, 0
         for i, c in enumerate(code):
@@ -4949,7 +5072,60 @@ class LineSymbols:
                        _line_of(starts, m.start()))
 
 
-def ingest(repo: Path, keep_previous: bool = False) -> dict:
+def _symbol_rows(file_id: str, symbols: list[dict]) -> list[dict]:
+    """One file's symbols with ids `file::qualname`; a repeated qualname
+    gets `~2`, `~3` and so on, in order of appearance."""
+    rows, seen = [], set()
+    for s in symbols:
+        sid = f"{file_id}::{s['qualname']}"
+        n = 2
+        while sid in seen:
+            sid = f"{file_id}::{s['qualname']}~{n}"
+            n += 1
+        seen.add(sid)
+        rows.append({**s, "id": sid, "file_id": file_id})
+    return rows
+
+
+def _per_file_basis(con: sqlite3.Connection, engine: str) -> str:
+    """What the per-file rows were written under: the engine, and the row
+    count of each per-file table, so rows something else dropped or added
+    since cannot pass as up to date. Sealed to this machine, so a database
+    built elsewhere is rewritten in full; '' when it cannot be sealed."""
+    counts = [con.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
+              for t in ("files", "files_fts", "symbols", "symbols_fts",
+                        "symbol_edges", "data_edges")]
+    return seal(json.dumps([engine, counts])) or ""
+
+
+def extract(f: dict, memo: ParseCache, trees: dict,
+            markers: tuple = ()) -> tuple[dict, str]:
+    """One file's symbols, refs, entry points and comment markers, and its
+    parse error, from the parse cache while the file is unchanged. A python
+    module parsed on the way lands in `trees` for the symbol-edge pass."""
+    def run() -> dict:
+        ex = Extraction()
+        try:
+            err = EXTRACTORS[f["language"]](f["id"], f["body"], ex)
+        except Exception as e:  # noqa: BLE001 - one bad file must not take
+            # the whole ingest down; the repo is untrusted input.
+            err = f"{f['language']} extractor failed: {type(e).__name__}"
+        if ex.tree is not None:
+            trees[f["id"]] = ex.tree
+        return {"symbols": ex.symbols, "refs": ex.refs,
+                "entries": ex.entries, "err": err or "",
+                "annotations": scan_annotations(f["language"], f["body"],
+                                                markers) if markers else []}
+    got = memo.get("extract", [f["id"], f["language"], f["hash"],
+                               list(markers)], run)
+    return got, got["err"]
+
+
+def ingest(repo: Path, keep_previous: bool = False,
+           scanned: tuple | None = None) -> dict:
+    """Rebuild the graph. Per-file work comes from the parse cache for files
+    whose content is unchanged; `scanned` is a `scan_repo` result the caller
+    already holds."""
     checkpoint = None
     refused = linked_store(repo, kg_dir(repo), db_path(repo))
     if refused:
@@ -4967,8 +5143,15 @@ def ingest(repo: Path, keep_previous: bool = False) -> dict:
             with gi.open("a", encoding="utf-8") as fh:
                 fh.write(f"\n{PREV_DB_NAME}\n")
     cfg = load_config(repo)
-    paths, escapes, ignored = scan_repo(repo)
-    ignored += [(e, "symlink-or-escape") for e in escapes]
+    paths, escapes, ignored = scanned or scan_repo(repo)
+    # Taken before any file is read, so an edit made during this ingest
+    # still reads as drift afterwards.
+    fingerprint = manifest(repo, paths)
+    ignored = ignored + [(e, "symlink-or-escape") for e in escapes]
+    con = connect(repo)
+    engine = engine_fingerprint(__file__, globals())
+    memo = ParseCache(con, engine)
+    trees: dict[str, ast.Module] = {}
     files: list[dict] = []
     others: list[tuple] = []     # files listed, never read: the inventory
     for p in paths:
@@ -5000,25 +5183,15 @@ def ingest(repo: Path, keep_previous: bool = False) -> dict:
     resolver = Resolver(repo, cfg, file_ids, tuple(profiles))
     all_symbols, all_edges, all_entries = [], [], []
     parse_errors = {}
+    markers = CORE_MARKERS + tuple(cfg.get("markers", []))
+    marked: dict[str, list] = {}
     for f in files:
-        ex = Extraction()
-        try:
-            err = EXTRACTORS[f["language"]](f["id"], f["body"], ex)
-        except Exception as e:  # noqa: BLE001 - one bad file must not take
-            # the whole ingest down; the repo is untrusted input.
-            err = f"{f['language']} extractor failed: {type(e).__name__}"
+        ex, err = extract(f, memo, trees, markers)
+        marked[f["id"]] = ex["annotations"]
         if err:
             parse_errors[f["id"]] = err
-        seen = set()
-        for s in ex.symbols:
-            sid = f"{f['id']}::{s['qualname']}"
-            n = 2
-            while sid in seen:
-                sid = f"{f['id']}::{s['qualname']}~{n}"
-                n += 1
-            seen.add(sid)
-            all_symbols.append({**s, "id": sid, "file_id": f["id"]})
-        for ref in ex.refs:
+        all_symbols += _symbol_rows(f["id"], ex["symbols"])
+        for ref in ex["refs"]:
             dst, status = resolver.resolve(f["id"], f["language"], ref)
             if status == "drop" or dst == f["id"]:
                 continue
@@ -5059,7 +5232,7 @@ def ingest(repo: Path, keep_previous: bool = False) -> dict:
                         all_edges.append((f["id"], peer, peer,
                                           "pkg-init", ref["line"],
                                           "resolved"))
-        for kind, detail in ex.entries:
+        for kind, detail in ex["entries"]:
             all_entries.append((f["id"], kind, detail))
     roles = {f["id"]: f["role"] for f in files}
     for prof in PROFILES:
@@ -5123,14 +5296,12 @@ def ingest(repo: Path, keep_previous: bool = False) -> dict:
                       for fid in sorted(file_ids)
                       if any(glob_match(fid, g) for g in comp["paths"])]
 
-    markers = CORE_MARKERS + tuple(cfg.get("markers", []))
     symbols_by_file: dict[str, list[dict]] = {}
     for s in all_symbols:
         symbols_by_file.setdefault(s["file_id"], []).append(s)
     annotation_rows, annotations_seen = [], 0
     for f in files:
-        for line, marker, owner, payload in scan_annotations(
-                f["language"], f["body"], markers):
+        for line, marker, owner, payload in marked[f["id"]]:
             annotations_seen += 1
             if len(annotation_rows) < ANNOTATION_CAP:
                 annotation_rows.append(
@@ -5169,38 +5340,72 @@ def ingest(repo: Path, keep_previous: bool = False) -> dict:
                     remapped.append((src, dst, target, kind, line, status))
             all_edges = remapped
         for f in dep_files:
-            ex = Extraction()
-            try:
-                EXTRACTORS[f["language"]](f["id"], f["body"], ex)
-            except Exception:  # noqa: BLE001 - dep code is untrusted input
-                pass
-            seen = set()
-            for s in ex.symbols:
-                sid = f"{f['id']}::{s['qualname']}"
-                n = 2
-                while sid in seen:
-                    sid = f"{f['id']}::{s['qualname']}~{n}"
-                    n += 1
-                seen.add(sid)
-                all_symbols.append({**s, "id": sid, "file_id": f["id"]})
+            all_symbols += _symbol_rows(f["id"], extract(f, memo, {})[0]
+                                        ["symbols"])
             # Dep-internal refs and entry points are deliberately not
             # graphed: the value is reading and searching library code, not
             # mapping its internals.
 
-    con = connect(repo)
+    every = files + dep_files
     with con:
-        for table in ("files", "symbols", "edges", "entry_points", "ignored",
-                      "components", "annotations", "symbol_edges",
-                      "data_edges", "other_files"):
+        # The per-file tables (a file's row, its text index, its symbols)
+        # are rewritten only for files added, changed or removed, while the
+        # engine and the row counts match what the last ingest recorded.
+        # Everything else is rebuilt in full: it is small, and a change in
+        # one file reaches it through the others.
+        old = dict(con.execute("SELECT id, content_hash FROM files"))
+        recorded = con.execute("SELECT value FROM meta WHERE key ="
+                               " 'per_file_basis'").fetchone()
+        basis = _per_file_basis(con, engine)
+        incremental = bool(basis) and recorded is not None \
+            and recorded[0] == basis
+        dirty = ({f["id"] for f in every if old.get(f["id"]) != f["hash"]}
+                 | (set(old) - {f["id"] for f in every})
+                 if incremental else set(old) | {f["id"] for f in every})
+        con.execute("CREATE TEMP TABLE IF NOT EXISTS dirty_files("
+                    "id TEXT PRIMARY KEY)")
+        con.execute("DELETE FROM dirty_files")
+        con.executemany("INSERT INTO dirty_files(id) VALUES (?)",
+                        [(i,) for i in dirty])
+        if incremental:
+            con.execute("DELETE FROM symbols_fts WHERE id IN (SELECT id FROM"
+                        " symbols WHERE file_id IN (SELECT id FROM"
+                        " dirty_files))")
+            con.execute("DELETE FROM files_fts WHERE id IN"
+                        " (SELECT id FROM dirty_files)")
+            con.execute("DELETE FROM symbols WHERE file_id IN"
+                        " (SELECT id FROM dirty_files)")
+            con.execute("DELETE FROM files WHERE id IN"
+                        " (SELECT id FROM dirty_files)")
+        else:
+            for table in ("symbols_fts", "files_fts", "symbols", "files"):
+                con.execute(f"DELETE FROM {table}")
+        for table in ("edges", "entry_points", "ignored", "components",
+                      "annotations", "other_files"):
             con.execute(f"DELETE FROM {table}")
         con.executemany("INSERT INTO other_files(path, ext, size, reason)"
                         " VALUES (?,?,?,?)", others)
-        sym_rows, data_rows = python_symbol_edges(files, resolver,
-                                                  all_symbols)
-        more_rows, more_data = LineSymbols(files, resolver,
-                                           all_symbols).run()
+        # A file's symbol and data rows are rewritten when they were made
+        # again; rows from the cache are the ones the last ingest wrote.
+        redone: set = set()
+        sym_rows, data_rows = python_symbol_edges(
+            files, resolver, all_symbols, trees, memo, redone)
+        more_rows, more_data = LineSymbols(files, resolver, all_symbols).run(
+            files, memo, redone)
         sym_rows += more_rows
         data_rows += more_data
+        if incremental:
+            con.executemany("INSERT OR IGNORE INTO dirty_files(id) VALUES (?)",
+                            [(i,) for i in redone])
+            for table in ("symbol_edges", "data_edges"):
+                con.execute(f"DELETE FROM {table} WHERE src_file IN"
+                            " (SELECT id FROM dirty_files)")
+            rewrite = dirty | redone
+            sym_rows = [r for r in sym_rows if r[0] in rewrite]
+            data_rows = [r for r in data_rows if r[0] in rewrite]
+        else:
+            con.execute("DELETE FROM symbol_edges")
+            con.execute("DELETE FROM data_edges")
         con.executemany(
             "INSERT INTO symbol_edges(src_file, src, dst, target, kind, line,"
             " status, candidates) VALUES (?,?,?,?,?,?,?,?)", sym_rows)
@@ -5214,10 +5419,13 @@ def ingest(repo: Path, keep_previous: bool = False) -> dict:
             " payload, symbol_id) VALUES (?,?,?,?,?,?)", annotation_rows)
         con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES"
                     " ('annotations_seen', ?)", (str(annotations_seen),))
-        con.execute("DELETE FROM symbols_fts")
-        con.execute("DELETE FROM files_fts")
         git = git_status(repo, [f["id"] for f in files])
-        for f in files + dep_files:
+        con.executemany("UPDATE files SET git = ? WHERE id = ? AND git != ?",
+                        [(git.get(f["id"], "none"), f["id"],
+                          git.get(f["id"], "none")) for f in every])
+        for f in every:
+            if f["id"] not in dirty:
+                continue
             con.execute(
                 "INSERT INTO files(id, language, role, size, lines,"
                 " content_hash, body, parse_error, origin, git)"
@@ -5228,8 +5436,10 @@ def ingest(repo: Path, keep_previous: bool = False) -> dict:
             con.execute("INSERT INTO files_fts(id, path, body) VALUES (?,?,?)",
                         (f["id"], f["id"].replace("/", " "), f["body"]))
         body_lines = {f["id"]: f["body"].splitlines()
-                      for f in files + dep_files}
+                      for f in every if f["id"] in dirty}
         for s in sorted(all_symbols, key=lambda s: s["id"]):
+            if s["file_id"] not in dirty:
+                continue
             con.execute(
                 "INSERT INTO symbols(id, file_id, kind, name, qualname,"
                 " line_start, line_end, exported) VALUES (?,?,?,?,?,?,?,?)",
@@ -5263,8 +5473,11 @@ def ingest(repo: Path, keep_previous: bool = False) -> dict:
                     " (SELECT id FROM files)")
         con.execute("DELETE FROM observed_lines WHERE file_id NOT IN"
                     " (SELECT id FROM files)")
+        memo.flush()
         con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES"
-                    " ('manifest', ?)", (manifest(repo),))
+                    " ('per_file_basis', ?)", (_per_file_basis(con, engine),))
+        con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES"
+                    " ('manifest', ?)", (fingerprint,))
         con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES"
                     " ('ingested_at', ?)", (now_utc(),))
     counts = {
@@ -5390,7 +5603,8 @@ def search(repo: Path, question: str, limit: int = 10,
             try:
                 rows = con.execute(
                     f"SELECT id, bm25({table}) FROM {table}"
-                    f" WHERE {table} MATCH ?{where} ORDER BY bm25({table})"
+                    f" WHERE {table} MATCH ?{where}"
+                    f" ORDER BY bm25({table}), id"
                     f" LIMIT ?", (q, limit * 3)).fetchall()
             except sqlite3.OperationalError:
                 continue
@@ -6652,7 +6866,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         cfg_file.write_text(json.dumps(DEFAULT_CONFIG, indent=2,
                                        sort_keys=True) + "\n",
                             encoding="utf-8")
-    counts = ingest(repo)      # connect() seeds .kg/'s gitignore and docs
+    with STORE.rebuild_lock(repo):
+        counts = ingest(repo)  # connect() seeds .kg/'s gitignore and docs
     print(f"initialized {kg}")
     print_readout(repo, counts)
     print("ingest:", json.dumps(counts, sort_keys=True))
@@ -6696,7 +6911,8 @@ def print_readout(repo: Path, counts: dict) -> None:
 
 def cmd_ingest(args: argparse.Namespace) -> int:
     repo = repo_dir(args.repo)
-    counts = ingest(repo, getattr(args, "keep_previous", False))
+    with STORE.rebuild_lock(repo):
+        counts = ingest(repo, getattr(args, "keep_previous", False))
 
     def render(c):
         if "checkpoint" in c:
@@ -6750,7 +6966,7 @@ def cmd_query(args: argparse.Namespace) -> int:
             " JOIN files f ON f.id = t.id WHERE files_fts MATCH ?"
             " AND (? OR f.origin = 'project') AND (? = 'all' OR f.git = ?)"
             + path_filter(con, args.path, "t.id")
-            + " ORDER BY bm25(files_fts) LIMIT ?",
+            + " ORDER BY bm25(files_fts), t.id LIMIT ?",
             (args.fts, args.deps, args.git, args.git, args.limit)).fetchall()
     except sqlite3.OperationalError as e:
         con.close()
@@ -6999,11 +7215,6 @@ def cmd_communities(args: argparse.Namespace) -> int:
     payload = communities_report(repo_dir(args.repo))
 
     def render(p):
-        # A negative limit is the common "no limit" idiom, so honor it as
-        # that. Passing it through would let Python read it as
-        # slice-from-the-end, quietly dropping the last member of every group
-        # while the count claimed MORE were hidden than actually were.
-        lim = None if args.limit < 0 else args.limit
         q = p["modularity"]
         verdict = ("real structure" if q >= 0.3 else
                    "weak - read these groups as a hint, not a map")
@@ -7013,18 +7224,11 @@ def cmd_communities(args: argparse.Namespace) -> int:
             print(f"\n{c['label']}  ({c['size']} files,"
                   f" {c['internal_edges']} internal /"
                   f" {c['external_edges']} external edges)")
-            for f in c["files"][:lim]:
-                print(f"  {f}")
-            if lim is not None and c["size"] > lim:
-                print(f"  TRUNCATED: {c['size'] - lim} more")
+            print_capped(c["files"], args.limit)
         if p["singletons"]:
-            unplaced = p["singletons"]
-            print(f"\nunplaced ({len(unplaced)}): no executable edge"
+            print(f"\nunplaced ({len(p['singletons'])}): no executable edge"
                   f" to cluster on")
-            for f in unplaced[:lim]:
-                print(f"  {f}")
-            if lim is not None and len(unplaced) > lim:
-                print(f"  TRUNCATED: {len(unplaced) - lim} more")
+            print_capped(p["singletons"], args.limit)
         return 0
     return emit(args, payload, render)
 
@@ -7065,21 +7269,16 @@ def cmd_components(args: argparse.Namespace) -> int:
                   + (f"  {p['description']}" if p["description"] else ""))
             if p["aliases"]:
                 print("aliases: " + ", ".join(p["aliases"]))
-            for f in p["files"][:lim]:
-                role = "" if f["role"] == "source" else f"  ({f['role']})"
-                print(f"  {f['file']}{role}")
-            if lim is not None and len(p["files"]) > lim:
-                print(f"  TRUNCATED: {len(p['files']) - lim} more")
+            print_capped(p["files"], args.limit, lambda f: f["file"] + (
+                "" if f["role"] == "source" else f"  ({f['role']})"))
             for title, key, arrow in (("depends on", "outbound", "->"),
                                       ("used by", "inbound", "<-")):
                 print(f"\n{title} ({len(p[key])} edges):")
-                for e in p[key][:lim]:
-                    near, far = ((e["src"], e["dst"]) if key == "outbound"
-                                 else (e["dst"], e["src"]))
-                    print(f"  {near}  {arrow}  {far}"
-                          f"  [{e['component']}, {e['kind']}]")
-                if lim is not None and len(p[key]) > lim:
-                    print(f"  TRUNCATED: {len(p[key]) - lim} more")
+                ends = (("src", "dst") if key == "outbound"
+                        else ("dst", "src"))
+                print_capped(p[key], args.limit, lambda e: (
+                    f"{e[ends[0]]}  {arrow}  {e[ends[1]]}"
+                    f"  [{e['component']}, {e['kind']}]"))
             return 0
         print("Declared components. Dependencies count executable edges that"
               " cross from one component into another.")
@@ -7097,10 +7296,7 @@ def cmd_components(args: argparse.Namespace) -> int:
                 print(f"  {o['file']}  [{', '.join(o['components'])}]")
         if p["unassigned"]:
             print(f"\nsource files in no component ({len(p['unassigned'])}):")
-            for f in p["unassigned"][:lim]:
-                print(f"  {f}")
-            if lim is not None and len(p["unassigned"]) > lim:
-                print(f"  TRUNCATED: {len(p['unassigned']) - lim} more")
+            print_capped(p["unassigned"], args.limit)
         return 0
     return emit(args, payload, render)
 
@@ -7190,13 +7386,15 @@ def cmd_dead(args: argparse.Namespace) -> int:
 
         def render_symbols(p):
             print(p["note"])
-            print(f"\nno resolved use ({len(p['no_resolved_use'])}):")
-            for s in p["no_resolved_use"]:
-                print(f"  {s}")
-            print(f"\nonly name-matched callers, receiver unknown"
-                  f" ({len(p['name_matched_only'])}):")
-            for s in p["name_matched_only"]:
-                print(f"  {s}")
+            for title, key in (
+                    ("no resolved use", "no_resolved_use"),
+                    ("only name-matched callers, receiver unknown",
+                     "name_matched_only"),
+                    ("on a stdlib or third-party subclass, which its base"
+                     " may call by name", "external_base")):
+                print(f"\n{title} ({len(p[key])}):")
+                for s in p[key]:
+                    print(f"  {s}")
             print(f"\n{p['flagged']} of {p['symbols_checked']} python"
                   f" symbols flagged")
             if p["status"] != "COMPLETE":
@@ -8136,10 +8334,17 @@ def cmd_touches(args: argparse.Namespace) -> int:
 def dead_symbols_report(repo: Path, limit: int = SYMBOLS_LIMIT) -> dict:
     """Python functions, classes and methods in project source files with
     no resolved use from another symbol. Dunder methods are reached by the
-    language itself and are left out."""
+    language itself and are left out. Methods of a class with a stdlib or
+    third-party base are listed apart: that base may call them by name, as
+    `ast.NodeVisitor` calls `visit_*`."""
     con = open_fresh(repo)
+    # Builtin bases (object, Exception, dict) call no method by name.
+    ext = {s for s, t in con.execute(
+        "SELECT src, target FROM symbol_edges WHERE kind='extends'"
+        " AND status='external'") if t not in BUILTIN_NAMES}
     syms = [r for r in con.execute(
-        "SELECT s.id, s.name FROM symbols s JOIN files f ON f.id = s.file_id"
+        "SELECT s.id, s.name, s.kind FROM symbols s"
+        " JOIN files f ON f.id = s.file_id"
         " WHERE f.language='python' AND f.origin='project'"
         " AND f.role='source' AND s.kind IN ('function','class','method')"
         " ORDER BY s.id")]
@@ -8156,20 +8361,25 @@ def dead_symbols_report(repo: Path, limit: int = SYMBOLS_LIMIT) -> dict:
         "SELECT symbol FROM observed_entries WHERE run_id = (SELECT max(id)"
         " FROM runs WHERE kind='trace-run')")}
     con.close()
-    none, only, observed = [], [], []
-    for sid, name in syms:
+    none, only, base, observed = [], [], [], []
+    for sid, name, kind in syms:
         if sid in used or (name.startswith("__") and name.endswith("__")):
             continue
         if sid in ran:
             observed.append(sid)
+        elif kind == "method" and sid.rsplit(".", 1)[0] in ext:
+            base.append(sid)
         else:
             (only if sid in matched else none).append(sid)
     total = len(none) + len(only)
     none, s1 = _cut(none, limit)
     only, s2 = _cut(only, limit)
-    status = "COMPLETE" if s1 == s2 == "COMPLETE" else \
-        f"TRUNCATED no_resolved_use {s1}, name_matched_only {s2}"
+    base, s3 = _cut(base, limit)
+    status = "COMPLETE" if s1 == s2 == s3 == "COMPLETE" else \
+        (f"TRUNCATED no_resolved_use {s1}, name_matched_only {s2},"
+         f" external_base {s3}")
     return {"no_resolved_use": none, "name_matched_only": only,
+            "external_base": base,
             "observed_live": observed, "symbols_checked": len(syms),
             "flagged": total, "status": status, "note": LIVENESS_NOTE}
 
@@ -8870,31 +9080,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int, default=SYMBOLS_LIMIT,
                    help=f"rows, default {SYMBOLS_LIMIT}; 0 for all")
 
-    args = ap.parse_args(argv)
-    out, err = sys.stdout, sys.stderr
-    # stderr is always read by a person: warnings, the consent text of
-    # `coverage run`, and every error message. stdout is too, unless json
-    # was asked for - that output is for a parser and json.dumps escapes
-    # control characters itself.
-    sys.stderr = SafeStream(err)
-    if not getattr(args, "json", False):
-        sys.stdout = SafeStream(out)
-    try:
-        rc = args.fn(args)
-        out.flush()
-        return rc
-    except SystemExit as e:
-        if isinstance(e.code, str):
-            # The interpreter prints this after the streams are restored.
-            raise SystemExit(term_safe(e.code)) from None
-        raise
-    except BrokenPipeError:
-        # The reader stopped early (`| head`). Point stdout at devnull so
-        # the interpreter's last flush cannot raise again, and exit quietly.
-        os.dup2(os.open(os.devnull, os.O_WRONLY), out.fileno())
-        return 1
-    finally:
-        sys.stdout, sys.stderr = out, err
+    return run_cli(ap.parse_args(argv))
 
 
 if __name__ == "__main__":

@@ -4,7 +4,9 @@ covers the functions themselves.
 
 Run: python3 -m unittest discover -s lib/tests
 """
+import contextlib
 import heapq
+import io
 import os
 import random
 import shutil
@@ -298,6 +300,56 @@ def star_graph(leaves: int):
         adj[leaf] = {hub: 1.0}
     deg = {n: sum(w.values()) for n, w in adj.items()}
     return adj, deg, sum(deg.values()) / 2.0
+
+
+class PrintHelperTests(unittest.TestCase):
+    def printed(self, *args) -> list[str]:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            kg_core.print_capped(*args)
+        return buf.getvalue().splitlines()
+
+    def test_a_cut_list_says_how_many_were_left_out(self):
+        self.assertEqual(self.printed(["a", "b", "c"], 2),
+                         ["  a", "  b", "  TRUNCATED: 1 more"])
+
+    def test_a_negative_limit_prints_everything(self):
+        # A negative slice would drop the tail while claiming a count.
+        self.assertEqual(self.printed(["a", "b", "c"], -1),
+                         ["  a", "  b", "  c"])
+
+    def test_the_format_applies_to_each_item(self):
+        self.assertEqual(self.printed([1, 2], 5, lambda n: f"#{n}"),
+                         ["  #1", "  #2"])
+
+    def test_the_fingerprint_survives_a_new_process(self):
+        # A constant holding functions must not key the cache by address,
+        # or every run starts cold.
+        def ns():
+            return {"TABLE": {"py": lambda: 0}, "CAP": 5, "lower": 1}
+        one = kg_core.engine_fingerprint(__file__, ns())
+        self.assertEqual(one, kg_core.engine_fingerprint(__file__, ns()))
+        self.assertNotEqual(one, kg_core.engine_fingerprint(
+            __file__, {**ns(), "CAP": 6}))
+
+    def test_a_seal_holds_on_one_machine_only(self):
+        old, saved = os.environ.get("XDG_STATE_HOME"), kg_core.ParseCache._source
+        self.addCleanup(setattr, kg_core.ParseCache, "_source", saved)
+        self.addCleanup(lambda: os.environ.pop("XDG_STATE_HOME", None)
+                        if old is None
+                        else os.environ.__setitem__("XDG_STATE_HOME", old))
+        with tempfile.TemporaryDirectory() as tmp:
+            seals = []
+            for station in ("a", "a", "b"):
+                os.environ["XDG_STATE_HOME"] = os.path.join(tmp, station)
+                kg_core.ParseCache._source = None
+                seals.append(kg_core.seal("basis"))
+        self.assertEqual(seals[0], seals[1])
+        self.assertNotEqual(seals[0], seals[2])
+
+    def test_line_starts_index_each_line(self):
+        self.assertEqual(kg_core.line_starts("ab\ncd\n"), [0, 3, 6])
+        self.assertEqual(kg_core.line_starts(""), [0])
 
 
 class ClusteringTests(unittest.TestCase):

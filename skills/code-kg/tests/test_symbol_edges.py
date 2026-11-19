@@ -554,6 +554,44 @@ class TestSymbolLiveness(FixtureCase):
     def test_dead_without_the_flag_is_as_before(self):
         self.assertNotIn("no_resolved_use", self.json("dead"))
 
+    def test_module_instances_and_external_bases(self):
+        hub = "src/tidelog/hub.py"
+        (self.repo / hub).write_text(
+            "import ast\nfrom tidelog.station import Station\n\n"
+            "HOME = Station('home')\n\n\ndef today():\n"
+            "    return HOME.summary()\n\n\n"
+            "class Walker(ast.NodeVisitor):\n"
+            "    def visit_Name(self, node):\n        return node\n",
+            encoding="utf-8")
+        got = self.json("callers", f"{S}::Station.summary")
+        self.assertIn((f"{hub}::today", f"{S}::Station.summary", "call", 8),
+                      self.resolved(got["edges"]))
+        dead = self.json("dead", "--symbols")
+        self.assertEqual(dead["external_base"], [f"{hub}::Walker.visit_Name"])
+        self.assertNotIn(f"{hub}::Walker.visit_Name",
+                         dead["no_resolved_use"])
+
+    def test_a_builtin_base_hides_no_dead_method(self):
+        odd = "src/tidelog/odd.py"
+        (self.repo / odd).write_text(
+            "class Odd(Exception):\n    def unused(self):\n        return 1\n",
+            encoding="utf-8")
+        dead = self.json("dead", "--symbols")
+        self.assertIn(f"{odd}::Odd.unused", dead["no_resolved_use"])
+        self.assertEqual(dead["external_base"], [])
+
+    def test_a_self_referencing_base_loses_nothing_else(self):
+        # Each shape once recursed until Python's limit, and the file lost
+        # every edge; now only the circular name stays unresolved.
+        loop = "src/tidelog/loop.py"
+        (self.repo / loop).write_text(
+            "from tidelog.station import Station\n\nX = C()\n\n\n"
+            "class C(X.m):\n    pass\n\n\nclass A(A.x):\n    pass\n\n\n"
+            "def fine():\n    return Station('x')\n", encoding="utf-8")
+        got = self.json("callees", f"{loop}::fine")
+        self.assertIn((f"{loop}::fine", f"{S}::Station", "call", 15),
+                      self.resolved(got["edges"]))
+
 
 class TestAgainstAnIndependentWalk(unittest.TestCase):
     """On a real tree, every function a separate name-based walk finds
