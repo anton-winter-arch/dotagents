@@ -185,6 +185,44 @@ class TestInto(Base):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertTrue((dest / "index.md").exists())
 
+    def test_into_seeds_each_offered_location(self) -> None:
+        for rel in ("kb", "knowledge", "knowledge-base", "docs/kb", "docs"):
+            with self.subTest(rel=rel), tempfile.TemporaryDirectory() as d:
+                repo = Path(d)
+                (repo / ".git").mkdir()
+                result = run("--into", str(repo / rel))
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertIn(f"Project knowledge vault: `{rel}/`", result.stdout)
+                self.assertIn(f"deliverables are in `{rel}-DELIVERABLES/`", result.stdout)
+
+    def test_into_refuses_a_folder_with_subfolders_that_is_not_a_vault(self) -> None:
+        dest = self.tmp / "docs"
+        (dest / "images").mkdir(parents=True)
+        (dest / "guide.md").write_text("# Guide\n")
+        result = run("--into", str(dest))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("docs/kb/", result.stdout)
+        self.assertEqual(sorted(p.name for p in dest.iterdir()), ["guide.md", "images"])
+        self.assertFalse((self.tmp / "docs-DELIVERABLES").exists())
+        here = subprocess.run([sys.executable, str(SCAFFOLD), "--into", ".", "--no-graph"],
+                              capture_output=True, text=True, cwd=dest)
+        self.assertEqual(here.returncode, 1)
+        self.assertIn("such as kb/", here.stdout)
+        (dest / "index.md").symlink_to(dest / "guide.md")  # a link is not a vault marker
+        self.assertEqual(run("--into", str(dest)).returncode, 1)
+
+    def test_into_still_fills_a_flat_folder_or_an_existing_vault(self) -> None:
+        flat = self.tmp / "notes"
+        flat.mkdir()
+        (flat / "meeting.md").write_text("# Meeting\n")
+        self.assertEqual(run("--into", str(flat)).returncode, 0)
+        vault = self.tmp / "vault"
+        (vault / "attachments").mkdir(parents=True)
+        (vault / "log.md").write_text("# Log\n")
+        result = run("--into", str(vault))
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue((vault / "index.md").exists())
+
     def test_into_dry_run_writes_nothing(self) -> None:
         dest = self.tmp / "docs"
         result = run("--into", str(dest), "--dry-run")

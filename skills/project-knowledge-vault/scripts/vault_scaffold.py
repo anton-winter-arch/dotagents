@@ -5,8 +5,9 @@
     vault_scaffold.py --into <folder> [--dry-run] [--no-graph]
 
 Copies every file in templates/knowledge-vault/, plus templates/templates/brd.md as 00-brd.md,
-to <target>/PROJECTS/<NAME>/, the one home for a new vault, or with --into to <folder> itself (a vault that already lives elsewhere; a folder that
-already has its own AGENTS.md or CLAUDE.md is refused, since the vault's copies are its contract). A file that
+to <target>/PROJECTS/<NAME>/, or with --into to <folder> itself, such as a repo's kb/ or docs/kb/ (a folder that
+already has its own AGENTS.md or CLAUDE.md is refused, since the vault's copies are its contract, and so is a
+folder that is not a vault yet and holds subfolders, since a vault is flat). A file that
 already exists is skipped and reported, so a run against a partly built vault fills the
 gaps and touches nothing else. Placeholders stay as placeholders: no date is resolved,
 so two runs on different days produce byte-identical notes.
@@ -115,7 +116,19 @@ def seed_into(dest: Path, dry_run: bool = False) -> tuple[list[str], list[str], 
             continue
         if path.is_symlink() or not path.is_file() or not is_contract(path):
             return [], [], [f"{rules}: {dest} already has its own {rules}, not the vault contract; "
-                             "seed into a folder of its own, such as docs/vault/"]
+                             "seed into a folder of its own, such as docs/kb/"]
+    # A vault is one flat folder. A folder that is not a vault yet and already holds subfolders,
+    # such as a code repo's docs/, would fail the linter's flat check from the first run.
+    marked = any((dest / n).is_file() and not (dest / n).is_symlink() for n in ("AGENTS.md", "index.md", "log.md"))
+    if dest.is_dir() and not marked:
+        try:
+            sub = next((p.name for p in sorted(dest.iterdir()) if p.is_dir() and not p.name.startswith(".")
+                        and p.name not in LEGACY_KG_DIRS), None)
+        except OSError as exc:
+            return [], [], [f"{dest}: cannot be listed: {exc}"]
+        if sub:
+            return [], [], [f"{dest} already holds {sub}/ and is not a vault; a vault is one flat folder, "
+                            f"so seed into a folder of its own, such as {dest / 'kb'}/"]
     return seed(dest, (dest,), dry_run)
 
 
