@@ -23,9 +23,10 @@ What one run does, in order, for each item:
      one line to `download-log.jsonl` there: time, address, final host, status, bytes,
      SHA-256, file type and verdict.
 
-Then the batch folder is scanned once, with `local-security scan path` where that command
-is installed and accepts the folder, else with the scan skill's script. Nothing downloaded
-is executed. The summary is counts plus every refusal, skip and failed scan.
+Then the batch folder is scanned once with the scan skill's script, the download gate. It
+refreshes ClamAV's signatures when they are over a day old and adds Apple's checks;
+local-security's own scans run on its schedule and at session end, which covers only
+batches run inside a Claude Code session. Nothing downloaded is executed. The summary is counts plus every refusal, skip and failed scan.
 
 Exit 0: every item fetched and the scan clean. 1: the scan was not clean. 2: bad
 arguments. 3: something was skipped, refused or not scanned.
@@ -61,7 +62,7 @@ CHUNK = 1 << 16
 # line, a truncated body) pass through urllib unwrapped.
 NETWORK_ERRORS = (urllib.error.URLError, http.client.HTTPException, OSError, ValueError)
 SCAN_SKILL = ("skills/scan/scripts/scan.py",)
-# Both scanners wait up to 1,800 s for the machine's one scan lock before they scan, so a
+# The scan skill waits up to 1,800 s for the machine's one scan lock before it scans, so a
 # shorter limit here would kill a scan that is only waiting its turn.
 SCAN_TIMEOUT = 2700
 
@@ -272,38 +273,37 @@ class Run:
                  type=file_type(path), file=name, verdict="fetched", why=item.get("why", ""))
 
 
+def scan_warnings(report: str) -> str:
+    """'; warning: ...' for the ClamAV lane's warnings in the scan skill's JSON report, such
+    as a failed signature update, so a clean verdict on old signatures says so; '' when none."""
+    try:
+        warnings = json.loads(report).get("clamav", {}).get("warnings") or []
+    except (ValueError, AttributeError):
+        return ""
+    text = [w for w in warnings if isinstance(w, str)]
+    return "; warning: " + "; ".join(text) if text else ""
+
+
 def scan(folder: str) -> tuple[str, str]:
-    """Scan the batch folder once. Returns (verdict, scanner): 'clean', 'not clean' or 'not scanned'."""
-    program = shutil.which("local-security")
-    if program:
-        try:
-            code = subprocess.run([program, "scan", "path", folder], capture_output=True,
-                                  timeout=SCAN_TIMEOUT).returncode
-        except (OSError, subprocess.SubprocessError):
-            code = 4
-        if code in (0, 1):
-            return ("clean" if code == 0 else "not clean"), "local-security"
-        # Only exit 2 (not configured, or the folder is outside its roots) falls back. A
-        # timeout behind another scan (5) or a tool failure (4) does not: the fallback would
-        # start a second scanner beside the one already running.
-        if code != 2:
-            reason = "waited too long behind another scan" if code == 5 else "the scanner failed (exit %d)" % code
-            return "not scanned", "local-security: %s; run `local-security scan path` on the folder later" % reason
+    """Scan the batch folder once with the scan skill's script, the download gate: ClamAV,
+    after refreshing signatures over a day old, and Apple's checks on apps, installers and
+    programs. Returns (verdict, scanner): 'clean', 'not clean' or 'not scanned'."""
     here = Path(__file__).resolve().parent
     for root in (here.parent, Path.home() / ".agents", Path.home() / ".claude"):
         script = root / SCAN_SKILL[0]
         if script.is_file():
             try:
-                code = subprocess.run([sys.executable, str(script), folder, "--json"],
-                                      capture_output=True, timeout=SCAN_TIMEOUT).returncode
+                proc = subprocess.run([sys.executable, str(script), folder, "--json"],
+                                      capture_output=True, text=True, timeout=SCAN_TIMEOUT)
             except (OSError, subprocess.SubprocessError):
                 return "not scanned", "scan skill failed to run"
+            code = proc.returncode
             if code == 0:
-                return "clean", "scan skill"
+                return "clean", "scan skill" + scan_warnings(proc.stdout)
             if code in (1, 3):
                 return "not clean", "scan skill"
-            return "not scanned", "scan skill is incomplete (exit %d); run it by hand" % code
-    return "not scanned", "no scanner found"
+            return "not scanned", "the scan skill could not finish (exit %d); run /scan on the folder" % code
+    return "not scanned", "the scan skill was not found"
 
 
 def main(argv: list[str] | None = None) -> int:

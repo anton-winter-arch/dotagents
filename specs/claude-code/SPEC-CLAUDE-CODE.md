@@ -1391,7 +1391,7 @@ There is no option to change the User-Agent or to name a proxy; a contact addres
 A 401, 403, 429 or 503 blocks the host and its remaining items are not sent; a redirect to another site, or down from https, is not followed.
 One item may take ten minutes and 200 MB by default; an item that fails, for any reason, never costs the batch its scan.
 Files land in a batch folder that must be under a temp root, and each item gets one line in `download-log.jsonl` there: time, address, final host, status, bytes, SHA-256, file type and verdict.
-The batch is then scanned once, with `local-security scan path` where that command is installed and accepts the folder, else with the `scan` skill's script.
+The batch is then scanned once with the `scan` skill's script, the download gate: ClamAV after refreshing signatures over a day old, plus Apple's checks on apps, installers and programs.
 The fallback runs only when that command is missing or exits 2; a timeout behind another scan or a tool failure is reported as not scanned, so a second scanner never starts beside one already running.
 The summary is counts plus every refusal, skip and failed scan; exit 0 means every item fetched and the scan clean.
 `download_guard.py` asks the user when a run names `--allow-host`.

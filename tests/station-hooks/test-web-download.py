@@ -7,8 +7,9 @@ Run: python3 tests/station-hooks/test-web-download.py   (or via unittest discove
 Contract: one request per item, spaced per host; a 403 stops every later item for that
 host without sending it; a robots-disallowed path is never requested; a redirect to
 another site is not followed; files land only under a temp root; every item has a log
-line; the batch is scanned once. Every request goes to a server this test starts on
-loopback; the scanner is a stand-in script on PATH.
+line; the batch is scanned once, by the scan skill's script, and never by a second
+scanner. Every request goes to a server this test starts on loopback; the downloader runs
+from a copy beside a stand-in scan skill.
 """
 
 from __future__ import annotations
@@ -100,18 +101,38 @@ class WebDownload(unittest.TestCase):
         self.env = dict(os.environ, TMPDIR=self.tmp.name, WEB_GUARD_DELAY="0", WEB_GUARD_CAP="20",
                         CLAUDE_CODE_SESSION_ID="dl-1", PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""))
         self.env.pop("WEB_DOWNLOAD_CONTACT", None)
+        # The downloader looks for the scan skill beside its own folder first, so a copy of
+        # it under the temp folder finds the stand-in below and never the real scanner.
+        station = Path(self.tmp.name) / "station"
+        (station / "hooks").mkdir(parents=True)
+        for name in (TARGET.name, "_web_guard.py"):
+            (station / "hooks" / name).write_bytes(TARGET.with_name(name).read_bytes())
+        self.target = station / "hooks" / TARGET.name
+        self.fake_scan = station / "skills" / "scan" / "scripts" / "scan.py"
+        self.fake_scan.parent.mkdir(parents=True)
         self.scanner(0)
-
-    def scanner(self, code: int) -> None:
+        # A local-security on PATH that records any call: the downloader must not use it.
+        self.other_scanner = Path(self.tmp.name) / "local-security-args.txt"
         fake = self.bin / "local-security"
-        fake.write_text("#!/bin/sh\nprintf '%%s\\n' \"$@\" >> \"%s\"\nexit %d\n" % (self.scan_args, code))
+        fake.write_text("#!/bin/sh\nprintf '%%s\\n' \"$@\" >> \"%s\"\nexit 0\n" % self.other_scanner)
         fake.chmod(0o755)
+
+    def scanner(self, code: int, warnings=()) -> None:
+        report = json.dumps({"clamav": {"warnings": list(warnings)}})
+        self.fake_scan.write_text("import sys\nopen(%r, 'a').write('\\n'.join(sys.argv[1:]) + '\\n')\n"
+                                  "print(%r)\nsys.exit(%d)\n" % (str(self.scan_args), report, code))
+
+    def test_a_clean_scan_on_old_signatures_says_so(self):
+        self.scanner(0, ["signature update failed: no route", "signatures are 3.0 days old"])
+        code, out, _ = self.run_tool([self.base + "/ok/w"], CLAUDE_CODE_SESSION_ID="dl-6")
+        self.assertEqual(code, 0)
+        self.assertIn("scan: clean (scan skill; warning: signature update failed: no route; signatures are 3.0 days old)", out)
 
     def run_tool(self, items, *args, **env):
         manifest = Path(self.tmp.name) / "manifest.jsonl"
         manifest.write_text("# a comment line\n" + "\n".join(
             json.dumps(i if isinstance(i, dict) else {"url": i}) for i in items) + "\n")
-        p = subprocess.run([sys.executable, str(TARGET), str(manifest), "--out", self.out, *args],
+        p = subprocess.run([sys.executable, str(self.target), str(manifest), "--out", self.out, *args],
                            text=True, capture_output=True, env=dict(self.env, **env))
         return p.returncode, p.stdout, p.stderr
 
@@ -135,8 +156,9 @@ class WebDownload(unittest.TestCase):
         self.assertEqual(len(rows[0]["sha256"]), 64)
         self.assertEqual((rows[0]["why"], rows[0]["status"], rows[0]["bytes"]), ("test", 200, 17))
         self.assertIn("3 fetched, 0 skipped", out)
-        self.assertIn("scan: clean (local-security)", out)
-        self.assertEqual(self.scan_args.read_text().split("\n")[:3], ["scan", "path", self.out], "one scan, of the folder")
+        self.assertIn("scan: clean (scan skill)", out)
+        self.assertEqual(self.scan_args.read_text().split("\n")[:2], [self.out, "--json"], "one scan, of the folder")
+        self.assertFalse(self.other_scanner.exists(), "local-security is not the download gate")
         self.assertTrue(all(ua.startswith("web-download/") for _, _, ua in Handler.seen))
 
     def test_a_403_on_the_first_of_nine_stops_the_other_eight(self):
@@ -191,7 +213,7 @@ class WebDownload(unittest.TestCase):
         target = REPO / "tests" / "never-created"
         manifest = Path(self.tmp.name) / "m.jsonl"
         manifest.write_text(json.dumps({"url": self.base + "/ok/1"}) + "\n")
-        p = subprocess.run([sys.executable, str(TARGET), str(manifest), "--out", str(target)],
+        p = subprocess.run([sys.executable, str(self.target), str(manifest), "--out", str(target)],
                            text=True, capture_output=True, env=self.env)
         self.assertEqual(p.returncode, 2)
         self.assertFalse(target.exists())
@@ -203,11 +225,11 @@ class WebDownload(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("scan: not clean", out)
         self.assertIn("do not open", out)
-        for exit_code, words in ((5, "waited too long behind another scan"), (4, "the scanner failed (exit 4)")):
-            self.scanner(exit_code)
-            code, out, _ = self.run_tool([self.base + "/ok/1"])
-            self.assertEqual(code, 3)
-            self.assertIn("scan: not scanned (local-security: " + words, out, "no second scanner is started")
+        self.scanner(4)
+        code, out, _ = self.run_tool([self.base + "/ok/1"])
+        self.assertEqual(code, 3)
+        self.assertIn("scan: not scanned (the scan skill could not finish (exit 4)", out)
+        self.assertFalse(self.other_scanner.exists(), "no second scanner is started")
         self.scanner(0)
         code, out, _ = self.run_tool([self.base + "/ok/big"], "--max-mb", "0", CLAUDE_CODE_SESSION_ID="dl-4")
         self.assertIn("larger than the size limit", out)
