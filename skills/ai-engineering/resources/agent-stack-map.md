@@ -195,6 +195,16 @@ Zed started ACP in August 2025 and co-governs it with JetBrains, and one lead ma
 The [registry](https://github.com/agentclientprotocol/registry) lists 42 agents, and the clients page lists Zed and JetBrains natively plus Neovim, Emacs, VS Code and dozens more through plugins.
 IBM's Agent Communication Protocol shares the acronym and is unrelated: it was a REST protocol, and LF AI & Data announced on 2025-08-29 that it is winding down into A2A.
 
+**Update 2026-11-21.**
+v1 is still the stable wire version; the schema ships as v1.34.1 and the Rust crate as v1.21.2, both released 2026-11-21 ([releases](https://github.com/agentclientprotocol/agent-client-protocol/releases)).
+v1.34.0 stabilized subagent sessions and plan operations, and the Rust crate added an `idempotencyKey` on `session/prompt` in v1.19.0.
+v2 moved to Preview and shipped `v2.0.0-beta.1` to `beta.3` on 2026-11-20 and 21; it is not frozen.
+The v2 preview puts queueing in the protocol: a `session/prompt` sent during active work must not be rejected, and the agent inserts it or holds it in order, with only cancel and close dropping a held prompt.
+Version negotiation picks the highest version at or below the one requested, else error `-32022`, and the migration guide expects v1-only peers to stay common and recommends supporting both.
+Streamable HTTP and WebSocket remain a separate RFD outside core v2, so stdio is still the only standard wire.
+The agents page lists Claude and Codex through adapters, and goose, Gemini CLI, OpenCode, Copilot CLI (preview), Cursor CLI and Junie directly.
+No formal deprecation policy is published, and a move to a foundation was not confirmed.
+
 **Stance.**
 Use ACP as the driver for non-Claude harnesses in any multi-agent client, because it removes per-CLI parsing, every agent probed supports resume, and several agents speak it natively.
 Keep enforcement in agent configuration or an OS sandbox rather than the client, treat steering as an optional capability with cancel-and-re-prompt behind it, and write against v1 with the v2 draft in view.
@@ -251,6 +261,22 @@ Versions and dates come from each project's own site or release page on 2026-11-
 Three other protocols share the ACP acronym and are unrelated to Zed's: IBM's Agent Communication Protocol (merged into A2A, announced 2025-08-29), AGNTCY's Agent Connect Protocol, and OpenAI and Stripe's Agentic Commerce Protocol.
 The [AAIF project list](https://aaif.io/projects) names ten projects as of 2026-10-22, including MCP, A2A, AGENTS.md, goose and Agent Skills (secondary summary; the page itself was not fetched).
 
+**Update 2026-11-21: cadence and deprecation.**
+MCP's next revision is targeted for 2027-03-30 on a six-month cadence (SEP-3398, search summary).
+Its feature lifecycle ([SEP-2596](https://modelcontextprotocol.io/seps/2596-spec-feature-lifecycle-and-deprecation), Final) keeps a feature Deprecated for at least 12 months before removal, or 90 days for a security risk, and Tier 1 SDKs must mark deprecated APIs.
+The 2026-07-28 revision deprecated HTTP+SSE, Roots, Sampling and Logging; the AAIF migration post puts their earliest removal on or after 2027-07-28.
+How long an SDK must keep supporting an old revision is still an open question in the SEP.
+A2A's latest release is still v1.0.1; its roadmap (updated 2026-09-15) lists v1.1 with no date, plus bidirectional streaming, structured elicitation and an A2A CLI for coding harnesses.
+Agent Card signing is optional.
+"Loopjacking" ([arXiv 2609.21081](https://arxiv.org/html/2609.21081v1)) swapped a pending human approval through A2A message commands in one server implementation, and its authors call it a specification-clarity lesson rather than a protocol flaw.
+A source saying "ACP merged into A2A" means IBM's Agent Communication Protocol, not the Agent Client Protocol in B.1.
+
+**Agent definition formats are not converging.**
+Oracle's [Agent Spec](https://github.com/oracle/agent-spec) (Apache-2.0, calendar-versioned, 26.3.1 released 2026-09-11) describes an agent once and runs it through adapters for LangGraph, AutoGen, WayFlow, Microsoft Agent Framework and the OpenAI Agents SDK; its CrewAI adapter was removed in 26.3.1 over a CVE.
+AGNTCY's [OASF](https://github.com/agntcy/oasf) (Apache-2.0, v1.1.0 released 2026-07-10) is a schema for agent directory records.
+Letta's `.af` agent file is tied to the Letta server.
+None of them is read by a coding harness, so for coding agents the portable units remain `SKILL.md`, `AGENTS.md` and MCP server configs.
+
 **What A2A adds over ACP.** ACP drives an agent as a subprocess the client owns: one client, one session, local stdio.
 A2A treats the other agent as a peer service with its own identity: it is discovered from a published card, receives a task with a lifecycle and a context id, and streams or pushes updates back.
 A hosted coordination layer can bridge the two: BAND (Section B table) maps a room to an A2A context and task id, and an ACP session to a room, so one conversation is reachable from either protocol.
@@ -261,6 +287,63 @@ Adopt A2A once an agent must be reachable by agents you do not launch: another m
 That boundary needs authentication the local case does not.
 An A2A endpoint exposed without authentication accepts work from anyone who can reach it, and BAND's own gateway defaults to all interfaces with no auth.
 MCP stays the tool layer under both.
+
+### B.4 - Coordinating several coding-agent sessions across repos (researched 2026-11-21)
+
+The job: one lead agent assigns stories to several coding-agent sessions, each in its own repo, checks the delivered work against acceptance criteria, and escalates to a human.
+Claude Code facts come from its docs read 2026-11-21 and were confirmed present in the 2.1.310 binary.
+Everything else rests mostly on search summaries (validator rating: flagged); repo facts are in `link-ledger.md`.
+
+**Claude Code ships two mechanisms, and they solve different shapes.**
+
+| | Agent teams | Cross-session messaging |
+|---|---|---|
+| Status | Experimental, off by default, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` | On by default since 2.1.224 |
+| Who are the members | Teammates the lead spawns; one team per session | Any live local session, in any directory, including `claude -p` workers |
+| Can a session the user already opened join | No, by the docs' description (not stated outright) | Yes |
+| State | JSON mailbox per agent under `~/.claude/teams/<team>/`, shared task list under `~/.claude/tasks/<team>/` with file locks | None; messages only, over a per-session Unix socket |
+| Gates | `TeammateIdle`, `TaskCreated` and `TaskCompleted` hooks block on exit code 2 | `crossSessionInbound` per receiver: `accept`, `hold` (approval dialog, `dialogExpiry`) or `refuse`; deny rules on `SendMessage` and `ListAgents` |
+
+A received message cannot approve a permission prompt, change config or run a slash command, and the receiver's own permission mode still applies.
+So agent teams fit a lead with workers it owns in one project, and cross-session messaging fits peers a person already runs in separate repos.
+Neither keeps a story's state across repos; that record has to live somewhere durable the lead and the seats both read.
+
+**Vendor frameworks orchestrate agents they host, not coding CLIs.**
+Microsoft Agent Framework 1.0 (GA 2026-04) ships sequential, concurrent, handoff, group-chat and Magentic orchestrations; Magentic keeps a plan the human can review ([docs](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/magentic)).
+Google ADK Python 2.x does human-in-the-loop over A2A through a long-running tool, and [issue #6461](https://github.com/google/adk-python/issues/6461) reports that an A2A peer can forge an approval (fix status not verified).
+Strands offers swarm, graph and agents-as-tools with interrupts ([patterns](https://strandsagents.com/docs/user-guide/sdk/multi-agent/multi-agent-patterns/)); the OpenAI Agents SDK has per-tool approval and a serializable run state ([docs](https://openai.github.io/openai-agents-python/human_in_the_loop/)); Agent Squad is a router with no planning and moved to 2FastLabs.
+None ships a worker that drives Claude Code or another coding CLI; using one means wrapping the CLI or Agent SDK as a tool or an A2A agent.
+The `microsoft/agent-framework` repo returned 404 from the GitHub API on 2026-11-21; find its current home before citing it.
+
+**Agent-built PM tools are single-repo.**
+[Backlog.md](https://github.com/MrLesk/Backlog.md) keeps tasks as markdown with YAML, per-task acceptance criteria and a configured definition of done, served over MCP.
+[CCPM](https://github.com/automazeio/ccpm) keeps epics as markdown and syncs them to GitHub sub-issues.
+[Task Master](https://github.com/eyaltoledano/claude-task-master) keeps `tasks.json` with a `testStrategy` field; its license is reported as MIT with the Commons Clause, which forbids selling it.
+[Spec Kit](https://github.com/github/spec-kit) generates `tasks.md`, with an opt-in GitHub-issues extension.
+Fleet managers ([Claude Squad](https://github.com/smtg-ai/claude-squad), AGPL-3.0; [Agent Deck](https://github.com/asheshgoplani/agent-deck); [Agent of Empires](https://github.com/agent-of-empires/agent-of-empires)) launch each agent in tmux with a worktree and carry no task schema.
+None coordinates agents across separate repos, and completion is verified by hand or not at all.
+
+**Workflow engines are the deterministic shell, not the coordinator.**
+goose recipes are YAML with parameters, `sub_recipes`, a JSON-schema `response`, and `retry` with shell `checks`; `goose schedule` runs one on cron ([reference](https://goose-docs.ai/docs/guides/recipes/recipe-reference/)).
+The goose 1.54.0 binary carries a `claude-code` provider, so a recipe can run with Claude Code as its model backend (seen in the binary, not exercised).
+n8n is fair-code under the Sustainable Use License, not OSI open source; since 2.0 its Execute Command node is off by default ([breaking changes](https://docs.n8n.io/2-0-breaking-changes/)), and its Wait node holds a run for human approval.
+Temporal (MIT) gives durable execution and runs locally with `temporal server start-dev`; it earns its weight when runs must survive crashes for hours, not for a workstation loop.
+
+**Tracker sync: markdown stays the source, the push is one-way and keyed.**
+Azure DevOps creates work items with `application/json-patch+json` (API 7.1), links a parent through a `System.LinkTypes.Hierarchy-Reverse` relation, and treats `Microsoft.VSTS.Common.AcceptanceCriteria` as HTML; a markdown format for it is reported only in GitHub issues ([REST](https://learn.microsoft.com/en-us/rest/api/azure/devops/wit/work-items/create?view=azure-devops-rest-7.1)).
+Its remote MCP server went GA 2026-08-05 but does not yet accept Claude Code's sign-in, so the local [azure-devops-mcp](https://github.com/microsoft/azure-devops-mcp) server is the path.
+Jira Cloud REST v3 requires Atlassian Document Format for the description and textarea custom fields ([REST](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/)); the Rovo MCP server is GA and its `/v1/sse` endpoint ended after 2026-06-30.
+The sync tools found store the tracker key in each item's frontmatter, which is what makes a re-push an update rather than a duplicate.
+
+**Completion evidence.**
+An agent's report that it finished is not evidence ([arXiv 2602.00180](https://arxiv.org/html/2602.00180)).
+The practices found tie each acceptance criterion to a check that runs or an artifact that can be inspected, and treat executable scenarios passing as done.
+
+**Stance.**
+For coding-agent sessions a person runs on one workstation, use the harness's own cross-session messaging and keep the story record in markdown in each repo, with a lead that reads them.
+No framework is needed until agents run as services other people's agents call (B.3).
+Use a workflow engine for the deterministic edges: scheduled sweeps, tracker pushes and notifications.
+Gate the receiving side with the harness's inbound setting rather than with instructions.
 
 ---
 
@@ -302,7 +385,7 @@ The durable knowledge/context layer agents operate on.
 | Haystack | Apache-2.0 | Retrieval + pipelines | Production RAG, routing, tool pipelines. | More engineering than turnkey. | [repo](https://github.com/deepset-ai/haystack) |
 | LightRAG | verify | GraphRAG engine | Dual-level retrieval + KG; server/UI; local. | License verify before procurement. | [repo](https://github.com/HKUDS/LightRAG) |
 | RAGFlow | Apache-2.0 | Full context platform | Deep doc understanding, citations, agent templates. | Platform, not a tiny SDK. | [repo](https://github.com/infiniflow/ragflow) |
-| txtai | verify | Semantic search + workflows | Embeddings DB, graph, relational storage, LLM workflows. | More context engine than full agent stack. | [repo](https://github.com/neuml/txtai) |
+| txtai | Apache-2.0 | Semantic search + workflows | One embeddings database holding sparse and dense vectors, a graph and SQL, with pipelines, workflows, smolagents-based agents, and Web and MCP APIs; v9.14.0 is the latest release (checked 2026-11-21). | More context engine than full agent stack. | [repo](https://github.com/neuml/txtai) |
 | Graphiti | Apache-2.0 | Temporal KB / graph memory | Evolving entity/fact graph. | Needs surrounding stack. | [repo](https://github.com/getzep/graphiti) |
 | FalkorDB | **SSPL** | Graph DB substrate | Graph DB for KG / GraphRAG. | SSPL not OSI-approved. | [repo](https://github.com/falkordb/falkordb) |
 | WrenAI | multi (see cautions) | **Semantic layer** over warehouses | Governed text-to-SQL for agents: an MDL semantic model (entities, relationships, metrics, access policy) sits between question and 20+ warehouses, so generation is schema-aware and traceable to approved definitions. | **Licensed by path** - `core/`/`sdk/`/`skills/`/`examples/` Apache-2.0, `docs/` CC-BY-4.0, and the LICENSE pre-stages **AGPL-3.0** for future modules (verified 2026-07-27). Re-check before depending on a new subtree. | [repo](https://github.com/Canner/WrenAI) |
@@ -349,6 +432,14 @@ The durable knowledge/context layer agents operate on.
 | cloudflare/security-audit-skill | MIT | Security audit skill | A six-phase audit workflow for coding agents: reconnaissance, coverage-led hunting by isolated sub-agents, disproof by a fresh verifier, schema-validated `findings.json`, independent record verification, then reports derived from the records. Guidance-only by default; the full workflow runs on an explicit audit request. Transferable patterns: a **coverage ledger** of deterministic units (surface x boundary x subsystem x attack class) that is the only accepted coverage claim; three verdicts, where `needs_validation` names one unresolved fact and has no severity; a budget counted in agent invocations, with critic and verifier reserves set aside before any hunter runs; prior runs that feed the next run and never suppress its coverage; two zero-dependency Node validators that bound their own input. Target code runs only in an OS-enforced sandbox with no network; without one the lead stays `needs_validation`. Read in source 2026-11-10. | [repo](https://github.com/cloudflare/security-audit-skill) |
 | google/elephant-goldfish-model | Apache-2.0 | Design-review plugin | Spec-driven design plugin (7 skills, 9 reviewer personas) for Claude Code, Codex, Cursor, Copilot, Antigravity and OpenCode, built on Dave Rensin's essay. The **Elephant** is the long-context session that drafts the design document with the engineer; **Goldfish** are fresh subagents that see only the document and the source files it references. Review runs five stages: a zoom-out for YAGNI and reuse, a naive-reader comprehension test, a design critic, a second zoom-out that prunes what the earlier fixes added, and an implementation-readiness check of named paths and signatures against live code. The author session answers each finding with `PROPOSE FIX`, `CONTEST`, `ESCALATE` or `DECLINE`, and a review stops if the host cannot create isolated subagents. A drift report compares checked-in designs with current code. Not an officially supported Google product. Read in source 2026-11-10. | [repo](https://github.com/google/elephant-goldfish-model) |
 | awslabs/aidlc-workflows | MIT-0 | Lifecycle workflow engine | AWS's AI-Driven Development Life Cycle as one harness-neutral core packaged for Claude Code, Kiro, Codex CLI, Cursor, opencode and GitHub Copilot (stable 2.11.3, daily previews; checked 2026-11-10). A deterministic TypeScript engine owns routing and the record: it decides the next stage, and the orchestrating agent (the "conductor") asks it for the next step and reports back, never choosing the route. Hooks enforce plan approval and state transitions, write an audit log and run "sensors" (the team's own linters and checks), which are advisory unless bound to a gate. State, audit trail, rules and team knowledge live in the project's `aidlc/` folder, and a human correction can become a standing rule. Stated tenets, in priority order: the human drives the engine, tools for determinism, LLM for knowledge, human for judgement. Large surface: 5 phases, 33 stages, 14 agents, 11 workflow scopes. Installs a native binary through a piped shell script; its run-time network behavior was not audited. | [repo](https://github.com/awslabs/aidlc-workflows) |
+
+**The Agent Skills standard (checked 2026-11-21).**
+The [specification](https://agentskills.io/specification) is unchanged in substance since 2026-07: `name`, `description` (1,024 characters), and optional `license`, `compatibility`, `metadata` and experimental `allowed-tools`, with a no-consecutive-hyphens rule on `name`.
+It states no version number or versioning policy; its validator is [`skills-ref`](https://github.com/agentskills/agentskills).
+Secondary sources report that Anthropic gave the standard to the Agentic AI Foundation on 2026-10-22; no primary announcement was found.
+Claude Code ignores unknown frontmatter keys, while claude.ai, the API and Anthropic's packaging script reject them, so harness-specific keys break portability one consumer at a time.
+Claude Code 2.1.310 does not read `~/.agents/skills` natively: the path appears in its binary only in the Cursor import tool, marked "not yet auto-imported" (checked in the binary, 2026-11-21), so a shared `.agents/skills` tree still needs links or copies into `.claude/skills`.
+Which other harnesses read `.agents/skills` comes only from secondary sources, and they disagree for Codex.
 
 > **MCP servers:** to *build* one, defer to the system's `build-mcp-server` /
 > `build-mcp-app` skills (official `mcp-server-dev` plugin) and `plugin-dev`'s

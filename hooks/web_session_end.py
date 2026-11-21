@@ -6,7 +6,7 @@ this starts `local-security scan path <folders>` as a detached process and does 
 for it: the session is closing, so a finding reaches the user through that tool's own
 alerts, not through the agent. Files that command already judged cost nothing. Only
 folders that still exist strictly inside a temp root are passed. Without the command nothing is
-scanned here; the reminder and the batch downloader scan during the session.
+scanned here; the batch downloader scans during the session.
 
 Then it removes `<system temp>/web-guard-<uid>/<session id>/`, the folder `_web_guard.py`
 keeps, and nothing else. A session that ends without this event leaves that folder for the

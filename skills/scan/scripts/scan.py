@@ -23,7 +23,9 @@ finding, 4 a tool missing or failed. Stdlib only; runs on the stock macOS python
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import os
@@ -32,6 +34,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 UPDATE_HOURS = 24        # freshclam runs before a scan when the signatures are older than this
 STALE_HOURS = 48         # still older than this after the update: the report warns
@@ -45,6 +48,43 @@ INSTRUCTION_NAMES = {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursorrules", ".mc
                      ".claude", ".codex", ".cursor", ".vscode"}
 RUNNABLE_SUFFIXES = (".command", ".sh", ".py", ".scpt", ".workflow", ".terminal", ".plist", ".dylib")
 SWEEP_LIST_CAP = 50
+LOCK_WAIT_SECONDS = 1800  # how long a scan waits for another to finish, as local-security waits
+LOCK_POLL_SECONDS = 0.05
+
+
+class ScanBusy(Exception):
+    """Another scan held the machine's scan lock for longer than the wait allowed."""
+
+
+def scan_lock_path() -> str:
+    """The machine's one ClamAV scan lock, shared with local-security so every scanner queues
+    on the same file: `scan.lock` in its state folder, which `LOCAL_SECURITY_HOME` overrides."""
+    home = os.environ.get("LOCAL_SECURITY_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "share", "local-security")
+    return os.path.join(home, "scan.lock")
+
+
+@contextlib.contextmanager
+def one_scan_at_a_time(wait: float = LOCK_WAIT_SECONDS):
+    """Hold the scan lock for the body, waiting up to `wait` seconds. Each ClamAV run loads its
+    whole signature set into memory, so two at once double that. The lock is an flock, so it
+    frees itself when its holder exits however it exits."""
+    path = scan_lock_path()
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise ScanBusy(f"another scan held the lock for more than {wait:g}s") from None
+                time.sleep(LOCK_POLL_SECONDS)
+        yield
+    finally:
+        os.close(fd)
 
 
 def run(argv: list[str], timeout: int = 600) -> subprocess.CompletedProcess:
@@ -125,6 +165,21 @@ def clamav_lane(path: str, update: bool = True) -> dict:
         return {"status": "setup-needed", "setup": steps,
                 "note": "ClamAV is not set up yet; run these in order, then scan again"}
     lane: dict = {"status": "ok", "found": [], "warnings": [], "update": {"ran": False}}
+    try:
+        with one_scan_at_a_time():
+            return clamav_scan(path, update, lane)
+    except ScanBusy as busy:
+        lane["status"] = "error"
+        lane["note"] = f"not scanned: {busy}"
+        return lane
+    except OSError as exc:
+        lane["status"] = "error"
+        lane["note"] = f"not scanned: scan lock unavailable ({exc.strerror or exc})"
+        return lane
+
+
+def clamav_scan(path: str, update: bool, lane: dict) -> dict:
+    """The update and the scan, run while the caller holds the scan lock."""
     if update:
         refresh_signatures(lane)
     version = run(["clamscan", "--version"], timeout=60).stdout.strip()

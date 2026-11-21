@@ -402,16 +402,20 @@ If a `settings.json` already exists on the device, **merge, don't replace** -
 diff against this template, show the delta, get approval (non-destructive
 rule + §7.6's own hook both apply).
 
-**Delegation to Codex** goes only through `/task codex`, whose dispatcher
-`~/.agents/skills/task/scripts/task.py` hands off to
-`~/.agents/skills/task/harnesses/codex/scripts/codex_task.py`, which runs Codex
-headless in an isolated worktree and `CODEX_HOME` with writes confined to a file
-allowlist. The user approves every Codex run, so the seed includes two ask
-rules: `Bash(*task.py*codex*)` for the dispatcher and `Bash(*codex_task.py*run*)`
-for the script called directly. Both catch interpreter, spacing and quoting
-variants, at the cost of a prompt when another command's arguments mention
-`codex`. A headless probe showed an ask rule overrides a matching allow entry, so
-a stray "don't ask again" cannot silence it. The rules fire only when the command's
+**Delegation to Codex, Cursor and Antigravity** goes only through `/task <harness>`,
+whose dispatcher `~/.agents/skills/task/scripts/task.py` hands off to
+`~/.agents/skills/task/harnesses/<harness>/scripts/<harness>_task.py`, which runs the
+harness headless in an isolated worktree with writes confined to a file allowlist.
+The model may start `/task` when the user asks for one of these harnesses, so the
+Skill call is the audit trail, and the user approves every run: the seed includes
+two ask rules per harness, `Bash(*task.py*<harness>*)` for the dispatcher and
+`Bash(*<harness>_task.py*run*)` for the script called directly, plus
+`Bash(*task.py*tryout*run*)`, `Bash(*harness_bench.py*run*)` and
+`Bash(*task.py*apply*)` for the benchmark and for applying a patch to the real repo. Both catch
+interpreter, spacing and quoting variants, at the cost of a prompt when another
+command's arguments mention the harness name. A headless probe showed an ask rule overrides a matching allow entry, so
+a stray "don't ask again" cannot silence it, and a probe on 2.1.310 showed the
+rule still prompts in auto mode (2026-11-21). The rules fire only when the command's
 text holds `task.py` followed later by `codex`, or `codex_task.py` followed later
 by `run`; a glob, an escape, a variable or a copied script can reach Codex without
 matching, and only a hook that parses the command the way the shell does would
@@ -1351,13 +1355,12 @@ Script: [`../../hooks/web_fetch_guard.py`](../../hooks/web_fetch_guard.py).
 
 ### `download_guard.py`
 
-PreToolUse guard (matcher `Bash`) - **blocking** (a JSON `deny` or `ask`), with one advisory output.
+PreToolUse guard (matcher `Bash`) - **blocking** (a JSON `deny` or `ask`).
 It reads each simple command whose program is `curl` or `wget`, a Python one-liner that fetches an address, or a run of `web_download.py`.
-A subagent is refused any such fetch from a host that is not loopback: it reads pages with the fetch tool, and for files it returns a manifest to the main session.
+A subagent is refused any such fetch from a host that is not loopback: it reads pages with the fetch tool, and for files it writes a manifest and ends its report with the manifest's path; the main session writes the `web_download.py` command itself, so a subagent never supplies a command line, and a run with `--no-scan` gets `ask`.
 The main session gets `ask` when the fetch sends a browser's User-Agent, uses an impersonation tool, names a proxy or is piped straight into a shell; when the host is a government or military one; and when the host refused a request earlier in the session.
 An identifying User-Agent and an auth header are honest access and pass.
-A download, whether by an output option or by a redirect of the output into a file, is refused when its target is under the user's Downloads, Desktop or Documents folder or inside a git repository; a target under a temp root passes.
-On a session's first download the hook adds a reminder to scan the files before any tool opens them, and it does not repeat within 30 minutes.
+A download from a host that is not loopback, whether by an output option or by a redirect of the output into a file, is refused in the main session as well, and the refusal names the `web_download.py` line to run, since only the batch downloader paces, stops at a refusal and scans; a target under the user's Downloads, Desktop or Documents folder or inside a git repository gets that reason instead.
 The program is read as `deny_debugger_attach.py` reads it, also inside a loop or branch body, so a command that only mentions these words passes.
 A Python program fed on a here-document is read from its body.
 It does not see an address held in a variable, a fetch inside a script file, a `bash -c` string, where a Python fetch writes its file, or a fetch piped into `tar`, and it does not read a command over 32,000 characters.

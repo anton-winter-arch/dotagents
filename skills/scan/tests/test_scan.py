@@ -116,7 +116,8 @@ class ScanTest(unittest.TestCase):
         cfg = dict(cfg, conf_dir=str(self.confdir))
         cfg_file = self.tmp / "cfg.json"
         cfg_file.write_text(json.dumps(cfg))
-        env = dict(os.environ, PATH=str(self.bin), STUB_CONFIG=str(cfg_file), STUB_LOG=str(self.log))
+        env = dict(os.environ, PATH=str(self.bin), STUB_CONFIG=str(cfg_file), STUB_LOG=str(self.log),
+                   LOCAL_SECURITY_HOME=str(self.tmp / "ls-home"))
         proc = subprocess.run([sys.executable, str(SCRIPT), str(path), "--json", *extra],
                               capture_output=True, text=True, env=env)
         report = json.loads(proc.stdout) if proc.stdout.strip().startswith("{") else None
@@ -134,6 +135,53 @@ class ScanTest(unittest.TestCase):
             plistlib.dump({"CFBundleExecutable": "main"}, f)
         (app / "Contents" / "MacOS" / "main").write_bytes(exe_bytes)
         return app
+
+    # The machine's one scan lock, shared with local-security
+
+    def load_module(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("scan_under_test", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_scan_takes_the_shared_lock_file(self):
+        f = self.target / "notes.txt"
+        f.write_text("hello")
+        rc, _, _ = self.scan(f, {"clam_version": FRESH})
+        self.assertEqual(rc, 0)
+        self.assertTrue((self.tmp / "ls-home" / "scan.lock").is_file())
+
+    def test_an_unusable_lock_folder_is_an_error_never_clean(self):
+        f = self.target / "notes.txt"
+        f.write_text("hello")
+        blocker = self.tmp / "ls-home"
+        blocker.write_text("a file where the lock folder should be")
+        rc, rep, _ = self.scan(f, {"clam_version": FRESH})
+        self.assertEqual((rc, rep["verdict"]), (4, "incomplete"))
+        self.assertIn("scan lock unavailable", rep["clamav"]["note"])
+
+    def test_a_held_lock_makes_the_next_scan_wait_then_give_up(self):
+        import fcntl
+        mod = self.load_module()
+        home = self.tmp / "ls-home"
+        home.mkdir()
+        old = os.environ.get("LOCAL_SECURITY_HOME")
+        os.environ["LOCAL_SECURITY_HOME"] = str(home)
+        try:
+            holder = os.open(home / "scan.lock", os.O_RDWR | os.O_CREAT, 0o600)
+            fcntl.flock(holder, fcntl.LOCK_EX)
+            with self.assertRaises(mod.ScanBusy):
+                with mod.one_scan_at_a_time(wait=0.2):
+                    pass
+            os.close(holder)
+            with mod.one_scan_at_a_time(wait=0.2):
+                pass
+        finally:
+            if old is None:
+                os.environ.pop("LOCAL_SECURITY_HOME", None)
+            else:
+                os.environ["LOCAL_SECURITY_HOME"] = old
 
     # ClamAV lane and the signature update
 

@@ -12,7 +12,8 @@ the profile is: **write to the standard's rules as if mandatory, add Claude Code
 extensions only as progressive enhancement.**
 
 Verified against official docs 2026-07-01 (code.claude.com/docs/en/skills,
-agentskills.io/specification, platform.claude.com agent-skills best-practices).
+agentskills.io/specification, platform.claude.com agent-skills best-practices);
+field lists re-checked 2026-11-21.
 Re-verify before trusting version-sensitive details.
 
 ## The profile
@@ -32,7 +33,10 @@ Re-verify before trusting version-sensitive details.
 
 `when_to_use`, `argument-hint`, `arguments`, `disable-model-invocation`,
 `user-invocable`, `disallowed-tools`, `model`, `effort`, `context`, `agent`,
-`hooks`, `paths`, `shell`. A skill must still work if these are stripped.
+`background` (with `context: fork`), `hooks`, `paths`, `shell`. A skill must
+still work if these are stripped. The standard's validator is
+`skills-ref validate`; claude.ai, the API and `package_skill.py` reject keys
+outside the core set, which is one more reason custom keys go under `metadata:`.
 Common deliberate uses:
 
 - `disable-model-invocation: true` for command-like skills that should never

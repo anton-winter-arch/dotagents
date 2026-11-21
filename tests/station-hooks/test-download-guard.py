@@ -4,11 +4,12 @@ Target: the repo's hooks/download_guard.py by default; HOOK_UNDER_TEST points th
 station copy such as ~/.claude/hooks/download_guard.py.
 Run: python3 tests/station-hooks/test-download-guard.py   (or via unittest discover)
 
-Contract: a subagent's shell fetch from a host that is not loopback is denied; the main
-session gets `ask` for a disguised fetch, a government or military host and a host that
-refused earlier; a download into a repository or the user's own folders is denied; the
-scan reminder fires on the first download and not again within its interval. A command
-that only mentions the fetch words passes. No test sends a request anywhere.
+Contract: a subagent's shell fetch from a host that is not loopback is denied, and the
+refusal hands it the downloader line for the main session; the main session gets `ask` for
+a disguised fetch, a government or military host and a host that refused earlier; a
+main-session download to a file from a host that is not loopback is denied and sent to
+web_download.py, with a more specific reason for a repository or the user's own folders.
+A command that only mentions the fetch words passes. No test sends a request anywhere.
 """
 
 from __future__ import annotations
@@ -78,16 +79,38 @@ class DownloadGuard(unittest.TestCase):
         ):
             self.assertIsNone(self.run_hook(command, agent=True), command)
 
-    def test_the_first_download_reminds_and_the_next_does_not(self):
-        first = self.run_hook("curl -sSLo a.pdf https://example.org/a.pdf")
-        self.assertIn("scan", first["additionalContext"])
-        self.assertNotIn("permissionDecision", first)
-        self.assertIsNone(self.run_hook("curl -sSLo b.pdf https://example.org/b.pdf"))
-        self.assertIsNone(self.run_hook("wget https://example.org/c.pdf"))
-        again = self.run_hook("curl -O https://example.org/d.pdf", WEB_GUARD_REMIND="0")
-        self.assertIn("scan", again["additionalContext"], "it fires again once the interval has passed")
-        other = self.run_hook("curl -O https://example.org/d.pdf", sid="s2")
-        self.assertIn("scan", other["additionalContext"], "each session gets its own first reminder")
+    def test_a_main_session_download_goes_through_the_batch_downloader(self):
+        for command in (
+            "curl -sSLo a.pdf https://example.org/a.pdf",
+            "curl -O https://example.org/d.pdf",
+            "wget https://example.org/c.pdf",
+            "curl -sL https://example.org/a.zip > a.zip",
+            "cd %s && curl --output-dir . -O https://example.org/a.pdf" % self.scratch,
+        ):
+            out = self.run_hook(command)
+            self.assertEqual((out or {}).get("permissionDecision"), "deny", command)
+            self.assertIn("web_download.py", out["permissionDecisionReason"], command)
+            self.assertIn("manifest", out["permissionDecisionReason"], command)
+        for command in ("python3 ~/.agents/hooks/web_download.py /tmp/m.jsonl",
+                        "curl -s http://localhost:8000/x -o out.json",
+                        "curl -s https://example.org/page | jq ."):
+            self.assertIsNone(self.run_hook(command), command)
+
+    def test_a_subagent_returns_a_manifest_path_never_a_command(self):
+        reason = self.run_hook("curl -sSLo a.pdf https://example.org/a.pdf", agent=True)["permissionDecisionReason"]
+        self.assertIn("manifest's path", reason)
+        self.assertNotIn("python3", reason, "the main session writes the downloader command itself")
+
+    def test_a_main_session_refusal_names_the_downloader(self):
+        reason = self.run_hook("curl -sSLo a.pdf https://example.org/a.pdf")["permissionDecisionReason"]
+        self.assertIn(str(TARGET.with_name("web_download.py")).replace(os.path.expanduser("~"), "~"), reason)
+
+    def test_an_unscanned_batch_asks(self):
+        for command in ("python3 ~/.agents/hooks/web_download.py /tmp/m.jsonl --no-scan",
+                        "python3 ~/.agents/hooks/web_download.py --no-scan /tmp/m.jsonl --out /tmp/x"):
+            out = self.run_hook(command)
+            self.assertEqual((out or {}).get("permissionDecision"), "ask", command)
+            self.assertIn("skips its scan", out["permissionDecisionReason"])
 
     def test_reading_a_page_is_not_a_download(self):
         for command in ("curl -s https://example.org/page", "wget -qO- https://example.org/page",
@@ -110,8 +133,8 @@ class DownloadGuard(unittest.TestCase):
             out = self.run_hook(command, cwd=cwd)
             self.assertEqual((out or {}).get("permissionDecision"), "deny", command)
             self.assertIn(word, out["permissionDecisionReason"], command)
-        self.assertEqual(self.verdict("curl -o %s/a.pdf https://example.org/a.pdf" % self.scratch, cwd=str(REPO)),
-                         "context", "an explicit scratch target is fine from any folder")
+        out = self.run_hook("curl -o %s/a.pdf https://example.org/a.pdf" % self.scratch, cwd=str(REPO))
+        self.assertIn("web_download.py", out["permissionDecisionReason"], "a scratch target still goes through the downloader")
 
     def test_a_redirect_into_a_file_is_a_download(self):
         for command, word in (
@@ -123,7 +146,7 @@ class DownloadGuard(unittest.TestCase):
             out = self.run_hook(command)
             self.assertEqual((out or {}).get("permissionDecision"), "deny", command)
             self.assertIn(word, out["permissionDecisionReason"])
-        self.assertEqual(self.verdict("curl -sL https://example.org/a.zip > %s/a.zip" % self.scratch), "context")
+        self.assertEqual(self.verdict("curl -sL https://example.org/a.zip > %s/a.zip" % self.scratch), "deny")
         for command in ("curl -s https://example.org/page 2>/dev/null", "curl -s https://example.org/page > /dev/null",
                         "curl -s https://example.org/page 2>&1", "curl -so - https://example.org/page"):
             self.assertIsNone(self.run_hook(command, sid="quiet"), command)
@@ -166,15 +189,9 @@ class DownloadGuard(unittest.TestCase):
         folder = Path(self.tmp.name) / ("web-guard-%d" % os.getuid()) / "s1"
         folder.mkdir(parents=True, mode=0o700)
         os.chmod(folder.parent, 0o700)
-        (folder / "state.json").write_text(json.dumps({"hosts": {}, "download_dirs": "oops", "reminded_at": "x"}))
-        out = self.run_hook("curl -o %s/a.json https://www.example.gov/a.json" % self.scratch)
+        (folder / "state.json").write_text(json.dumps({"hosts": "oops", "download_dirs": "oops"}))
+        out = self.run_hook("curl -s https://www.example.gov/a.json")
         self.assertEqual((out or {}).get("permissionDecision"), "ask")
-
-    def test_a_bare_temp_root_is_not_recorded_for_the_scan(self):
-        self.run_hook("cd /tmp && curl -O https://example.org/a.pdf")
-        self.run_hook("curl -o %s/b.pdf https://example.org/b.pdf" % self.scratch)
-        state = json.loads((Path(self.tmp.name) / ("web-guard-%d" % os.getuid()) / "s1" / "state.json").read_text())
-        self.assertEqual(state["download_dirs"], [os.path.realpath(self.scratch)])
 
     def test_a_disguised_fetch_asks(self):
         for command in (

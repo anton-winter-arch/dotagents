@@ -1,6 +1,28 @@
 # seed-sections.tsv - curated owner/repo -> sections (GitHub category cannot be inferred from URL).
 # Format: <owner/repo><TAB><sections(pipe)>.  Add rows as repos are categorized; this is DATA, not code.
 1st1/lat.md	triage
+2fastlabs/agent-squad	frameworks
+agent-of-empires/agent-of-empires	harnesses
+AgriciDaniel/claude-obsidian	skills|memory
+BridgLabs/opencodereview	eval|harnesses
+cth9191/chase-ai-skills	skills
+jingyaogong/minimind	tuning|models|learning
+mattpocock/skills	skills
+walkinglabs/learn-harness-engineering	learning|harnesses
+asheshgoplani/agent-deck	harnesses
+automazeio/ccpm	skills|harnesses
+BloopAI/vibe-kanban	harnesses|frontend
+bmad-code-org/bmad-method	skills
+eyaltoledano/claude-task-master	skills|harnesses
+finos/cucumber-testing-steps	eval
+microsoft/azure-devops-mcp	adjacent
+MrLesk/Backlog.md	skills|harnesses
+n8n-io/n8n	frameworks
+ruvnet/ruflo	harnesses
+smtg-ai/claude-squad	harnesses
+softcery/claude-code-voice-relay	media
+temporal-community/temporal-agent-kit	frameworks
+temporalio/temporal	frameworks
 Agents365-ai/drawio-skill	skills
 Avaiga/taipy	frontend
 Chachamaru127/claude-code-harness	harnesses

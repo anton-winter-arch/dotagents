@@ -1,5 +1,6 @@
 seq	date	url	kind	resolution	state
-111	2026-11-01	https://a2a-protocol.org/latest	manual-override	'adjacent' -> 'docs|frameworks'	hot
+111	2026-11-01	https://a2a-protocol.org/latest	manual-override	'adjacent' -> 'docs|frameworks'	cold
+129	2026-11-21	https://a2a-protocol.org/latest	kept-manual	kept 'docs|frameworks|map', auto said 'adjacent'	hot
 113	2026-11-01	https://aaif.io/projects	manual-override	'adjacent' -> 'docs'	hot
 48	2026-09-18	https://aclanthology.org/2025.findings-acl.1226	manual-override	'adjacent' -> 'papers|media'	hot
 79	2026-09-25	https://agentclientprotocol.com/	manual-override	'adjacent' -> 'docs|harnesses'	hot
@@ -11,6 +12,7 @@ seq	date	url	kind	resolution	state
 55	2026-09-18	https://arxiv.org/abs/2510.00485	manual-override	'papers' -> 'papers|media|eval'	hot
 56	2026-09-18	https://arxiv.org/abs/2510.08373	manual-override	'papers' -> 'papers|media'	hot
 57	2026-09-18	https://arxiv.org/abs/2510.23541	manual-override	'papers' -> 'papers|media'	hot
+154	2026-11-21	https://asyncdot.com/blog/chief-of-staff-pattern-orchestrating-claude-code-sessions	manual-override	'adjacent' -> 'harnesses|learning'	hot
 44	2026-09-18	https://blaizzy.github.io/mlx-audio/models/tts	manual-override	'adjacent' -> 'docs|media'	hot
 59	2026-09-18	https://blog.google/innovation-and-ai/models-and-research/google-labs/notebooklm-audio-overviews-50-languages	manual-override	'learning' -> 'media|learning'	hot
 60	2026-09-18	https://blog.google/innovation-and-ai/models-and-research/google-labs/notebooklm-new-features-december-2024	manual-override	'learning' -> 'media|learning'	hot
@@ -25,7 +27,11 @@ seq	date	url	kind	resolution	state
 75	2026-09-23	https://docs.typesafe.ai/	manual-override	'adjacent' -> 'serving|docs'	hot
 49	2026-09-18	https://eqbench.com/creative_writing.html	manual-override	'adjacent' -> 'eval'	hot
 43	2026-09-02	https://genai.owasp.org/2025/12/09/owasp-top-10-for-agentic-applications-the-benchmark-for-agentic-security-in-the-age-of-autonomous-ai	manual-override	'adjacent' -> 'security|docs'	hot
+130	2026-11-21	https://github.com/2fastlabs/agent-squad	manual-override	'triage' -> 'frameworks'	hot
+147	2026-11-21	https://github.com/AgriciDaniel/claude-obsidian	manual-override	'triage' -> 'skills|memory'	hot
 94	2026-10-29	https://github.com/BerriAI/litellm	manual-override	'serving' -> 'serving|avoid'	hot
+134	2026-11-21	https://github.com/BloopAI/vibe-kanban	manual-override	'triage' -> 'harnesses|frontend'	hot
+148	2026-11-21	https://github.com/BridgLabs/opencodereview	manual-override	'triage' -> 'eval|harnesses'	hot
 37	2026-09-02	https://github.com/CaviraOSS/PageLM	manual-override	'triage' -> 'learning|adjacent'	hot
 2	2026-07-27	https://github.com/DeusData/codebase-memory-mcp	tag-union	'memory' + 'codeintel|memory' -> 'memory|codeintel'	hot
 25	2026-08-14	https://github.com/Evokoa/pgGraph	manual-override	'triage' -> 'vectordb|rag|adjacent'	hot
@@ -35,6 +41,7 @@ seq	date	url	kind	resolution	state
 15	2026-08-14	https://github.com/InsForge/InsForge	manual-override	'triage' -> 'harnesses|serving|skills'	hot
 32	2026-09-02	https://github.com/MakazhanAlpamys/Soup	manual-override	'triage' -> 'tuning|models'	hot
 87	2026-10-29	https://github.com/MemPalace/mempalace	merge	merged https://github.com/milla-jovovich/mempalace (moved repo) into https://github.com/MemPalace/mempalace	hot
+139	2026-11-21	https://github.com/MrLesk/Backlog.md	manual-override	'triage' -> 'skills|harnesses'	hot
 10	2026-07-28	https://github.com/NVIDIA-AI-Blueprints	manual-override	'adjacent' -> 'learning|frameworks'	hot
 17	2026-08-14	https://github.com/NVIDIA/cloud-native-stack	manual-override	'triage' -> 'serving|adjacent'	hot
 16	2026-08-14	https://github.com/NanoNets/Graft	manual-override	'triage' -> 'codeintel|rag|harnesses'	hot
@@ -50,20 +57,29 @@ seq	date	url	kind	resolution	state
 7	2026-07-28	https://github.com/affaan-m/agentshield	manual-override	'triage|security' -> 'security'	hot
 104	2026-11-01	https://github.com/ag-ui-protocol/ag-ui	manual-override	'triage' -> 'frontend|frameworks'	hot
 108	2026-11-01	https://github.com/agent-network-protocol/AgentNetworkProtocol	manual-override	'triage' -> 'frameworks|docs'	hot
+131	2026-11-21	https://github.com/agent-of-empires/agent-of-empires	manual-override	'triage' -> 'harnesses'	hot
 106	2026-11-01	https://github.com/agntcy/dir	manual-override	'triage' -> 'frameworks'	hot
 107	2026-11-01	https://github.com/agntcy/oasf	manual-override	'triage' -> 'frameworks'	hot
 105	2026-11-01	https://github.com/agntcy/slim	manual-override	'triage' -> 'frameworks'	hot
 89	2026-10-29	https://github.com/anomalyco/opencode	merge	merged https://github.com/sst/opencode (moved repo) into https://github.com/anomalyco/opencode	hot
+146	2026-11-21	https://github.com/anthropics/claude-code/issues/24537	manual-override	'triage' -> 'harnesses'	hot
+132	2026-11-21	https://github.com/asheshgoplani/agent-deck	manual-override	'triage' -> 'harnesses'	hot
+133	2026-11-21	https://github.com/automazeio/ccpm	manual-override	'triage' -> 'skills|harnesses'	hot
 97	2026-11-01	https://github.com/band-ai/band-sdk-python	manual-override	'triage' -> 'frameworks|harnesses'	hot
 98	2026-11-01	https://github.com/band-ai/codeband	manual-override	'triage' -> 'harnesses'	hot
+135	2026-11-21	https://github.com/bmad-code-org/bmad-method	manual-override	'triage' -> 'skills'	hot
 31	2026-09-02	https://github.com/cathrynlavery/diagram-design	manual-override	'triage' -> 'skills|frontend'	hot
+149	2026-11-21	https://github.com/cth9191/chase-ai-skills	manual-override	'triage' -> 'skills'	hot
 19	2026-08-14	https://github.com/danielmiessler/LifeOS	manual-override	'triage' -> 'harnesses|skills|memory'	hot
 20	2026-08-14	https://github.com/deepseek-ai/deepseek-harness	manual-override	'triage' -> 'harnesses|frameworks|eval'	hot
+136	2026-11-21	https://github.com/eyaltoledano/claude-task-master	manual-override	'triage' -> 'skills|harnesses'	hot
+137	2026-11-21	https://github.com/finos/cucumber-testing-steps	manual-override	'triage' -> 'eval'	hot
 21	2026-08-14	https://github.com/google/adk-samples	manual-override	'triage' -> 'frameworks|memory|rag'	hot
 34	2026-09-02	https://github.com/google/sam	manual-override	'triage' -> 'adjacent'	hot
 39	2026-09-02	https://github.com/gridex/gridex	manual-override	'triage' -> 'adjacent'	hot
 96	2026-11-01	https://github.com/haydenschmitty/floorplan	manual-override	'triage' -> 'codeintel|skills'	hot
 80	2026-10-09	https://github.com/huggingface/setfit	manual-override	'triage' -> 'tuning'	hot
+150	2026-11-21	https://github.com/jingyaogong/minimind	manual-override	'triage' -> 'tuning|models|learning'	hot
 28	2026-09-02	https://github.com/karpathy/llm-council	manual-override	'triage' -> 'frameworks|adjacent'	hot
 1	2026-07-01	https://github.com/langchain-ai/deepagents	tag-union	'frameworks' + 'frameworks|harnesses|map' -> 'frameworks|harnesses|map'	hot
 95	2026-10-29	https://github.com/langflow-ai/langflow	manual-override	'frameworks' -> 'frameworks|avoid'	hot
@@ -73,23 +89,32 @@ seq	date	url	kind	resolution	state
 72	2026-09-18	https://github.com/lfnovo/open-notebook/pull/1334	manual-override	'media|rag|frontend' -> 'media|learning'	hot
 33	2026-09-02	https://github.com/lyogavin/airllm	manual-override	'triage' -> 'serving|models'	hot
 40	2026-09-02	https://github.com/magnitudedev/magnitude	manual-override	'triage' -> 'serving|models'	hot
+151	2026-11-21	https://github.com/mattpocock/skills	manual-override	'triage' -> 'skills'	hot
 41	2026-09-02	https://github.com/microsoft/agent-governance-toolkit	manual-override	'learning' -> 'security|harnesses'	hot
+138	2026-11-21	https://github.com/microsoft/azure-devops-mcp	manual-override	'triage' -> 'adjacent'	hot
 83	2026-10-09	https://github.com/microsoft/tgrep	manual-override	'triage' -> 'adjacent'	hot
 101	2026-11-01	https://github.com/modelcontextprotocol/modelcontextprotocol	manual-override	'triage' -> 'skills|docs'	hot
 103	2026-11-01	https://github.com/modelcontextprotocol/python-sdk	manual-override	'triage' -> 'skills|frameworks'	hot
 102	2026-11-01	https://github.com/modelcontextprotocol/registry	manual-override	'triage' -> 'skills'	hot
 86	2026-10-29	https://github.com/multica-ai/andrej-karpathy-skills	merge	merged https://github.com/forrestchang/andrej-karpathy-skills (moved repo) into https://github.com/multica-ai/andrej-karpathy-skills	hot
+140	2026-11-21	https://github.com/n8n-io/n8n	manual-override	'triage' -> 'frameworks'	hot
 93	2026-10-29	https://github.com/openclaw/openclaw	manual-override	'harnesses|map' -> 'harnesses|map|avoid'	hot
 29	2026-09-02	https://github.com/opensandbox-group/OpenSandbox	manual-override	'triage' -> 'security|harnesses|serving'	hot
+141	2026-11-21	https://github.com/ruvnet/ruflo	manual-override	'triage' -> 'harnesses'	hot
 81	2026-10-09	https://github.com/sciences44/mlx-lora-finetune	manual-override	'triage' -> 'tuning'	hot
 26	2026-08-14	https://github.com/semantica-agi/semantica	manual-override	'triage' -> 'memory|rag|frameworks'	hot
 22	2026-08-14	https://github.com/shcherbak-ai/contextgem	manual-override	'triage' -> 'ingestion|rag|frameworks'	hot
+142	2026-11-21	https://github.com/smtg-ai/claude-squad	manual-override	'triage' -> 'harnesses'	hot
+143	2026-11-21	https://github.com/softcery/claude-code-voice-relay	manual-override	'triage' -> 'media'	hot
 73	2026-09-18	https://github.com/souzatharsis/podcastfy/blob/main/usage/conversation_custom.md	manual-override	'media|learning' -> 'media|docs'	hot
 74	2026-09-18	https://github.com/souzatharsis/podcastfy/blob/main/usage/how-to.md	manual-override	'media|learning' -> 'media|docs'	hot
 14	2026-08-14	https://github.com/superlinked/sie	tag-union	'serving' + 'serving|map' -> 'serving|map'	hot
 30	2026-09-02	https://github.com/superloglabs/superlog	manual-override	'triage' -> 'eval|serving|adjacent'	hot
+144	2026-11-21	https://github.com/temporal-community/temporal-agent-harness	manual-override	'triage' -> 'frameworks'	hot
+145	2026-11-21	https://github.com/temporalio/temporal	manual-override	'triage' -> 'frameworks'	hot
 82	2026-10-09	https://github.com/togethercomputer/tev1	manual-override	'triage' -> 'models|tuning'	hot
 27	2026-08-14	https://github.com/vshulcz/deja-vu	manual-override	'triage' -> 'memory|harnesses|eval'	hot
+152	2026-11-21	https://github.com/walkinglabs/learn-harness-engineering	manual-override	'triage' -> 'learning|harnesses'	hot
 38	2026-09-02	https://github.com/wlsdks/ontology-atlas	manual-override	'triage' -> 'codeintel|memory'	hot
 11	2026-08-09	https://github.com/yc-software/qm	manual-override	'triage' -> 'harnesses, map'	cold
 12	2026-08-09	https://github.com/yc-software/qm	manual-override	'harnesses, map' -> 'harnesses|map'	cold
@@ -104,6 +129,7 @@ seq	date	url	kind	resolution	state
 118	2026-11-06	https://huggingface.co/mlx-community/whisper-large-v3-turbo-q4	manual-override	'models' -> 'media|models'	hot
 116	2026-11-06	https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2	manual-override	'models' -> 'media|models'	hot
 122	2026-11-06	https://huggingface.co/spaces/hf-audio/open_asr_leaderboard	manual-override	'models' -> 'media|eval'	hot
+153	2026-11-21	https://keenable.ai/about	manual-override	'adjacent' -> 'ingestion'	hot
 112	2026-11-01	https://modelcontextprotocol.io/specification/2026-07-28	manual-override	'adjacent' -> 'docs|skills'	hot
 127	2026-11-06	https://picovoice.ai/blog/on-device-tts	manual-override	'adjacent' -> 'media|learning'	hot
 84	2026-10-09	https://platform.claude.com/docs/en/models/haiku-5-5/overview	manual-override	'adjacent' -> 'docs|models'	hot

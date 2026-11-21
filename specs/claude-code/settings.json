@@ -39,7 +39,14 @@
     ],
     "ask": [
       "Bash(*codex_task.py*run*)",
-      "Bash(*task.py*codex*)"
+      "Bash(*task.py*codex*)",
+      "Bash(*cursor_task.py*run*)",
+      "Bash(*task.py*cursor*)",
+      "Bash(*antigravity_task.py*run*)",
+      "Bash(*task.py*antigravity*)",
+      "Bash(*task.py*tryout*run*)",
+      "Bash(*harness_bench.py*run*)",
+      "Bash(*task.py*apply*)"
     ],
     "deny": [
       "Read(**/.env)",

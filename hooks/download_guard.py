@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""PreToolUse hook on the shell: who may fetch from the web there, where a download may
-land, and a reminder to scan what was downloaded.
+"""PreToolUse hook on the shell: who may fetch from the web there, and that every file
+download goes through the batch downloader, which scans what it fetched.
 
 A shell fetch goes out from the user's own address and nothing paces or remembers it, so
 the rules are these, for each simple command whose program is `curl` or `wget`, a Python
 one-liner that fetches an address, or a run of `web_download.py`:
 
   A subagent        is refused any fetch from a host that is not loopback. It reads pages
-                    with the fetch tool, and for files it returns a manifest to the main
-                    session, which downloads the batch.
+                    with the fetch tool, and for files it returns a manifest's path, never a
+                    command; the main session runs the downloader on it, and a downloader
+                    run with --no-scan gets `ask`.
   The main session  gets `ask` when the fetch imitates a browser, uses an impersonation
                     tool, names a proxy or is piped straight into a shell; when the host
                     is a government or military one; or when the host refused a request
                     earlier in this session.
-  A download        (an output option, or a redirect of the output into a file) is refused
-                    when its target is under the user's Downloads, Desktop or Documents
-                    folder or inside a git repository. Session scratch is the place for it.
-  The reminder      fires on a session's first download and not again within 30 minutes:
-                    scan the files before any tool opens them, stick to ordinary public
-                    sources.
+  A download        (an output option, or a redirect of the output into a file) from a host
+                    that is not loopback is refused in the main session too: the refusal
+                    names the web_download.py line to run instead, or, when the target is
+                    under the user's Downloads, Desktop or Documents folder or inside a git
+                    repository, says why that place is wrong.
 
 The program is read the way deny_debugger_attach.py reads it (wrappers unwrapped, quoted
 text whole, here-document bodies left out), so a command that only mentions these words
@@ -62,7 +62,9 @@ SUBAGENT = (
     "Blocked: a subagent does not fetch from the web in the shell ({host}). Every request "
     "there leaves from the user's own address, unpaced. Read pages with the fetch tool. For "
     "files, write a manifest (one JSON object per line: url, name, why) in the scratch "
-    "folder, return its path, and stop: the main session downloads and scans the batch."
+    "folder, end your report with the manifest's path, and stop. The main session runs "
+    "the batch downloader on that path, which scans what it fetched; an ordinary batch "
+    "needs no approval from the user."
 )
 EVASION = (
     "This fetch {what}. Agents do not disguise a request or route it around a site's "
@@ -76,17 +78,20 @@ REFUSED = (
     "{host} refused an automated request earlier in this session (HTTP {code}). A refusal "
     "is final for the session; approve only if the user wants this one request sent anyway."
 )
+UNSCANNED = (
+    "This batch download skips its scan, so its files reach the session unchecked. "
+    "Approve only if the user asked for that."
+)
 PLACE = (
     "Blocked: this download would land in {where}. Agent downloads go in the session "
     "scratch folder, never in a repository or the user's own folders. Download there, scan "
     "it, and copy what is wanted afterwards."
 )
-REMINDER = (
-    "This session is downloading files. Keep them in the session scratch folder, and before "
-    "any tool opens them scan the folder once the set is complete: `local-security scan "
-    "path <folder>`, or the scan skill's script where that command is not installed. Stick "
-    "to ordinary public sources and stop at a refusal. For several files, write a manifest "
-    "and run web_download.py: it paces requests, stops at a refusal and scans the batch."
+ONE_WAY = (
+    "Blocked: files are downloaded only through the batch downloader, which paces requests, "
+    "stops at a refusal, keeps the files in session scratch and scans them once. Write a "
+    "manifest (one JSON object per line: url, name, why) in the scratch folder, then run: "
+    "python3 {downloader} <manifest path>. Reading a page to standard output stays allowed."
 )
 
 
@@ -96,6 +101,13 @@ def sibling(name: str):
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def downloader() -> str:
+    """The batch downloader beside this hook, written with `~` for the home folder."""
+    path = str(Path(__file__).with_name("web_download.py"))
+    home = os.path.expanduser("~")
+    return "~" + path[len(home):] if path.startswith(home + "/") else path
 
 
 def expand(path: str) -> str:
@@ -142,6 +154,7 @@ class Call:
         self.target = ""      # the folder a download lands in, '' when unknown
         self.dressed = ""     # how the request is disguised or rerouted, '' when it is not
         self.batch = False    # a web_download.py run
+        self.unscanned = False  # a web_download.py run with --no-scan
 
 
 def folder_of(cwd: str, value: str) -> str:
@@ -299,6 +312,8 @@ def read_python(args: list[str], guard) -> Call | None:
                 value = flag.partition("=")[2] or (args[m + 1] if m + 1 < len(args) else "")
                 if flag.partition("=")[0] == "--allow-host" and value:
                     call.hosts.append(value.lower())
+                if flag == "--no-scan":
+                    call.unscanned = True
             return call
     code = " ".join(args)
     if not PY_FETCH.search(code):
@@ -387,13 +402,14 @@ def main() -> int:
     state = guard.read(sid) if sid else {"hosts": {}}
 
     deny = ask = ""
-    downloads: list[str] = []
     for call in calls:
         remote = [h for h in call.hosts if not guard.is_local(h)]
         if payload.get("agent_id"):
             if remote or call.batch:
                 deny = deny or SUBAGENT.format(host=remote[0] if remote else "a batch download")
             continue
+        if call.unscanned:
+            ask = ask or UNSCANNED
         if not remote:
             continue
         if call.dressed:
@@ -405,27 +421,12 @@ def main() -> int:
                 ask = ask or REFUSED.format(host=host, code=guard.blocked(state, host))
         if call.download:
             where = bad_place(call.target, guard) if call.target else ""
-            if where:
-                deny = deny or PLACE.format(where=where)
-            elif call.target:
-                downloads.append(call.target)
+            deny = deny or (PLACE.format(where=where) if where else ONE_WAY.format(downloader=downloader()))
 
     if deny:
         emit({"permissionDecision": "deny", "permissionDecisionReason": deny})
-        return 0
-    if ask:                                       # said before any state is written: a bad state file must not lose it
+    elif ask:
         emit({"permissionDecision": "ask", "permissionDecisionReason": ask})
-    remind = False
-    if downloads and sid:
-        try:
-            with guard.locked(sid) as live:
-                for folder in downloads:
-                    guard.note_download_dir(live, folder)
-                remind = guard.reminder_due(live)
-        except (OSError, ValueError, TypeError, AttributeError, KeyError):
-            remind = False
-    if remind and not ask:
-        emit({"additionalContext": REMINDER})
     return 0
 
 

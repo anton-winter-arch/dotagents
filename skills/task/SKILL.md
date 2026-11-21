@@ -1,7 +1,6 @@
 ---
 name: task
 description: Hands one bounded task from a Claude Code session to an external agent harness - codex (Codex CLI, GPT-6 Astra), cursor (Cursor agent CLI, Grok 4.7) or antigravity (agy, Gemini) - in a detached git worktree with writes confined to a file allowlist, then hands the diff back for review before anything touches the real repo; a read-only mode returns the agent's answer as text instead, and /task tryout benchmarks a candidate harness. Invoked as /task <harness> when the user wants to give a task to Codex, Cursor, Grok, Antigravity or Gemini, have one of them draft or edit named files, or collect a read-only take from one. A single model's review of inlined files belongs to agent-review, and a panel to agent-conference.
-disable-model-invocation: true
 argument-hint: "<codex|cursor|antigravity> <task>"
 ---
 
@@ -128,10 +127,11 @@ read the table.
 - **Environment** is cut to `HOME`, `PATH`, `USER`, `LANG`, `SHELL` and a run-local
   `TMPDIR` (plus `CODEX_HOME` for Codex). Each CLI's shell re-sources the login profile,
   so keep secrets out of the profile.
-- **Codex runs** ask the user through the permission rules `Bash(*task.py*codex*)` and
-  `Bash(*codex_task.py*run*)`. They fire only when the command's text contains `task.py`
-  followed later by `codex`, or `codex_task.py` followed later by `run`.
-  A glob, an escape, a variable or a copied script can reach Codex without matching,
+- **Every run asks the user** through permission rules, two per harness
+  (`Bash(*task.py*<harness>*)`, `Bash(*<harness>_task.py*run*)`), plus
+  `Bash(*task.py*tryout*run*)`, `Bash(*harness_bench.py*run*)` and `Bash(*task.py*apply*)`.
+  They fire only when the command's text holds those words in that order.
+  A glob, an escape, a variable or a copied script can reach a harness without matching,
   and only a hook that parses the command the way the shell does would close that gap.
 
 ## Rails

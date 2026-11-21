@@ -15,7 +15,7 @@
 - In a public repo, gitignore `./tasks/`, `./.claude/inbox/`, etc.: working notes stay local. 
 - No agent may authorize a privilege change.
 - Telemetry, remote control, remote supervision, session export, etc. must be (and stay) disabled, without breaking core function (model calls, sign-in, etc.).
-- Agent web downloads land in the session scratch folder, never `~/Downloads/` or a repo root. Before opening it, check it and scan it with the `scan` skill's script. Never execute or source a newly downloaded file without checking it.
+- Only the main session downloads files, and they must be scanned before use. A subagent that needs files sends it a manifest and the main session fetches them into the session scratch folder (never ~/Downloads/ or a repo root) with `local-security`'s `web_download.py`. The `web_download.py` script scans the batch before use. Never run or source an unchecked download. Use the independent `/scan` skill for files that arrived another way or if `local-security` is not installed. The scanner has a sequential lock to prevent unintended memory spikes.
 
 ## TONE AND OUTPUT FORMAT
 ### IN CHAT SESSIONS

@@ -30,7 +30,6 @@ from urllib.parse import urlsplit
 REFUSAL_CODES = (401, 403, 429, 503)
 MIN_DELAY = 2.0          # seconds between requests to one host
 HOST_CAP = 20            # requests to one host per session
-REMIND_EVERY = 30 * 60   # seconds between download reminders in one session
 SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 # Government and military hosts: .gov and .mil, and their country forms such as gov.uk.
 STRICT = re.compile(r"(^|\.)(gov|mil)(\.[a-z]{2})?$")
@@ -106,7 +105,7 @@ def below_temp(path: str) -> bool:
 
 
 def _empty() -> dict:
-    return {"hosts": {}, "reminded_at": 0.0, "download_dirs": []}
+    return {"hosts": {}, "download_dirs": []}
 
 
 def _own(path: str) -> None:
@@ -196,16 +195,6 @@ def refuse(state: dict, host: str, code: int) -> None:
     entry = _entry(state, host)
     if not entry["blocked"]:
         entry["blocked"] = int(code)
-
-
-def reminder_due(state: dict, now: float | None = None) -> bool:
-    """True when the download reminder should fire, and marks it as fired."""
-    now = time.time() if now is None else now
-    last = float(state.get("reminded_at") or 0.0)
-    if last and now - last < number("WEB_GUARD_REMIND", REMIND_EVERY):
-        return False
-    state["reminded_at"] = now
-    return True
 
 
 def note_download_dir(state: dict, folder: str) -> None:

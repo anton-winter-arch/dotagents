@@ -61,6 +61,9 @@ CHUNK = 1 << 16
 # line, a truncated body) pass through urllib unwrapped.
 NETWORK_ERRORS = (urllib.error.URLError, http.client.HTTPException, OSError, ValueError)
 SCAN_SKILL = ("skills/scan/scripts/scan.py",)
+# Both scanners wait up to 1,800 s for the machine's one scan lock before they scan, so a
+# shorter limit here would kill a scan that is only waiting its turn.
+SCAN_TIMEOUT = 2700
 
 
 def sibling(name: str):
@@ -274,7 +277,8 @@ def scan(folder: str) -> tuple[str, str]:
     program = shutil.which("local-security")
     if program:
         try:
-            code = subprocess.run([program, "scan", "path", folder], capture_output=True, timeout=900).returncode
+            code = subprocess.run([program, "scan", "path", folder], capture_output=True,
+                                  timeout=SCAN_TIMEOUT).returncode
         except (OSError, subprocess.SubprocessError):
             code = 4
         if code in (0, 1):
@@ -291,7 +295,7 @@ def scan(folder: str) -> tuple[str, str]:
         if script.is_file():
             try:
                 code = subprocess.run([sys.executable, str(script), folder, "--json"],
-                                      capture_output=True, timeout=900).returncode
+                                      capture_output=True, timeout=SCAN_TIMEOUT).returncode
             except (OSError, subprocess.SubprocessError):
                 return "not scanned", "scan skill failed to run"
             if code == 0:
