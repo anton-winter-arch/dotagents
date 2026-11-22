@@ -134,6 +134,17 @@ class CliTest(unittest.TestCase):
         self.assertIn(str(cd.HOUSE_MAX + 5), out)
         self.assertNotIn("skills/alpha/SKILL.md -", out)
 
+    def test_house_cap_is_one_thousand_with_a_target_of_950(self):
+        self.assertEqual((cd.HOUSE_TARGET, cd.HOUSE_MAX), (950, 1000))
+
+    def test_over_target_under_cap_is_noted_and_passes(self):
+        self.add_skill("roomy", "description: " + "y" * (cd.HOUSE_TARGET + 10))
+        code, out = run("--root", str(self.root))
+        self.assertEqual(code, 0, out)
+        self.assertIn("NOTE", out)
+        self.assertIn("skills/roomy/SKILL.md", out)
+        self.assertIn("1 checked, 0 failing", out)
+
     def test_colon_in_plain_scalar_fails(self):
         self.add_skill("colon", "description: Does this: that.")
         code, out = run("--root", str(self.root))

@@ -918,7 +918,7 @@ wired in §7) - GLOBAL. After a write to a `SKILL.md`, or to a markdown file
 directly under an `agents/` or `commands/` folder, it checks that file's
 frontmatter description with skill-authoring's `scripts/check_descriptions.py`,
 reached through `~/.claude/skills/skill-authoring/` (or `SKILL_DESCRIPTION_CHECKER`),
-so the rule lives in one place. A description over the 800-character house cap,
+so the rule lives in one place. A description over the 1000-character house cap,
 or a plain scalar containing `: `, **FAILS LOUD** (exit 2, reason on stderr),
 because both pass Claude Code silently and break stricter harnesses such as
 Copilot's skill loader. Paths with a `tests` or `fixtures` component are skipped,
@@ -1338,7 +1338,7 @@ Script: [`../../hooks/reaper.py`](../../hooks/reaper.py).
 Hooks on the fetch tool (matcher `WebFetch`): PreToolUse **blocking** (a JSON `deny` or `ask`), PostToolUse and PostToolUseFailure recording only.
 A fetch leaves from the station's own address, so a host that refuses one must not be asked again.
 After a call the hook reads the result's status; a 401, 403, 429 or 503 records the host as blocked for the session.
-Before a call a blocked host, or a host past 20 requests in the session, is refused: `deny` for a subagent, `ask` for the main session.
+Before a call a blocked host, or a host past 100 requests in the session (`WEB_GUARD_CAP` overrides), is refused: `deny` for a subagent, `ask` for the main session.
 Otherwise the call is booked a slot at least 2 seconds after the previous one to that host and waits for it inside the hook; a wait over 6 seconds is refused with the time stated, and its slot is given back.
 A government or military host, in the country forms too (`gov.uk`), is `deny` for a subagent and `ask` for the main session; that rule reads only the address, so it holds with no session id and with unusable state.
 Nothing clears a refusal inside a session, an approved `ask` included.

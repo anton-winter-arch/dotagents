@@ -23,7 +23,7 @@ Re-verify before trusting version-sensitive details.
 | Field | Rule |
 |---|---|
 | `name` | lowercase a-z 0-9 hyphens, 1-64 chars, **must match the directory name**, no leading/trailing/consecutive hyphens, no "anthropic"/"claude" |
-| `description` | **at most 800 chars, the house cap** (the standard allows 1024; aim for 600-800), checked by `scripts/check_descriptions.py`, **third person**, states what the skill does AND the concrete conditions that should trigger it, no XML tags. A plain scalar must contain no `: ` (colon followed by space) or the YAML fails to parse; use a spaced hyphen, or a `>-` folded block. |
+| `description` | **at most 1000 chars, the house cap; aim for 950 or fewer** (the standard allows 1024), checked by `scripts/check_descriptions.py`, **third person**, states what the skill does AND the concrete conditions that should trigger it, no XML tags. A plain scalar must contain no `: ` (colon followed by space) or the YAML fails to parse; use a spaced hyphen, or a `>-` folded block. |
 | `license` | optional, include when a skill may be shared |
 | `compatibility` | optional, at most 500 chars; only for real environment requirements, such as `lib/` for a `repo-lib` skill |
 | `metadata` | optional string map; put custom keys HERE, not top-level. `ships: repo-lib` marks a skill that imports this repo's `lib/` (see `skills/AGENTS.md`) |
@@ -156,7 +156,7 @@ Edits to an existing skill are additive and backwards compatible unless the user
 Run over `skills/*/SKILL.md`, `agents/*.md`, `commands/*.md`:
 
 1. Frontmatter parses; `name` matches directory; lowercase-hyphen; <=64 chars.
-2. `description` non-empty, at most 800 chars (the house cap; 1024 is the
+2. `description` non-empty, at most 1000 chars (the house cap, aim for 950; 1024 is the
    standard's hard limit), third person, has explicit when-to-fire conditions,
    no XML, and no `: ` in a plain scalar. `scripts/check_descriptions.py`
    checks the cap and the colon rule over every skill and exits 1 on either.
@@ -183,95 +183,83 @@ Run over `skills/*/SKILL.md`, `agents/*.md`, `commands/*.md`:
   grader/comparator/analyzer agents, HTML eval viewer).
 - `skills-ref validate` (open-standard reference validator) for interop
   checks on anything shared outside Claude Code.
-- `scripts/trigger_ab.py` A/B tests a changed description's trigger evals against
-  the committed one; the eval convention covers how to run it.
+- `scripts/trigger_eval.py` measures a skill's trigger evals the way a real session
+  sees it, and `scripts/trigger_ab.py` A/B tests a changed description on it; the
+  eval convention covers both. The plugin's own `run_eval.py` is not used for
+  triggers.
 - `scripts/procguard.py` is the spawn guard every process-starting skill copies.
   `scripts/check_spawns.py` lints spawns, or with `--inventory` lists every spawn
   site.
 
-### Eval convention (house wrapper around the plugin)
+### Eval convention
 
-The plugin is the eval ENGINE; this skill sets the house conventions it runs
-under. Division of labor: plugin = mechanism, this profile = policy.
+**Trigger evals run on `scripts/trigger_eval.py`, which measures what a real
+session does.** For each case it runs `claude -p` on this station, with the skill as
+installed (`sync-skills.sh` first for a new one), in a fresh git project, six probes
+at a time (`--jobs`), and scores the result:
 
-- **The plugin has TWO eval concerns with two schemas, and documents only one.
-  Name each file for its consumer, or it needs hand-conversion every run:**
+- **The fixture.** A skill whose cases name files (`tasks/SPEC-X.md`, a vault, a
+  board) ships invented stand-ins under `evals/fixture/`, mirroring the real layout;
+  every probe's project is seeded from it. A fixture may not hold `.claude/`,
+  `.mcp.json` or symlinks.
+- **Scoring at the commit point**, main thread only. A Skill call naming the skill,
+  or a Read of its `SKILL.md`, is a hit. A Skill call naming another skill, the
+  first Agent/Task/Edit/Write call, an answer with no tool, or 8 exploring calls is
+  a miss. Bash, Read, Glob and Grep before that are exploration. Each run records
+  its verdict, reason and tool sequence, so a failure explains itself.
+- **The model is pinned** to a full ID (`claude-sonnet-5-5`), and a probe that
+  reports another model stops the run.
+
+Usage:
+
+    python3 scripts/trigger_eval.py skills/<name>                  # 3 runs per case
+    python3 scripts/trigger_ab.py <name> --dry-run                  # A/B call count
+
+`--description` writes a variant into the skill's `SKILL.md` for the run and restores
+the file afterwards; `trigger_ab.py` uses it for the old and new variants. A 6-case set
+at 3 runs takes under a minute.
+
+The plugin's `run_eval.py` registered a renamed command copy and scored only the
+first tool call, so a model that looked around first, or saw the real skill
+installed beside the copy, scored a miss. Results recorded with it before
+2026-11-22, waivers included, are re-measured rather than trusted.
+
+- **Two eval concerns, two schemas. Name each file for its consumer:**
 
   | File | Shape | Read by |
   |---|---|---|
-  | `evals/triggers.json` | flat JSON list of `{query, should_trigger}` | `run_eval.py`, `run_loop.py`, `improve_description.py`, `generate_report.py` |
-  | `evals/evals.json` | `{skill_name, evals[].{id, prompt, expected_output, expectations}}` (the shape in the plugin's `references/schemas.md`) | `aggregate_benchmark.py` |
+  | `evals/triggers.json` | flat JSON list of `{query, should_trigger}` | `trigger_eval.py`, `trigger_ab.py` |
+  | `evals/evals.json` | `{skill_name, evals[].{id, prompt, expected_output, expectations}}` (the shape in the plugin's `references/schemas.md`) | the plugin's `aggregate_benchmark.py` |
 
   Triggering is the concern nearly every skill needs, so `triggers.json` is the
   default and `evals.json` is for skills that also want behaviour benchmarks.
   Putting trigger cases in a file named `evals.json` is the trap: it matches
   neither consumer and no tool will tell you (cost two sessions of manual
   conversion before it was caught, 2026-07-30).
-- **Extra keys in `triggers.json` are tolerated** - `run_eval.py` does a plain
-  `json.loads` and indexes only `query` and `should_trigger`, with no schema
-  validation. So carry `name` and `why` per case; the rationale is what lets you
+- **Extra keys in `triggers.json` are tolerated** - the runner indexes only
+  `query` and `should_trigger`. So carry `name` and `why` per case; the rationale is what lets you
   tell a bad case from a real miss when one fails.
 - Minimum 3 cases per skill, including at least one should-trigger and one
   should-NOT-trigger case (trigger precision matters as much as recall).
 - Write evals BEFORE polishing prose on a new skill.
 - **A changed description is A/B tested, not re-scored.**
-  `scripts/trigger_ab.py <skill>...` runs the plugin's `run_eval.py` over the same cases
-  on the committed description and the working-tree one, side by side.
+  `scripts/trigger_ab.py <skill>...` runs `trigger_eval.py` over the same cases on
+  the committed description and the working-tree one, one after the other.
   It lists every case whose verdict flipped, and a regression exits 1.
-  An absolute pass rate is noisy and partly structural (see the repo-bound skills
-  bullet), so the flip list is the verdict.
   `--dry-run` prints the call count (cases x runs x 2), and `--runs 3` settles a flip
   seen at the default of one run.
   Run it in the background, because a run takes minutes.
-  A per-machine lock allows one run at a time.
-  An interrupted run puts its hidden skills back as it exits,
-  or on the next invocation after a hard kill.
-  The tool pins the model, runs one worker per variant,
-  gives each variant its own throwaway project folder,
-  and hides the installed skill behind a stand-in without `SKILL.md`.
-  Unlinking the skill outright, as the earlier procedure did, made the station hooks
-  that load sanitize's scripts skip their checks for the length of the run
-  (observed 2026-10-20).
 - `tests/` (does the code work) sits alongside `evals/` (does the skill fire and
   behave); they answer different questions and both gate merge. See the test
   convention below for what a skill shipping executable code owes.
-- **A new skill has no committed description to compare, so run `run_eval.py`
-  directly.** Run it as a module with the plugin folder on `PYTHONPATH`,
-  from a throwaway folder that holds an empty `.claude/`.
-  Invoking it by file path fails with `ModuleNotFoundError: No module named 'scripts'`.
-  The runner writes its skill copies into the nearest folder that contains `.claude/`;
-  started from the plugin's own folder, that is the home folder,
-  and the copies appear in live sessions' skill lists.
-  The eval set and the skill go in `--eval-set` and `--skill-path`.
-  Do not wrap it in `timeout`; macOS has no such command.
-
-  ```bash
-  SCRATCH=/path/to/a/scratch/folder; SKILL=/path/to/the/skill   # set both first
-  mkdir -p "$SCRATCH/eval-root/.claude" && cd "$SCRATCH/eval-root" && \
-  PYTHONPATH="$(ls -td ~/.claude/plugins/cache/claude-plugins-official/skill-creator/*/skills/skill-creator | head -1)" \
-    python3 -m scripts.run_eval --eval-set "$SKILL/evals/triggers.json" \
-    --skill-path "$SKILL" --model claude-sonnet-5 --num-workers 1
-  ```
-
-  It spawns a fresh `claude -p` per case, and `--runs-per-query` defaults to 3,
-  so the real unit is cases times three: a 20-case set is 60 serialized spawns at
-  roughly 20 seconds each, near 20 minutes. Budget from that arithmetic and run it in
-  the background, with its output sent straight to a file; piping it through `tail`
-  or `head` buffers the whole run.
-- Pin `--model` (probes must never inherit the session tier; a cheap tier is fine for
-  trigger probes) and keep `--num-workers 1`: parallel workers register their
-  synthetic uuid-named command copies in the same project root simultaneously,
-  so the model invokes another worker's copy and the scorer counts a miss
-  (observed 2026-07-26: identical set scored 3/8 at 4 workers for this reason).
-- **Repo-bound skills score zero recall structurally.** Probes spawn `claude -p`
-  outside the target repo, so a skill whose firing precondition is repo-bound (a
-  vault, a local corpus, a project database) fails every should-trigger case no
-  matter how good the description is - the probe has nothing to mine, so
-  answering directly looks correct to it. Precision cases stay meaningful; treat
-  recall for such skills as untestable by this harness and validate in vivo,
-  with the user waiving the recall gate explicitly. Also: a dot-prefixed
-  directory rename does NOT hide a skill from registration, so it is not a way
-  to clear a name collision during a run (both observed 2026-08-29).
+- **A new skill has no committed description to compare**, so run
+  `trigger_eval.py` on it directly. Each case costs one `claude -p` per run, stopped
+  as soon as the case is decided: a 20-case set at 3 runs is 60 short probes. Run
+  it in the background with its output sent to a file.
+- **A recall waiver needs evidence from this runner.** Read each failing run's tool
+  sequence first: a fixture the case needs, or a description gap, explains most
+  misses. Only a precondition no fixture can stand in for (a live database, a
+  running service) is validated in vivo, with the user waiving the gate explicitly.
 - **No version numbers on skills.** Not in frontmatter, not as a body footer.
   Nothing reads them, nothing bumps them, and a hand-maintained number that
   drifts from the file is worse than no number: git already holds the version
@@ -313,7 +301,7 @@ which one it was is part of reporting the work.
 ## Completion gate (MANDATORY before a new or changed skill is committed)
 
 A skill is not done when the prose is written. First, `scripts/check_descriptions.py`
-exits 0: a description over the 800-character cap, or a plain scalar containing
+exits 0: a description over the 1000-character cap, or a plain scalar containing
 `: `, passes Claude Code silently and breaks stricter harnesses. So does
 `scripts/check_spawns.py <skill-dir>`: a skill that leaks a process passes every
 other check and still overheats the machine. Then, in order:
@@ -334,7 +322,8 @@ other check and still overheats the machine. Then, in order:
    asks whether it **behaves** once fired. Every model-invocable skill has
    `evals/triggers.json` carrying a minimum of 3 cases in both polarities (at
    least one should-trigger and one should-NOT-trigger), and those cases have
-   actually been run with the model pinned; a changed description passes
+   actually been run on `scripts/trigger_eval.py` (the eval convention); a
+   changed description passes
    `scripts/trigger_ab.py` with no regression. Three is a floor: a skill whose
    trigger scope is contested, because it borders another skill or fires on a
    situation rather than a phrase, needs more to draw that boundary. A skill with

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Tests for skills/skill-authoring/scripts/trigger_ab.py.
 
-A fake skill-creator plugin stands in for run_eval.py: it scores cases from the
-description it is handed, records the folder it ran in and what the skill's station
-link looked like mid-run, and spends nothing. A temporary git repo holds the skill at
-its old and new description.
+A fake `claude` on PATH stands in for the model: it reads the skill's SKILL.md as the run
+left it, decides from its description and the query whether to call the skill, logs what
+it saw, and spends nothing. A temporary git repo holds the skill at its old and new
+description.
 Run: python3 -m unittest discover -s skills/skill-authoring/tests -v
 """
 
@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -22,46 +23,27 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE.parent / "scripts" / "trigger_ab.py"
 
-FAKE_RUN_EVAL = r'''
-import argparse, json, os, sys
+FAKE_CLAUDE = r'''#!/usr/bin/env python3
+import json, os, sys, time
 from pathlib import Path
-p = argparse.ArgumentParser()
-for flag in ("--eval-set", "--skill-path", "--description", "--num-workers", "--runs-per-query",
-             "--timeout", "--model"):
-    p.add_argument(flag)
-a = p.parse_args()
-cwd = Path.cwd()
-if not (cwd / ".claude").is_dir() or cwd == Path.home():
-    sys.exit(3)
-link = Path(os.environ["TRIGGER_AB_LINK_DIR"]) / Path(a.skill_path).name
+args = sys.argv[1:]
+query = sys.stdin.read()
+model = args[args.index("--model") + 1]
+desc = Path(os.environ["FAKE_SKILL_MD"]).read_text()
+new = "NEW" in desc
 with open(os.environ["FAKE_LOG"], "a") as log:
-    log.write(json.dumps({"link_is_symlink": link.is_symlink(),
-                          "skill_md": (link / "SKILL.md").exists(),
-                          "scripts": (link / "scripts" / "tool.py").exists(),
-                          "workers": a.num_workers, "model": a.model}) + "\n")
-if os.environ.get("FAKE_FAIL_NEW") and "NEW" in a.description:
-    import time
-    while not os.path.exists(os.environ["FAKE_PIDS"]):   # fail once the old variant is running
-        time.sleep(0.1)
-    sys.exit(5)
+    log.write(json.dumps({"model": model, "cwd_is_git": Path(".git").is_dir()}) + "\n")
 if os.environ.get("FAKE_SLEEP"):
-    with open(os.environ["FAKE_PIDS"], "a") as pids:
-        pids.write(f"{os.getpid()}\n")
-    if os.environ.get("FAKE_TOKEN"):   # a probe-like grandchild the cap must reach too
-        import subprocess
-        subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)", os.environ["FAKE_TOKEN"]])
-    import time
+    import subprocess
+    subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)", os.environ["FAKE_TOKEN"]])
     time.sleep(float(os.environ["FAKE_SLEEP"]))
-new = "NEW" in a.description
-results = []
-for c in json.loads(Path(a.eval_set).read_text()):
-    ok = not (("REGRESS" in c["query"] and new) or ("GAIN" in c["query"] and not new))
-    trig = int(ok) if c["should_trigger"] else int(not ok)
-    results.append({"query": c["query"], "should_trigger": c["should_trigger"],
-                    "triggers": trig, "runs": 1, "pass": ok})
-print("progress line before the JSON")
-print(json.dumps({"results": results, "summary": {"passed": sum(r["pass"] for r in results),
-                                                  "failed": 0, "total": len(results)}}))
+def out(e): print(json.dumps(e), flush=True)
+out({"type": "system", "subtype": "init", "model": model})
+fire = "steady" in query or (("REGRESS" in query or "GAIN" in query) and not new)
+tool = {"type": "tool_use", "name": "Skill" if fire else "Agent",
+        "input": {"skill": "demo"} if fire else {"prompt": "x"}}
+out({"type": "assistant", "parent_tool_use_id": None, "message": {"content": [tool]}})
+out({"type": "result", "is_error": False})
 '''
 
 
@@ -101,8 +83,6 @@ class TriggerABTest(unittest.TestCase):
         self.repo = self.tmp / "repo"
         skill = self.repo / "skills" / "demo"
         (skill / "evals").mkdir(parents=True)
-        (skill / "scripts").mkdir()
-        (skill / "scripts" / "tool.py").write_text("# a script a hook would load\n")
         (skill / "SKILL.md").write_text(skill_md("OLD wording. Use when asked."))
         (skill / "evals" / "triggers.json").write_text(json.dumps([
             {"query": "steady case", "should_trigger": True},
@@ -112,24 +92,26 @@ class TriggerABTest(unittest.TestCase):
         git(["init", "-q", "-b", "main"], self.repo)
         git(["-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"], self.repo)
         git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"], self.repo)
-        self.creator = self.tmp / "skill-creator"
-        (self.creator / "scripts").mkdir(parents=True)
-        (self.creator / "scripts" / "__init__.py").write_text("")
-        (self.creator / "scripts" / "run_eval.py").write_text(FAKE_RUN_EVAL)
         self.links = self.tmp / "station-skills"
-        self.links.mkdir()
+        self.links.mkdir(parents=True)
         (self.links / "demo").symlink_to(skill, target_is_directory=True)
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        fake = bin_dir / "claude"
+        fake.write_text(FAKE_CLAUDE)
+        fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
         self.log = self.tmp / "fake.log"
         self.env = dict(os.environ, TRIGGER_AB_TEST="1", TRIGGER_AB_LINK_DIR=str(self.links),
-                        FAKE_LOG=str(self.log), XDG_STATE_HOME=str(self.tmp / "state"))
+                        FAKE_LOG=str(self.log), XDG_STATE_HOME=str(self.tmp / "state"),
+                        FAKE_SKILL_MD=str(skill / "SKILL.md"),
+                        PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def ab(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run([sys.executable, str(SCRIPT), "demo", "--root", str(self.repo),
-                               "--skill-creator", str(self.creator), *args],
-                              env=self.env, capture_output=True, text=True, timeout=120)
+    def ab(self, *args: str, env=None, skill="demo") -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(SCRIPT), skill, "--root", str(self.repo), *args],
+                              env=env or self.env, capture_output=True, text=True, timeout=120)
 
     def change_description(self):
         (self.repo / "skills" / "demo" / "SKILL.md").write_text(skill_md("NEW wording. Use when asked."))
@@ -144,7 +126,7 @@ class TriggerABTest(unittest.TestCase):
         self.change_description()
         r = self.ab("--dry-run", "--runs", "3")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("1 skill(s), 18 probe calls on claude-sonnet-5", r.stdout)
+        self.assertIn("1 skill(s), 18 probe calls on claude-sonnet-5-5", r.stdout)
         self.assertFalse(self.log.exists())
 
     def test_regression_and_gain_are_reported_and_a_regression_exits_1(self):
@@ -157,33 +139,29 @@ class TriggerABTest(unittest.TestCase):
         saved = list((self.tmp / "state" / "skill-authoring" / "trigger-ab").glob("*/demo.json"))
         self.assertEqual(len(saved), 1)
 
-    def test_each_variant_runs_in_its_own_project_with_one_worker_and_the_pinned_model(self):
+    def test_probes_run_in_a_git_project_with_the_pinned_model(self):
         self.change_description()
         self.ab()
         runs = [json.loads(line) for line in self.log.read_text().splitlines()]
-        self.assertEqual(len(runs), 2)
+        self.assertEqual(len(runs), 6)
         for run in runs:
-            self.assertEqual(run["workers"], "1")
-            self.assertEqual(run["model"], "claude-sonnet-5")
+            self.assertEqual(run["model"], "claude-sonnet-5-5")
+            self.assertTrue(run["cwd_is_git"])
 
-    def test_skill_is_hidden_without_breaking_its_scripts_then_the_link_returns(self):
+    def test_the_working_tree_skill_file_is_restored(self):
         self.change_description()
-        original = os.readlink(self.links / "demo")
+        md = self.repo / "skills" / "demo" / "SKILL.md"
+        before = md.read_bytes()
         self.ab()
-        for run in (json.loads(line) for line in self.log.read_text().splitlines()):
-            self.assertFalse(run["link_is_symlink"])
-            self.assertFalse(run["skill_md"])
-            self.assertTrue(run["scripts"])
-        self.assertTrue((self.links / "demo").is_symlink())
-        self.assertEqual(os.readlink(self.links / "demo"), original)
+        self.assertEqual(md.read_bytes(), before)
 
-    def test_a_stand_in_left_by_a_killed_run_is_restored_at_start(self):
+    def test_a_stand_in_left_by_an_older_run_is_restored_at_start(self):
         original = os.readlink(self.links / "demo")
         (self.links / "demo").unlink()
         stand_in = self.links / "demo"
         stand_in.mkdir()
         (stand_in / ".trigger-ab-hidden").write_text(original)
-        (stand_in / "scripts").symlink_to(self.repo / "skills" / "demo" / "scripts")
+        (stand_in / "evals").symlink_to(self.repo / "skills" / "demo" / "evals")
         r = self.ab()
         self.assertIn("restored", r.stdout)
         self.assertTrue((self.links / "demo").is_symlink())
@@ -191,65 +169,24 @@ class TriggerABTest(unittest.TestCase):
 
     def test_names_and_refs_that_could_escape_are_refused(self):
         self.change_description()
-        r = subprocess.run([sys.executable, str(SCRIPT), "../demo", "--root", str(self.repo),
-                            "--skill-creator", str(self.creator)], env=self.env,
-                           capture_output=True, text=True, timeout=60)
+        r = self.ab(skill="../demo")
         self.assertEqual(r.returncode, 2)
         self.assertIn("not a skill name", r.stderr)
-        # argparse refuses `--base-ref --output=...` on its own; the `=` form reaches the check.
         r = self.ab("--base-ref=--output=/tmp/x")
         self.assertEqual(r.returncode, 2)
         self.assertIn("not a git ref", r.stderr)
         self.assertFalse(self.log.exists())
 
-    def test_a_second_run_waits_its_turn_instead_of_touching_the_first(self):
-        self.change_description()
-        lock_dir = self.tmp / "state" / "skill-authoring" / "trigger-ab"
-        lock_dir.mkdir(parents=True)
-        with open(lock_dir / "lock", "w") as held:
-            import fcntl
-            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            r = self.ab()
-        self.assertEqual(r.returncode, 2)
-        self.assertIn("another trigger_ab run is active", r.stderr)
-        self.assertTrue((self.links / "demo").is_symlink())
-        self.assertFalse(self.log.exists())
+    def test_old_runner_flags_are_still_accepted(self):
+        r = self.ab("--jobs", "4", "--skill-creator", "/x", "--variant-timeout", "9")
+        self.assertEqual(r.returncode, 0, r.stderr)
 
-    def test_sigterm_mid_run_restores_the_link_and_stops_the_runner(self):
-        import signal
-        import time
-        self.change_description()
-        original = os.readlink(self.links / "demo")
-        pids = self.tmp / "pids"
-        env = dict(self.env, FAKE_SLEEP="30", FAKE_PIDS=str(pids))
-        p = subprocess.Popen([sys.executable, str(SCRIPT), "demo", "--root", str(self.repo),
-                              "--skill-creator", str(self.creator)], env=env,
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        deadline = time.time() + 20
-        while time.time() < deadline and not (pids.exists() and len(pids.read_text().split()) == 2):
-            time.sleep(0.1)
-        self.assertFalse((self.links / "demo").is_symlink(), "the skill should be hidden mid-run")
-        p.send_signal(signal.SIGTERM)
-        _, err = p.communicate(timeout=20)
-        self.assertEqual(p.returncode, 128 + signal.SIGTERM, err)
-        self.assertIn("hidden skills restored", err)
-        self.assertTrue((self.links / "demo").is_symlink())
-        self.assertEqual(os.readlink(self.links / "demo"), original)
-        time.sleep(0.5)
-        for pid in map(int, pids.read_text().split()):
-            with self.assertRaises(ProcessLookupError):
-                os.kill(pid, 0)
-
-    def run_hung(self, *args: str, **fake: str) -> subprocess.CompletedProcess:
-        """Run with a fake whose variants hang and start a tokened grandchild; assert the
-        link is back and nothing tokened survives, then return the result."""
+    def test_a_hung_probe_stops_at_its_timeout_with_no_survivor(self):
         import signal
         import time
         import uuid
         self.change_description()
-        original = os.readlink(self.links / "demo")
         token = f"trigger-ab-test-{uuid.uuid4().hex}"
-        env = dict(self.env, FAKE_SLEEP="120", FAKE_PIDS=str(self.tmp / "pids"), FAKE_TOKEN=token, **fake)
 
         def tokened():
             out = subprocess.run(["ps", "-A", "-o", "pid=,command="], capture_output=True, text=True,
@@ -257,40 +194,14 @@ class TriggerABTest(unittest.TestCase):
             return [int(line.split()[0]) for line in out.splitlines() if token in line]
         started = time.monotonic()
         try:
-            r = subprocess.run([sys.executable, str(SCRIPT), "demo", "--root", str(self.repo),
-                                "--skill-creator", str(self.creator), *args],
-                               env=env, capture_output=True, text=True, timeout=90)
-            self.assertLess(time.monotonic() - started, 45, "the run waited out a hung variant")
-            self.assertEqual(os.readlink(self.links / "demo"), original)
+            r = self.ab("--timeout", "2", env=dict(self.env, FAKE_SLEEP="60", FAKE_TOKEN=token))
+            self.assertLess(time.monotonic() - started, 45, "the run waited out hung probes")
+            self.assertEqual(r.returncode, 0, r.stderr)   # every probe missed, so old and new agree
             time.sleep(0.5)
             self.assertEqual(tokened(), [], "a tokened probe outlived the run")
-            for pid in map(int, (self.tmp / "pids").read_text().split()):
-                with self.assertRaises(ProcessLookupError):
-                    os.kill(pid, 0)
-            return r
         finally:
-            for pid in tokened():   # only this test's own tokened processes
+            for pid in tokened():
                 os.kill(pid, signal.SIGKILL)
-
-    def test_a_hung_variant_stops_at_its_cap_with_no_survivor(self):
-        r = self.run_hung("--variant-timeout", "2")
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn("passed the 2 s variant limit", r.stderr)
-
-    def test_a_failed_variant_stops_the_hung_one_instead_of_waiting_for_its_cap(self):
-        r = self.run_hung(FAKE_FAIL_NEW="1")
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn("run_eval exited 5", r.stderr)
-
-    def test_a_real_folder_at_the_station_path_is_refused(self):
-        self.change_description()
-        (self.links / "demo").unlink()
-        (self.links / "demo").mkdir()
-        (self.links / "demo" / "SKILL.md").write_text("a real local skill")
-        r = self.ab()
-        self.assertEqual(r.returncode, 2)
-        self.assertIn("is a real folder, not a link", r.stderr)
-        self.assertEqual((self.links / "demo" / "SKILL.md").read_text(), "a real local skill")
 
 
 if __name__ == "__main__":

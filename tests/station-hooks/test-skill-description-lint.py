@@ -55,9 +55,9 @@ class SkillDescriptionLintTest(unittest.TestCase):
         self.assertEqual((code, err), (0, ""))
 
     def test_over_cap_exits_2_with_length(self):
-        code, err = run(str(self.write(skill("x" * 805))))
+        code, err = run(str(self.write(skill("x" * 1005))))
         self.assertEqual(code, 2)
-        self.assertIn("805 characters", err)
+        self.assertIn("1005 characters", err)
         self.assertIn("house cap", err)
 
     def test_colon_in_plain_scalar_exits_2(self):

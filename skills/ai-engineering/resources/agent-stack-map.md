@@ -456,6 +456,34 @@ Which other harnesses read `.agents/skills` comes only from secondary sources, a
 | PEFT | Apache-2.0 | Adaptation | Parameter-efficient fine-tuning (LoRA-style). | [repo](https://github.com/huggingface/peft) |
 | Axolotl | Apache-2.0 | Training stack | Popular open fine-tuning stack. | [repo](https://github.com/axolotl-ai-cloud/axolotl) |
 
+### G.1 - Weight-space programming: a frontier model edits weights directly (researched 2026-11-22)
+
+"Sparks of Weight-Space Programming" (Takehi, Teoh, Zhang, Khattab, MIT CSAIL; [blog post](https://rikiyat.github.io/blog/weight-space-programming/), 2026-11-02, with [logs and harness](https://github.com/RikiyaT/lm_understand-logs)) gives GPT-6 Astra a Python kernel over a network's raw weights, no GPU and no optimizer, and asks it to read, fix or write networks against a plain-language spec.
+It is a blog post with released logs, not a peer-reviewed or arXiv paper, and the authors state "Weight-Space Programming is not a method."
+
+- **The widely shared result** (their experiment 8): on Qwen3.5-0.8B with thinking on, Astra traced looping to one direction written by the MLPs of layers 15 and 19 and subtracted it from 64 output columns in each layer, which is 131,072 weights (0.016%). With 50 forward passes as its budget, MATH-500 went from 7.9% to 48.1%, GSM8K from 13.8% to 67.1% and IFEval from 21.0% to 62.3%.
+- **What the number measures.** The base model hit the 32,768-token limit on 93.0% of problems, and 33.1% after the edit. Most of the gain is the model no longer looping until it runs out of tokens, which is a directional-ablation edit of the kind steering work already does, and outside critics said so ([R&D World](https://www.rdworldonline.com/mit-team-says-gpt-6-astra-can-fix-an-ai-model-by-editing-its-weights-critics-say-the-method-was-standard-ml-engineering/)). The authors: "Editing weights could remove an obstacle that hid an ability, but it could not add an ability the model lacked." The same attempt on Gemma 3 270M did not work.
+- **The other seven experiments** are on small purpose-built networks: naming the game a PPO policy was trained on, the shape a diffusion model draws, a transformer's training language, fixing a car policy by editing 3.5% of its weights, and writing Breakout, Seaquest, Asterix and 9x9 Go networks from scratch.
+- **Replications** appeared within days, including reruns with Claude models in place of Astra ([MatinKhajavi/Weight-Space-Programming](https://github.com/MatinKhajavi/Weight-Space-Programming)) and an open tooling effort ([openwsp/openwsp](https://github.com/openwsp/openwsp)). The edited model is on Hugging Face as `RikiyaT/Qwen3.5-0.8B-weight-space-programming`. GitHub recognizes no license on the authors' logs repo or on the Claude replication (checked 2026-11-22), so read them and do not copy their code; openwsp is MIT.
+
+**Stance:** a research capability, not an adaptation tool. The transferable pattern is narrow and real: when a small local model degenerates (repetition, endless thinking), a frontier model given read access to its weights and a small evaluation budget can find and remove the direction responsible, after cheaper fixes (thinking off, decoding penalties) are ruled out. It does not replace fine-tuning (this section's table) for teaching a model anything new, and a capability score after such an edit is only comparable when the token-limit hit rate is reported beside it.
+
+### G.2 - Inkling: Thinking Machines' open-weight models (researched 2026-11-22)
+
+Thinking Machines Lab releases its models with Apache 2.0 weights plus a separate [acceptable use policy](https://thinkingmachines.ai/model-acceptable-use-policy/), and sells fine-tuning on them through its Tinker service.
+
+| Model | Released | Size | Inputs | Runs locally |
+|---|---|---|---|---|
+| [Inkling](https://thinkingmachines.ai/model-card/inkling/) | 2026-07-15 | 975B total / 41B active MoE, up to 1M context | text, image, audio | No: data-center class |
+| [Inkling 2 Small](https://thinkingmachines.ai/news/inkling-2-small/) | announced 2026-11-05, weights 2026-11-12 | 594B total / 17B active MoE | text, image | No |
+| [Inkling 2 Mini](https://thinkingmachines.ai/news/inkling-2-mini/) | 2026-11-20 | 26.4B total / 3.4B active MoE, looped; about 20 GB; up to 1M context | text, image | Yes: a Mac with 32 GB or more, or a DGX Spark |
+
+**Inkling 2 Mini is the local one.** It stores 24 layers and runs the middle 12 three times per token, so it does 48 layer passes and 5.4B weight activations per token from 26.4B stored weights. The weights ship natively in NVFP4 with the last four layers in MXFP8, which avoids a lossy conversion step. The [model card](https://huggingface.co/thinkingmachines/Inkling-2-Mini) lists Ollama ([`inkling-2-mini`](https://ollama.com/library/inkling-2-mini), with an MLX-backed `26b-a5b-nvfp4` tag), llama.cpp and Unsloth GGUFs, vLLM, SGLang, Transformers and Docker Model Runner; it does not list mlx-lm or LM Studio. The card warns that "support for looped models in local runtimes is new, and speed varies by runtime and hardware."
+
+The lab's own numbers lead in 32 of 48 benchmarks against same-class open models and are strongest on coding-agent suites. The lab also says it trails Qwen3.8-27B on multi-turn chat and many-constraint instructions, and that its knowledge is limited by its size. None of this was independently re-run here.
+
+**Stance:** the 3.4B-active looped design makes it the most capable model in this size class to try on a 32 GB or larger Mac for agentic coding, but it does not fit a 16 GB machine. Measure its speed on the runtime you will actually use before committing, because looped-layer support is days old in every local runtime.
+
 ---
 
 ## Section H - RL / agent optimization / self-improvement

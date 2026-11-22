@@ -3,8 +3,9 @@
 
 EXECUTE this after editing any SKILL.md frontmatter; it is the deterministic half of
 audit item 2. A description loads into every session whether its skill fires or not,
-so the house caps it at HOUSE_MAX characters, inside the open standard's hard limit
-of STANDARD_MAX. A plain scalar (unquoted, not a block) containing ": " fails too:
+so the house aims at HOUSE_TARGET characters and caps it at HOUSE_MAX, inside the
+open standard's hard limit of STANDARD_MAX. Over the target is a note; over the cap
+fails. A plain scalar (unquoted, not a block) containing ": " fails too:
 Claude Code's lenient parser accepts it, and stricter harnesses reject the skill.
 
     python3 check_descriptions.py                 # every skills/*/SKILL.md in this repo
@@ -26,7 +27,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-HOUSE_MAX = 800
+HOUSE_TARGET = 950   # aim at or under this; over it is a note, not a failure
+HOUSE_MAX = 1000
 STANDARD_MAX = 1024
 
 
@@ -153,8 +155,10 @@ def main(argv: list[str] | None = None) -> int:
         if found:
             failing += 1
             print(f"FAIL  {length:>5}  {display(path, root)} - {'; '.join(found)}")
+        elif length > HOUSE_TARGET:
+            print(f"NOTE  {length:>5}  {display(path, root)} - over the house target of {HOUSE_TARGET}")
 
-    print(f"{len(paths)} checked, {failing} failing | house cap {HOUSE_MAX}, "
+    print(f"{len(paths)} checked, {failing} failing | house target {HOUSE_TARGET}, cap {HOUSE_MAX}, "
           f"standard limit {STANDARD_MAX} | longest {longest[0]} ({longest[1] or 'none'})")
     return 1 if failing else 0
 

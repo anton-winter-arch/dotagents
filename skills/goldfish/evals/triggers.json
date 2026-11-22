@@ -1,0 +1,8 @@
+[
+  {"name": "named-spec", "query": "goldfish the agent team spec before we start building it", "should_trigger": true, "why": "The skill's own verb with a spec named in words."},
+  {"name": "ready-to-build", "query": "is tasks/SPEC-WEB-ACCESS.md clear enough that a fresh session could implement it without asking me anything? have something with no context poke holes in it", "should_trigger": true, "why": "The situation, not the name: a spec about to be built, checked for ambiguity by a fresh reader."},
+  {"name": "plan-ambiguity", "query": "before we implement, have a fresh reviewer check the spec and the handoff plan for anything ambiguous or that only makes sense with this session's context", "should_trigger": true, "why": "Pre-build ambiguity check on a spec and plan, phrased without the skill's name."},
+  {"name": "code-review", "query": "review the diff on this branch for bugs before I merge it", "should_trigger": false, "why": "Reviewing code is a code review, not a spec review."},
+  {"name": "strategy", "query": "ask the advisor whether the phase order in this plan is right", "should_trigger": false, "why": "Judging a plan's strategy belongs to the advisor."},
+  {"name": "write-spec", "query": "write a spec for a CSV export feature", "should_trigger": false, "why": "Writing a spec is not reviewing one."}
+]

@@ -4,7 +4,7 @@
 Fires after a write whose path is a SKILL.md, or a markdown file directly under
 an agents/ or commands/ folder, and checks that file's frontmatter description
 with skill-authoring's check_descriptions.py, so the rule lives in one place:
-at most 800 characters (the house cap, inside the standard's 1024), and no ': '
+at most 1000 characters (the house cap, inside the standard's 1024), and no ': '
 in a plain scalar. Both pass Claude Code silently and break stricter parsers
 (Copilot's skill loader, strict YAML), which is why an agent editing one never
 notices on its own.

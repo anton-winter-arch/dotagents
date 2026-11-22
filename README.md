@@ -115,6 +115,7 @@ Each entry's own file is authoritative: a skill's frontmatter `description` is i
 | `get-ready` | Claims audit before a meeting or a piece of work, written into the vault's run sheet. |
 | `pr-review` | Drafts PR comments and replies in the user's voice, in both directions. |
 | `sprint-board` | Plans, writes and audits agile backlogs as markdown, with a scaffolder and a linter. |
+| `goldfish` | Before a spec is built, a fresh-context `reader` reads it, its plan files and the code they name, and lists every guess, dangling reference and contradiction; the session fixes the docs. |
 | `teach-me` | Teaches a topic and certifies understanding with a scored retrieval check. |
 | `ai-engineering` | AI and agent stack knowledge from a dated catalog, with read, write and build modes. |
 
@@ -222,6 +223,7 @@ Third-party plugins load from their own cache under `~/.claude/plugins/` and nev
 
 - [`AGENTS.md`](AGENTS.md) - the rules every agent works under, in every harness. Claude Code loads it through the one-line pointer in [`specs/claude-code/CLAUDE.md.example`](specs/claude-code/CLAUDE.md.example).
 - [`SPEC.md`](SPEC.md) - what this repo is, its scope and invariants.
+- [`CHANGELOG.md`](CHANGELOG.md) - what each push changes and any action a pulling machine needs to take.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) - setup, branches, skill conventions, verification and style.
 - [`SECURITY.md`](SECURITY.md) - reporting a vulnerability in a repo whose payload is instructions an agent executes.
 

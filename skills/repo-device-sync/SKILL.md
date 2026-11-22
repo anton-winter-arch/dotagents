@@ -97,6 +97,9 @@ why this needs saying out loud.
 
 ## Phase 4 - Outbound
 
+0. **Changelog.** When the repo keeps a root `CHANGELOG.md`, add what this push
+   changes to its newest dated section and commit it with the push, following any
+   path-scoped rule the repo has for that file.
 1. **Re-fetch immediately before pushing.** Phase 1's fetch is stale. If origin
    moved, loop back to Phase 2 or 3.
 2. Push, then verify: `git fetch origin && git status -sb` shows in-sync.

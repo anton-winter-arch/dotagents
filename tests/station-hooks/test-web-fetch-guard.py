@@ -77,6 +77,12 @@ class GuardModule(Base):
             got = [guard.reserve(st, "a.example", now=1.0)[0] for _ in range(3)]
         self.assertEqual(got, ["ok", "ok", "cap"])
 
+    def test_default_cap_is_one_hundred_requests_per_host(self):
+        saved = os.environ.pop("WEB_GUARD_CAP", None)
+        if saved is not None:
+            self.addCleanup(os.environ.__setitem__, "WEB_GUARD_CAP", saved)
+        self.assertEqual(guard.host_cap(), 100)
+
     def test_a_refusal_is_final_and_keeps_its_first_code(self):
         with guard.locked("s1") as st:
             guard.refuse(st, "a.example", 403)

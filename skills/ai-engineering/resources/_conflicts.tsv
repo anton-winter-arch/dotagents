@@ -40,11 +40,13 @@ seq	date	url	kind	resolution	state
 24	2026-08-14	https://github.com/HKUDS/OpenSpace	manual-override	'triage' -> 'skills|harnesses|eval'	hot
 15	2026-08-14	https://github.com/InsForge/InsForge	manual-override	'triage' -> 'harnesses|serving|skills'	hot
 32	2026-09-02	https://github.com/MakazhanAlpamys/Soup	manual-override	'triage' -> 'tuning|models'	hot
+156	2026-11-22	https://github.com/MatinKhajavi/Weight-Space-Programming	manual-override	'triage' -> 'tuning|papers'	hot
 87	2026-10-29	https://github.com/MemPalace/mempalace	merge	merged https://github.com/milla-jovovich/mempalace (moved repo) into https://github.com/MemPalace/mempalace	hot
 139	2026-11-21	https://github.com/MrLesk/Backlog.md	manual-override	'triage' -> 'skills|harnesses'	hot
 10	2026-07-28	https://github.com/NVIDIA-AI-Blueprints	manual-override	'adjacent' -> 'learning|frameworks'	hot
 17	2026-08-14	https://github.com/NVIDIA/cloud-native-stack	manual-override	'triage' -> 'serving|adjacent'	hot
 16	2026-08-14	https://github.com/NanoNets/Graft	manual-override	'triage' -> 'codeintel|rag|harnesses'	hot
+155	2026-11-22	https://github.com/RikiyaT/lm_understand-logs	manual-override	'triage' -> 'tuning|papers'	hot
 18	2026-08-14	https://github.com/SonarSource/sonarqube-cli	manual-override	'triage' -> 'codeintel|security|harnesses'	hot
 36	2026-09-02	https://github.com/Untrivial-ai/agent-orchestrator	manual-override	'triage' -> 'harnesses|frameworks|adjacent'	hot
 42	2026-09-02	https://github.com/VectifyAI/OpenKB	manual-override	'rag' -> 'rag|ingestion|memory'	hot
@@ -100,6 +102,7 @@ seq	date	url	kind	resolution	state
 140	2026-11-21	https://github.com/n8n-io/n8n	manual-override	'triage' -> 'frameworks'	hot
 93	2026-10-29	https://github.com/openclaw/openclaw	manual-override	'harnesses|map' -> 'harnesses|map|avoid'	hot
 29	2026-09-02	https://github.com/opensandbox-group/OpenSandbox	manual-override	'triage' -> 'security|harnesses|serving'	hot
+157	2026-11-22	https://github.com/openwsp/openwsp	manual-override	'triage' -> 'tuning'	hot
 141	2026-11-21	https://github.com/ruvnet/ruflo	manual-override	'triage' -> 'harnesses'	hot
 81	2026-10-09	https://github.com/sciences44/mlx-lora-finetune	manual-override	'triage' -> 'tuning'	hot
 26	2026-08-14	https://github.com/semantica-agi/semantica	manual-override	'triage' -> 'memory|rag|frameworks'	hot
@@ -129,6 +132,7 @@ seq	date	url	kind	resolution	state
 118	2026-11-06	https://huggingface.co/mlx-community/whisper-large-v3-turbo-q4	manual-override	'models' -> 'media|models'	hot
 116	2026-11-06	https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2	manual-override	'models' -> 'media|models'	hot
 122	2026-11-06	https://huggingface.co/spaces/hf-audio/open_asr_leaderboard	manual-override	'models' -> 'media|eval'	hot
+164	2026-11-22	https://huggingface.co/thinkingmachines/Inkling-2-Mini	manual-override	'models' -> 'models|serving'	hot
 153	2026-11-21	https://keenable.ai/about	manual-override	'adjacent' -> 'ingestion'	hot
 112	2026-11-01	https://modelcontextprotocol.io/specification/2026-07-28	manual-override	'adjacent' -> 'docs|skills'	hot
 127	2026-11-06	https://picovoice.ai/blog/on-device-tts	manual-override	'adjacent' -> 'media|learning'	hot
@@ -138,9 +142,14 @@ seq	date	url	kind	resolution	state
 50	2026-09-18	https://pypdf.readthedocs.io/en/stable/meta/faq.html	manual-override	'adjacent' -> 'docs|ingestion'	hot
 8	2026-07-28	https://pypi.org/project/nvidia-nat	manual-override	'adjacent' -> 'docs|frameworks'	hot
 68	2026-09-18	https://pypi.org/project/podcast-creator	manual-override	'docs' -> 'docs|media'	hot
+158	2026-11-22	https://rikiyat.github.io/blog/weight-space-programming	manual-override	'adjacent' -> 'tuning|papers'	hot
 64	2026-09-18	https://soul-ailab.github.io/soulx-podcast	manual-override	'adjacent' -> 'media|models'	hot
 47	2026-09-18	https://support.google.com/notebooklm/answer/16212820	manual-override	'adjacent' -> 'media|docs'	cold
 51	2026-09-18	https://support.google.com/notebooklm/answer/16212820	kept-manual	kept 'media|docs', auto said 'adjacent'	hot
+163	2026-11-22	https://thinkingmachines.ai/model-acceptable-use-policy	manual-override	'adjacent' -> 'models'	hot
+160	2026-11-22	https://thinkingmachines.ai/model-card/inkling	manual-override	'adjacent' -> 'models'	hot
+162	2026-11-22	https://thinkingmachines.ai/news/inkling-2-mini	manual-override	'adjacent' -> 'models'	hot
+161	2026-11-22	https://thinkingmachines.ai/news/inkling-2-small	manual-override	'adjacent' -> 'models'	hot
 66	2026-09-18	https://trafilatura.readthedocs.io/	manual-override	'docs' -> 'docs|ingestion'	hot
 77	2026-09-23	https://venturebeat.com/security/companies-are-putting-jev-in-charge-of-ai-agent-decisions-and-prompt-injection-can-influence-the-verdict	manual-override	'adjacent' -> 'security'	hot
 91	2026-10-29	https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents	manual-override	'adjacent|map' -> 'docs|learning|map'	hot
@@ -152,4 +161,5 @@ seq	date	url	kind	resolution	state
 128	2026-11-06	https://www.marktechpost.com/2026/07/23/best-open-speech-recognition-asr-models-in-2026-wer-languages-latency-and-license-compared	manual-override	'adjacent' -> 'media|learning'	hot
 9	2026-07-28	https://www.nvidia.com/en-us/ai-data-science/foundation-models/nemotron	manual-override	'docs|adjacent' -> 'docs|models'	hot
 65	2026-09-18	https://www.open-notebook.ai/features/content-support	manual-override	'adjacent' -> 'media|docs|ingestion'	hot
+159	2026-11-22	https://www.rdworldonline.com/mit-team-says-gpt-6-astra-can-fix-an-ai-model-by-editing-its-weights-critics-say-the-method-was-standard-ml-engineering	manual-override	'adjacent' -> 'tuning|papers'	hot
 92	2026-10-29	https://www.sqlite.org/fts5.html	manual-override	'adjacent|map' -> 'docs|vectordb|map'	hot

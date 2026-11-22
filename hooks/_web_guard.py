@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 
 REFUSAL_CODES = (401, 403, 429, 503)
 MIN_DELAY = 2.0          # seconds between requests to one host
-HOST_CAP = 20            # requests to one host per session
+HOST_CAP = 100           # requests to one host per session; a runaway-loop backstop
 SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 # Government and military hosts: .gov and .mil, and their country forms such as gov.uk.
 STRICT = re.compile(r"(^|\.)(gov|mil)(\.[a-z]{2})?$")

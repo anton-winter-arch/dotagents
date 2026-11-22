@@ -49,8 +49,8 @@ remove an entry.
 
 Say how you checked it. Per-skill suites live in `skills/<name>/tests/`, station
 hooks in `tests/station-hooks/`. A new or reworded `description` needs a trigger
-eval run through the skill-creator plugin's `run_eval.py`; report recall and
-precision. Edits to `sync-skills.sh` need a `--dry-run` transcript.
+eval run through skill-authoring's `scripts/trigger_eval.py` (or `trigger_ab.py`
+for a changed one); report recall and precision. Edits to `sync-skills.sh` need a `--dry-run` transcript.
 
 ## Style
 
