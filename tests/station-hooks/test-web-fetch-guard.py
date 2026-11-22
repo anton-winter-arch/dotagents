@@ -5,7 +5,8 @@ Target: the repo's hooks/ by default; HOOKS_UNDER_TEST points the run at a stati
 as ~/.claude/hooks.
 Run: python3 tests/station-hooks/test-web-fetch-guard.py   (or via unittest discover)
 
-Contract: a 401, 403, 429 or 503 blocks the host for the session and nothing clears it; a
+Contract: a 401 or 403 blocks the host for the session and nothing clears it; a 429 or 503
+blocks it until its Retry-After time, else for one hour, then a request may go; a
 blocked or capped host is `deny` for a subagent and `ask` for the main session; requests to
 one host are spaced; sessions share nothing; the session-end hook removes only its folder.
 No test sends a request anywhere.
@@ -91,6 +92,67 @@ class GuardModule(Base):
             self.assertEqual(guard.reserve(st, "a.example"), ("blocked", 403.0))
         self.assertEqual(guard.blocked(guard.read("s1"), "a.example"), 403)
 
+    def test_a_503_without_retry_after_lifts_after_one_hour(self):
+        with guard.locked("s1") as st:
+            guard.refuse(st, "a.example", 503, now=1000.0)
+            self.assertEqual(guard.reserve(st, "a.example", now=1000.0 + 3599), ("blocked", 503.0))
+            self.assertIn("(1 hour after HTTP 503)", guard.block_note(st, "a.example", now=1000.0))
+            self.assertEqual(guard.reserve(st, "a.example", now=1000.0 + 3600), ("ok", 0.0))
+            self.assertEqual(guard.blocked(st, "a.example", now=1000.0 + 3600), 0)
+            guard.refuse(st, "a.example", 503, now=5000.0)        # a fresh one starts a new block
+            self.assertEqual(guard.blocked(st, "a.example", now=5001.0), 503)
+
+    def test_a_429_honors_retry_after_in_seconds_and_as_a_date(self):
+        with guard.locked("s1") as st:
+            guard.refuse(st, "a.example", 429, "120", now=1000.0)
+            self.assertEqual(guard.reserve(st, "a.example", now=1119.0), ("blocked", 429.0))
+            self.assertIn("(Retry-After on HTTP 429)", guard.block_note(st, "a.example", now=1000.0))
+            self.assertEqual(guard.reserve(st, "a.example", now=1120.0)[0], "ok")
+            guard.refuse(st, "b.example", 429, "Thu, 01 Jan 1970 01:00:00 GMT", now=1000.0)
+            self.assertEqual(guard.blocked(st, "b.example", now=3599.0), 429)
+            self.assertEqual(guard.blocked(st, "b.example", now=3600.0), 0)
+
+    def test_temporary_block_bounds_and_the_window_override(self):
+        with guard.locked("s1") as st:
+            guard.refuse(st, "zero.example", 503, "0", now=0.0)
+            guard.refuse(st, "huge.example", 503, "9" * 15, now=0.0)
+            guard.refuse(st, "junk.example", 503, "soon", now=0.0)
+            guard.refuse(st, "sup.example", 429, "\xb2", now=0.0)   # a digit to isdigit(), not to int()
+        st = guard.read("s1")
+        self.assertEqual((guard.blocked(st, "zero.example", now=59.0), guard.blocked(st, "zero.example", now=60.0)), (503, 0))
+        self.assertEqual(guard.blocked(st, "huge.example", now=86399.0), 503)
+        self.assertEqual(guard.blocked(st, "huge.example", now=86400.0), 0)
+        self.assertEqual(guard.blocked(st, "junk.example", now=3599.0), 503, "an unreadable header gets the default")
+        self.assertEqual(guard.blocked(st, "sup.example", now=3599.0), 429)
+        os.environ["WEB_GUARD_BLOCK"] = "inf"
+        self.addCleanup(os.environ.pop, "WEB_GUARD_BLOCK", None)
+        self.assertEqual(guard.temp_block(), 3600.0, "a non-finite value gets the default")
+        os.environ["WEB_GUARD_BLOCK"] = "10"
+        with guard.locked("s1") as st:
+            guard.refuse(st, "floor.example", 503, now=0.0)
+            self.assertIn("(1 minute after HTTP 503)", guard.block_note(st, "floor.example", now=0.0))
+        os.environ["WEB_GUARD_BLOCK"] = "600"
+        with guard.locked("s1") as st:
+            guard.refuse(st, "short.example", 503, now=0.0)
+            self.assertEqual(guard.blocked(st, "short.example", now=600.0), 0)
+            self.assertIn("(10 minutes after HTTP 503)", guard.block_note(st, "short.example", now=0.0))
+
+    def test_a_403_holds_for_the_session_and_outranks_a_temporary_block(self):
+        with guard.locked("s1") as st:
+            guard.refuse(st, "a.example", 403, now=0.0)
+            guard.refuse(st, "b.example", 503, now=0.0)
+            guard.refuse(st, "b.example", 403, now=10.0)
+            for host in ("a.example", "b.example"):
+                self.assertEqual(guard.reserve(st, host, now=10.0 ** 9), ("blocked", 403.0))
+                self.assertEqual(guard.block_note(st, host), "for the session (HTTP 403)")
+
+    def test_a_503_recorded_before_lift_times_existed_holds_nothing(self):
+        with guard.locked("s1") as st:
+            st["hosts"]["old.example"] = {"blocked": 503, "next": 0.0, "count": 1}
+            st["hosts"]["older.example"] = {"blocked": 403, "next": 0.0, "count": 1}
+        st = guard.read("s1")
+        self.assertEqual((guard.blocked(st, "old.example"), guard.blocked(st, "older.example")), (0, 403))
+
     def test_sessions_share_nothing(self):
         with guard.locked("s1") as st:
             guard.refuse(st, "a.example", 403)
@@ -143,7 +205,13 @@ class FetchHook(Base):
         self.hook(FETCH, {"hook_event_name": "PostToolUse", "tool_name": "WebFetch", "session_id": "s1",
                           "tool_input": {"url": "https://str.example/"},
                           "tool_response": json.dumps({"code": 503})})
-        self.assertEqual(self.pre("https://str.example/", agent=True)["permissionDecision"], "deny")
+        out = self.pre("https://str.example/", agent=True)
+        self.assertEqual(out["permissionDecision"], "deny")
+        self.assertIn("is blocked until ", out["permissionDecisionReason"])
+        self.assertIn("(1 hour after HTTP 503)", out["permissionDecisionReason"])
+        self.post("https://perm.example/", 403)
+        self.assertIn("blocked for the session (HTTP 403)",
+                      self.pre("https://perm.example/", agent=True)["permissionDecisionReason"])
 
     def test_page_text_that_mentions_a_status_blocks_nothing(self):
         self.hook(FETCH, {"hook_event_name": "PostToolUse", "tool_name": "WebFetch", "session_id": "s1",

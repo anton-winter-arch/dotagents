@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+import fcntl
 import json
 import os
 import shutil
@@ -46,6 +47,10 @@ DEFAULT_MODEL = "claude-sonnet-5-5"
 DOING = {"Agent", "Task", "Edit", "Write", "MultiEdit", "NotebookEdit"}
 FIXTURE_REFUSED = (".claude", ".mcp.json")
 PROBE_ENV_DROPPED = ("CLAUDECODE", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+# Probes run with no hooks, so station hooks and the memory plugin never see a case.
+NO_HOOKS = json.dumps({"disableAllHooks": True})
+STATE = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") \
+    / "skill-authoring" / "trigger-eval"
 
 
 class EvalError(Exception):
@@ -148,25 +153,25 @@ def set_description(text: str, description: str) -> str:
 
 # ---- probes --------------------------------------------------------------------
 
-def check_fixture(fixture: Path) -> None:
-    """Refuse config a probe would load and links whose targets it would read."""
-    for dirpath, dirnames, filenames in os.walk(fixture):
+def check_fixture(root: Path) -> None:
+    """Refuse config a probe would load and links whose targets it would read. Names
+    compare case-folded, since a case-insensitive disk finds .Claude/ as .claude/."""
+    for dirpath, dirnames, filenames in os.walk(root):
         for name in dirnames + filenames:
             path = Path(dirpath) / name
-            if path.is_symlink() or name in FIXTURE_REFUSED:
-                raise EvalError(f"the fixture may not hold {path.relative_to(fixture)}: "
+            if path.is_symlink() or name.casefold() in FIXTURE_REFUSED:
+                raise EvalError(f"the fixture may not hold {path.relative_to(root)}: "
                                 f"no .claude/, .mcp.json or symlinks")
 
 
 def new_project(skill_dir: Path) -> Path:
-    """A fresh git repo seeded from the skill's evals/fixture/."""
+    """A fresh git repo seeded from the skill's evals/fixture/, checked as copied."""
     fixture = skill_dir / "evals" / "fixture"
-    if fixture.is_dir():
-        check_fixture(fixture)
     project = Path(tempfile.mkdtemp(prefix="trigger-eval-"))
     try:
         if fixture.is_dir():
-            shutil.copytree(fixture, project, dirs_exist_ok=True)
+            shutil.copytree(fixture, project, dirs_exist_ok=True, symlinks=True)
+            check_fixture(project)
         procguard.run(["git", "init", "-q"], cwd=project, timeout=30, capture_output=True)
     except BaseException:
         shutil.rmtree(project, ignore_errors=True)
@@ -177,7 +182,7 @@ def new_project(skill_dir: Path) -> Path:
 def probe(query: str, skill_dir: Path, model: str, cap: int, timeout: float) -> dict:
     env = {k: v for k, v in os.environ.items() if k not in PROBE_ENV_DROPPED}
     argv = ["claude", "-p", "--model", model, "--output-format", "stream-json",
-            "--verbose", "--max-turns", str(cap + 2)]
+            "--verbose", "--max-turns", str(cap + 2), "--settings", NO_HOOKS]
     scorer = Scorer(skill_dir.name, cap, model)
     project = new_project(skill_dir)
     proc = None
@@ -195,35 +200,69 @@ def probe(query: str, skill_dir: Path, model: str, cap: int, timeout: float) -> 
             if proc.poll() is None:
                 procguard.stop(proc.pid)
             proc.wait()
+            procguard.release(proc)
         shutil.rmtree(project, ignore_errors=True)
     return scorer.finish()
 
 
+def write_atomic(path: Path, data: bytes) -> None:
+    tmp = path.with_name(f".{path.name}.trigger-eval.tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+
+
 def run_eval(skill_dir: Path, cases: list[dict], *, model: str, runs: int, timeout: float,
              cap: int, description: str | None = None, jobs: int = 6) -> dict:
+    """Run every case. One run per skill at a time; a variant description is written
+    into SKILL.md with the original kept under STATE, so even a killed run is undone
+    by the next one."""
     skill_dir = skill_dir.resolve()
     md = skill_dir / "SKILL.md"
-    original = md.read_bytes()
-    try:
-        if description is not None:
-            md.write_text(set_description(original.decode("utf-8"), description), encoding="utf-8")
-        tested = description_of(md.read_text(encoding="utf-8"))
-        # Every probe has its own project folder, so they run side by side.
-        with cf.ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
-            futures = [[pool.submit(probe, case["query"], skill_dir, model, cap, timeout)
-                        for _ in range(runs)] for case in cases]
-            details = [[f.result() for f in row] for row in futures]
-        results = []
-        for case, detail in zip(cases, details):
-            triggers = sum(d["verdict"] == "hit" for d in detail)
-            rate = triggers / runs if runs else 0.0
-            should = bool(case["should_trigger"])
-            results.append({"query": case["query"], "should_trigger": should,
-                            "trigger_rate": rate, "triggers": triggers, "runs": runs,
-                            "pass": rate >= 0.5 if should else rate < 0.5, "detail": detail})
-    finally:
-        if md.read_bytes() != original:
-            md.write_bytes(original)
+    if md.is_symlink():
+        raise EvalError(f"{md} is a link; test the file it points to")
+    STATE.mkdir(parents=True, exist_ok=True)
+    backup = STATE / f"{skill_dir.name}.SKILL.md.orig"
+    with open(STATE / f"{skill_dir.name}.lock", "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise EvalError(f"another trigger eval is running on {skill_dir.name}") from None
+        if backup.is_file():   # left by a killed run
+            write_atomic(md, backup.read_bytes())
+            backup.unlink()
+        original = md.read_bytes()
+        try:
+            if description is not None:
+                write_atomic(backup, original)
+                write_atomic(md, set_description(original.decode("utf-8"), description).encode("utf-8"))
+            tested = description_of(md.read_text(encoding="utf-8"))
+            # Every probe has its own project folder, so they run side by side.
+            pool = cf.ThreadPoolExecutor(max_workers=max(1, jobs))
+            futures: list = []
+            try:
+                for case in cases:
+                    futures.append([pool.submit(probe, case["query"], skill_dir, model, cap, timeout)
+                                    for _ in range(runs)])
+                details = [[f.result() for f in row] for row in futures]
+            except BaseException:
+                for f in (f for row in futures for f in row):
+                    f.cancel()   # one failure ends the run instead of spending the queue
+                raise
+            finally:
+                pool.shutdown(wait=True)
+        finally:
+            if md.read_bytes() != original:
+                write_atomic(md, original)
+            if backup.is_file():
+                backup.unlink()
+    results = []
+    for case, detail in zip(cases, details):
+        triggers = sum(d["verdict"] == "hit" for d in detail)
+        rate = triggers / runs if runs else 0.0
+        should = bool(case["should_trigger"])
+        results.append({"query": case["query"], "should_trigger": should,
+                        "trigger_rate": rate, "triggers": triggers, "runs": runs,
+                        "pass": rate >= 0.5 if should else rate < 0.5, "detail": detail})
     passed = sum(r["pass"] for r in results)
     return {"skill_name": skill_dir.name, "description": tested, "model": model,
             "results": results,

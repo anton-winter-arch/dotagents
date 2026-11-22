@@ -111,12 +111,13 @@ class TestFixture(SkillCase):
     def test_config_and_links_in_a_fixture_are_refused(self):
         fixture = self.skill / "evals" / "fixture"
         for make in (lambda: (fixture / ".claude").mkdir(),
+                     lambda: (fixture / ".Claude").mkdir(),
                      lambda: (fixture / ".mcp.json").write_text("{}"),
                      lambda: (fixture / "creds").symlink_to(self.tmp / "secret")):
             make()
             with self.assertRaises(te.EvalError):
                 te.new_project(self.skill)
-            for p in (fixture / ".claude", fixture / ".mcp.json", fixture / "creds"):
+            for p in (fixture / ".claude", fixture / ".Claude", fixture / ".mcp.json", fixture / "creds"):
                 if p.is_symlink() or p.is_file():
                     p.unlink()
                 elif p.is_dir():
@@ -161,6 +162,7 @@ class TestEndToEnd(SkillCase):
         self.log = self.tmp / "fake.log"
         self.env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
                         FAKE_LOG=str(self.log), FAKE_SKILL_MD=str(self.skill / "SKILL.md"),
+                        XDG_STATE_HOME=str(self.tmp / "state"),
                         ANTHROPIC_API_KEY="k", ANTHROPIC_AUTH_TOKEN="t")
 
     def run_cli(self, *extra, env=None):
@@ -206,6 +208,25 @@ class TestEndToEnd(SkillCase):
         self.assertEqual(p.returncode, 2)
         self.assertIn("model", p.stderr)
         self.assertEqual((self.skill / "SKILL.md").read_text(), self.md_text)
+
+    def test_a_backup_left_by_a_killed_run_is_restored_first(self):
+        state = self.tmp / "state" / "skill-authoring" / "trigger-eval"
+        state.mkdir(parents=True)
+        (state / "goldfish.SKILL.md.orig").write_text(self.md_text)
+        (self.skill / "SKILL.md").write_text(self.md_text.replace("Old text", "Variant"))
+        p = self.run_cli()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual((self.skill / "SKILL.md").read_text(), self.md_text)
+        self.assertFalse((state / "goldfish.SKILL.md.orig").exists())
+
+    def test_a_linked_skill_md_is_refused(self):
+        real = self.tmp / "elsewhere.md"
+        real.write_text(self.md_text)
+        (self.skill / "SKILL.md").unlink()
+        (self.skill / "SKILL.md").symlink_to(real)
+        p = self.run_cli("--description", "New.")
+        self.assertEqual(p.returncode, 2)
+        self.assertEqual(real.read_text(), self.md_text)
 
     def test_the_results_feed_trigger_ab_compare(self):
         import trigger_ab

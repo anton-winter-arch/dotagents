@@ -5,8 +5,9 @@ Every fetch goes out from the user's own address, so a host that refuses one mus
 asked again. This script is wired on three events of the fetch tool:
 
   PostToolUse, PostToolUseFailure
-      When the result is a 401, 403, 429 or 503, the host is recorded as blocked for the
-      session.
+      When the result is a 401 or 403, the host is recorded as blocked for the session;
+      a 429 or 503 blocks it for one hour (`_web_guard.py`), as this hook reads only the
+      status and never a Retry-After header.
   PreToolUse
       A blocked host, or a host past its request cap, is refused: `deny` for a subagent,
       `ask` for the main session, where the user rules. Otherwise the call is booked a
@@ -16,8 +17,8 @@ asked again. This script is wired on three events of the fetch tool:
       subagent and `ask` for the main session; that rule reads only the address, so it
       holds with no session id and with unusable state.
 
-A refusal is never cleared inside a session, an approved `ask` included: the next call to
-that host asks again. Loopback hosts are not tracked. State and its lock are in
+An approved `ask` does not clear a block: the next call to that host asks again until the
+block lifts. Loopback hosts are not tracked. State and its lock are in
 `_web_guard.py`. The hook cannot see a fetch made another way (a shell command, a browser
 tool); download_guard.py covers the shell.
 
@@ -36,9 +37,9 @@ MAX_WAIT = 6.0  # seconds a call may wait for its slot inside the hook
 STATUS = re.compile(r"status code (\d{3})")
 
 BLOCKED = (
-    "{host} refused an automated request earlier in this session (HTTP {code}). A refusal "
-    "is final for the session: make no further request to this host, do not retry it "
-    "another way, and record it as unavailable."
+    "{host} refused an automated request earlier in this session and is blocked {note}. "
+    "Make no request to this host while the block holds, do not retry it another way, and "
+    "record it as unavailable."
 )
 CAPPED = (
     "This session has already sent {count} requests to {host}, the per-host limit. Make no "
@@ -119,17 +120,18 @@ def main() -> int:
     refusal = "deny" if payload.get("agent_id") else "ask"
     # The session state can be missing or unusable; the government and military rule reads
     # only the address, so it is decided either way.
-    verdict, value = "ok", 0.0
+    verdict, value, note = "ok", 0.0, ""
     try:
         if sid:
             with guard.locked(sid) as state:
                 verdict, value = guard.reserve(state, host)
+                note = guard.block_note(state, host)
                 if verdict == "ok" and value > MAX_WAIT:
                     guard.unbook(state, host)     # this call is refused, so its slot goes back
     except (OSError, ValueError, TypeError, AttributeError, KeyError):
         verdict, value = "ok", 0.0
     if verdict == "blocked":
-        decision(refusal, BLOCKED.format(host=host, code=int(value)))
+        decision(refusal, BLOCKED.format(host=host, note=note or "(HTTP %d)" % value))
     elif verdict == "cap":
         decision(refusal, CAPPED.format(host=host, count=int(value)))
     elif value > MAX_WAIT:

@@ -5,7 +5,8 @@ station copy such as ~/.claude/hooks/web_download.py.
 Run: python3 tests/station-hooks/test-web-download.py   (or via unittest discover)
 
 Contract: one request per item, spaced per host; a 403 stops every later item for that
-host without sending it; a robots-disallowed path is never requested; a redirect to
+host without sending it, for the session; a 429 or 503 does the same until its
+Retry-After time, else for one hour; a robots-disallowed path is never requested; a redirect to
 another site is not followed; files land only under a temp root; every item has a log
 line; the batch is scanned once, by the scan skill's script, and never by a second
 scanner. Every request goes to a server this test starts on loopback; the downloader runs
@@ -47,6 +48,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply(200, ROBOTS.encode())
         if self.path.startswith("/refuse/"):
             return self.reply(403, b"no")
+        if self.path.startswith("/down/"):
+            return self.reply(503, b"maintenance")
+        if self.path.startswith("/slow/"):
+            return self.reply(429, b"slow down", {"Retry-After": "120"})
         if self.path == "/away":
             self.send_response(302)
             self.send_header("Location", "http://localhost:%d/ok/moved" % self.server.server_port)
@@ -59,8 +64,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return None
         return self.reply(200, ("body of " + self.path).encode())
 
-    def reply(self, code, body):
+    def reply(self, code, body, headers=None):
         self.send_response(code)
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -166,7 +173,7 @@ class WebDownload(unittest.TestCase):
         code, out, _ = self.run_tool(items)
         self.assertEqual(code, 3)
         self.assertEqual(self.paths(), ["/robots.txt", "/refuse/1"])
-        self.assertIn("refused: 127.0.0.1 (HTTP 403)", out)
+        self.assertIn("refused: 127.0.0.1, blocked for the session (HTTP 403)", out)
         self.assertEqual(len([r for r in self.log() if r["verdict"].startswith("skipped")]), 8)
         self.assertFalse(self.scan_args.exists(), "nothing fetched, nothing scanned")
         # The refusal outlives the run: a second run in the same session sends nothing.
@@ -176,6 +183,40 @@ class WebDownload(unittest.TestCase):
         # Another session starts clean.
         code, _, _ = self.run_tool([self.base + "/ok/later"], CLAUDE_CODE_SESSION_ID="dl-2")
         self.assertEqual((code, self.paths()), (0, ["/robots.txt", "/ok/later"]))
+
+    def lift_blocks(self, sid: str, by: float) -> None:
+        """Move the session's block lift times `by` seconds earlier, as if that time passed."""
+        path = Path(self.tmp.name, "web-guard-%d" % os.getuid(), sid, "state.json")
+        state = json.loads(path.read_text())
+        for entry in state["hosts"].values():
+            entry["until"] = entry.get("until", 0) - by if entry.get("until") else 0
+        path.write_text(json.dumps(state))
+
+    def test_a_503_skips_the_run_and_lifts_after_one_hour(self):
+        items = [self.base + "/down/1"] + [self.base + "/ok/%d" % n for n in range(3)]
+        code, out, _ = self.run_tool(items, CLAUDE_CODE_SESSION_ID="dl-7")
+        self.assertEqual((code, self.paths()), (3, ["/robots.txt", "/down/1"]))
+        self.assertRegex(out, r"refused: 127\.0\.0\.1, blocked until [0-9:]+ \(1 hour after HTTP 503\)")
+        self.assertIn("(1 hour after HTTP 503)", self.log()[0]["verdict"])
+        Handler.seen = []
+        self.lift_blocks("dl-7", 3599)
+        code, _, _ = self.run_tool([self.base + "/ok/a"], CLAUDE_CODE_SESSION_ID="dl-7")
+        self.assertEqual((code, self.paths()), (3, []), "still blocked a second before the hour")
+        self.lift_blocks("dl-7", 1)
+        code, _, _ = self.run_tool([self.base + "/ok/a"], CLAUDE_CODE_SESSION_ID="dl-7")
+        self.assertEqual((code, self.paths()), (0, ["/robots.txt", "/ok/a"]))
+
+    def test_a_429_with_retry_after_lifts_after_that_time(self):
+        code, out, _ = self.run_tool([self.base + "/slow/1", self.base + "/ok/1"], CLAUDE_CODE_SESSION_ID="dl-8")
+        self.assertEqual((code, self.paths()), (3, ["/robots.txt", "/slow/1"]))
+        self.assertRegex(out, r"blocked until [0-9:]+ \(Retry-After on HTTP 429\)")
+        Handler.seen = []
+        self.lift_blocks("dl-8", 119)
+        self.run_tool([self.base + "/ok/1"], CLAUDE_CODE_SESSION_ID="dl-8")
+        self.assertEqual(self.paths(), [])
+        self.lift_blocks("dl-8", 1)
+        code, _, _ = self.run_tool([self.base + "/ok/1"], CLAUDE_CODE_SESSION_ID="dl-8")
+        self.assertEqual((code, self.paths()), (0, ["/robots.txt", "/ok/1"]))
 
     def test_robots_rules_are_read_first_and_obeyed(self):
         code, out, _ = self.run_tool([self.base + "/private/x", self.base + "/no-claude/y", self.base + "/ok/z"])

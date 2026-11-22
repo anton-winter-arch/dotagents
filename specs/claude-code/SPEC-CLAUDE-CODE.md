@@ -386,7 +386,7 @@ The principles each block enforces:
     is `latest`: with the auto-updater off it steers nothing automatic, and a
     deliberate `claude update` is expected to follow it (not probed).
 11. **Agents are good citizens of the web** - a page fetch or a download goes out from the station's own address, so the station governs it.
-    A host's refusal (401, 403, 429 or 503) is final for the session, requests to one host are spaced and capped, and no agent disguises a request or routes it around a site's filtering.
+    A host's refusal (401 or 403) is final for the session, a 429 or 503 blocks the host until its Retry-After time or for one hour, requests to one host are spaced and capped, and no agent disguises a request or routes it around a site's filtering.
     Three hooks hold that (§8): `web_fetch_guard.py` on the fetch tool, `download_guard.py` on shell fetches, and `web_session_end.py` at session end.
     Subagents read pages with the fetch tool and never download; the main session downloads a batch from a manifest with `web_download.py`, which paces, stops at a refusal, honors robots rules and scans the batch once.
     A government or military host, in the country forms too, is `ask` for the main session and `deny` for a subagent.

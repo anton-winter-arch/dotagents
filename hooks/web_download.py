@@ -10,15 +10,17 @@ writes the manifest and returns its path; the main session reviews it and runs t
 What one run does, in order, for each item:
 
   1. Refuses anything but https (http only for loopback), a government or military host
-     that is not named with --allow-host, and a host that refused a request earlier in
+     that is not named with --allow-host, and a host still blocked by a refusal earlier in
      this session.
   2. Reads the host's robots.txt once and skips a path it disallows for this tool, for
      Anthropic's agents or for `*`.
   3. Waits for the host's next slot (see `_web_guard.py`: a delay between requests and a
      cap per host), then sends one request with one fixed, honest User-Agent. There is no
      option to change the User-Agent or to name a proxy.
-  4. On a 401, 403, 429 or 503 records the host as blocked for the session and skips its
-     remaining items without sending them. A redirect to another site is not followed.
+  4. On a 401, 403, 429 or 503 records the host as blocked and skips its remaining items
+     in this run without sending them. A 401 or 403 blocks it for the session; a 429 or
+     503 blocks it until its Retry-After time, else for one hour (`_web_guard.py`). The
+     summary and the log say which. A redirect to another site is not followed.
   5. Writes the file into the batch folder, which must be under a temp root, and appends
      one line to `download-log.jsonl` there: time, address, final host, status, bytes,
      SHA-256, file type and verdict.
@@ -150,19 +152,24 @@ class Run:
         """Book and wait for the host's next slot. Returns '' or the reason not to send."""
         with self.guard.locked(self.sid) as state:
             verdict, value = self.guard.reserve(state, host)
+            note = self.guard.block_note(state, host)
         if verdict == "blocked":
-            self.refused.setdefault(host, int(value))
-            return "the host refused a request earlier in this session (HTTP %d)" % value
+            self.refused.setdefault(host, note)
+            return "the host refused a request earlier in this session; blocked %s" % note
         if verdict == "cap":
             return "the per-host limit of %d requests is reached" % value
         if value > 0:
             time.sleep(value)
         return ""
 
-    def refuse(self, host: str, code: int) -> None:
+    def refuse(self, host: str, exc: urllib.error.HTTPError) -> str:
+        """Record the refusal; returns how long the host is blocked, for the log."""
+        retry = exc.headers.get("Retry-After") if exc.headers else None
         with self.guard.locked(self.sid) as state:
-            self.guard.refuse(state, host, code)
-        self.refused[host] = code
+            self.guard.refuse(state, host, exc.code, retry)
+            note = self.guard.block_note(state, host)
+        self.refused[host] = note
+        return note
 
     def open(self, url: str):
         return self.opener.open(urllib.request.Request(url, headers={"User-Agent": user_agent()}), timeout=60)
@@ -183,8 +190,7 @@ class Run:
                 rules.parse(text.splitlines())
             except urllib.error.HTTPError as exc:
                 if exc.code in self.guard.REFUSAL_CODES:
-                    self.refuse(host, exc.code)
-                    rules = "the host refused the robots.txt request (HTTP %d)" % exc.code
+                    rules = "the host refused the robots.txt request; blocked %s" % self.refuse(host, exc)
                 elif exc.code >= 500:
                     rules = "robots.txt could not be read (HTTP %d)" % exc.code
             except OtherSite:
@@ -206,7 +212,7 @@ class Run:
         elif self.guard.is_strict(host) and host not in self.allow:
             skip = "a government or military host: needs the user's yes, then --allow-host %s" % host
         elif host in self.refused:
-            skip = "the host refused a request earlier in this run (HTTP %d)" % self.refused[host]
+            skip = "the host refused a request earlier in this run; blocked %s" % self.refused[host]
         if not skip:
             rules = self.robots_for(parts.scheme, host, parts.netloc)
             if isinstance(rules, str):
@@ -253,8 +259,7 @@ class Run:
         except urllib.error.HTTPError as exc:
             status = exc.code
             if exc.code in self.guard.REFUSAL_CODES:
-                self.refuse(host, exc.code)
-                verdict = "refused: HTTP %d" % exc.code
+                verdict = "refused: HTTP %d; blocked %s" % (exc.code, self.refuse(host, exc))
             else:
                 verdict = "failed: HTTP %d" % exc.code
         except OtherSite as exc:
@@ -355,8 +360,8 @@ def main(argv: list[str] | None = None) -> int:
     verdict, scanner = ("not scanned", "nothing fetched") if not run.fetched else \
         (("not scanned", "--no-scan") if args.no_scan else scan(out))
     print("web_download: %d fetched, %d skipped, %d host(s) refused" % (len(run.fetched), len(run.skipped), len(run.refused)))
-    for host, code in sorted(run.refused.items()):
-        print("  refused: %s (HTTP %d); its remaining items were not requested" % (host, code))
+    for host, note in sorted(run.refused.items()):
+        print("  refused: %s, blocked %s; its remaining items were not requested" % (host, note))
     for url, why in run.skipped:
         print("  skipped: %s - %s" % (url, why))
     print("scan: %s (%s)" % (verdict, scanner))

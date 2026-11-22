@@ -3,8 +3,10 @@
 and web_download.py. Not a hook itself: it is copied beside them and loaded by path.
 
 One small JSON file per session records, per host, whether the host refused a request,
-when the next request to it may go out, and how many went out. A refusal (401, 403, 429
-or 503) is final for the session: nothing here ever clears it. Requests to one host are
+when the next request to it may go out, and how many went out. A 401 or 403 is a
+deliberate refusal and blocks the host for the session: nothing here clears it. A 429 or
+503 means "not now": it blocks the host until its Retry-After time, or for TEMP_BLOCK
+seconds when it gives none, held between MIN_BLOCK and MAX_BLOCK. Requests to one host are
 spaced MIN_DELAY seconds apart and capped at HOST_CAP per session.
 
 The file lives in `<system temp>/web-guard-<uid>/<session id>/state.json`, so a session's
@@ -19,29 +21,39 @@ from __future__ import annotations
 
 import fcntl
 import json
+import math
 import os
 import re
 import stat
 import tempfile
 import time
 from contextlib import contextmanager
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 
-REFUSAL_CODES = (401, 403, 429, 503)
+SESSION_CODES = (401, 403)  # deliberate refusals: blocked for the session
+TEMP_CODES = (429, 503)     # "not now": blocked until Retry-After, else for TEMP_BLOCK
+REFUSAL_CODES = SESSION_CODES + TEMP_CODES
+TEMP_BLOCK = 3600.0      # seconds a 429 or 503 without Retry-After blocks its host
+MIN_BLOCK = 60.0         # a Retry-After of 0 or a past date still blocks this long
+MAX_BLOCK = 86400.0      # a longer Retry-After is held to a day
 MIN_DELAY = 2.0          # seconds between requests to one host
 HOST_CAP = 100           # requests to one host per session; a runaway-loop backstop
 SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+DIGITS = re.compile(r"^[0-9]{1,15}$")
 # Government and military hosts: .gov and .mil, and their country forms such as gov.uk.
 STRICT = re.compile(r"(^|\.)(gov|mil)(\.[a-z]{2})?$")
 LOCAL = re.compile(r"^(localhost|127(\.[0-9]{1,3}){3}|::1|0\.0\.0\.0)$")
 
 
 def number(name: str, default: float) -> float:
-    """A tuning value from the environment; the tests shorten the delay through it."""
+    """A tuning value from the environment; the tests shorten the delay through it. A
+    non-finite value (inf, nan) gets the default."""
     try:
-        return float(os.environ.get(name, ""))
+        value = float(os.environ.get(name, ""))
     except ValueError:
         return default
+    return value if math.isfinite(value) else default
 
 
 def min_delay() -> float:
@@ -50,6 +62,23 @@ def min_delay() -> float:
 
 def host_cap() -> int:
     return int(number("WEB_GUARD_CAP", HOST_CAP))
+
+
+def temp_block() -> float:
+    return number("WEB_GUARD_BLOCK", TEMP_BLOCK)
+
+
+def retry_after(value, now: float | None = None) -> float | None:
+    """Seconds until the time a Retry-After header names, in seconds or as an HTTP date;
+    None when there is no usable value."""
+    text = str(value or "").strip()[:100]
+    if DIGITS.match(text):                        # ASCII only: str.isdigit() passes '²', which int() rejects
+        return float(min(int(text), int(MAX_BLOCK)))
+    try:
+        when = parsedate_to_datetime(text).timestamp()
+    except (TypeError, ValueError, IndexError, OverflowError, AttributeError):
+        return None
+    return when - (time.time() if now is None else now)
 
 
 def session_id(payload: dict | None = None, environ: dict | None = None) -> str:
@@ -159,12 +188,42 @@ def read(sid: str) -> dict:
 
 
 def _entry(state: dict, host: str) -> dict:
-    return state["hosts"].setdefault(host, {"blocked": 0, "next": 0.0, "count": 0})
+    return state["hosts"].setdefault(host, {"blocked": 0, "until": 0.0, "next": 0.0, "count": 0})
 
 
-def blocked(state: dict, host: str) -> int:
-    """The status code that blocked the host this session, or 0."""
-    return int((state.get("hosts") or {}).get(host, {}).get("blocked") or 0)
+def _active(entry: dict, now: float) -> int:
+    """The entry's blocking code while its block holds, else 0. A 429 or 503 holds until
+    its `until` time; one recorded without that time holds nothing."""
+    code = int(entry.get("blocked") or 0)
+    if code in TEMP_CODES and now >= float(entry.get("until") or 0):
+        return 0
+    return code
+
+
+def blocked(state: dict, host: str, now: float | None = None) -> int:
+    """The status code that blocks the host now, or 0."""
+    now = time.time() if now is None else now
+    return _active((state.get("hosts") or {}).get(host, {}), now)
+
+
+def block_note(state: dict, host: str, now: float | None = None) -> str:
+    """How long the host's block holds, for a message: 'for the session (HTTP 403)',
+    'until 17:05 (Retry-After on HTTP 429)' or 'until 17:05 (1 hour after HTTP 503)'.
+    '' when the host is not blocked."""
+    now = time.time() if now is None else now
+    entry = (state.get("hosts") or {}).get(host, {})
+    code = _active(entry, now)
+    if not code:
+        return ""
+    if code not in TEMP_CODES:
+        return "for the session (HTTP %d)" % code
+    until = float(entry["until"])
+    stamp = time.strftime("%H:%M" if until - now < 43200 else "%Y-%m-%d %H:%M", time.localtime(until))
+    if entry.get("source") == "retry-after":
+        return "until %s (Retry-After on HTTP %d)" % (stamp, code)
+    minutes = round(float(entry.get("window") or TEMP_BLOCK) / 60)
+    span = "1 hour" if minutes == 60 else "%d minute%s" % (minutes, "" if minutes == 1 else "s")
+    return "until %s (%s after HTTP %d)" % (stamp, span, code)
 
 
 def reserve(state: dict, host: str, now: float | None = None) -> tuple[str, float]:
@@ -173,8 +232,11 @@ def reserve(state: dict, host: str, now: float | None = None) -> tuple[str, floa
     so parallel callers queue instead of sending together."""
     now = time.time() if now is None else now
     entry = _entry(state, host)
-    if entry["blocked"]:
-        return "blocked", float(entry["blocked"])
+    code = _active(entry, now)
+    if code:
+        return "blocked", float(code)
+    if entry["blocked"]:                          # a 429 or 503 block has lapsed
+        entry.update(blocked=0, until=0.0, source="")
     if entry["count"] >= host_cap():
         return "cap", float(entry["count"])
     start = max(now, float(entry["next"]))
@@ -190,11 +252,26 @@ def unbook(state: dict, host: str) -> None:
     entry["next"] = max(0.0, float(entry["next"]) - min_delay())
 
 
-def refuse(state: dict, host: str, code: int) -> None:
-    """Record a refusal. The first code recorded is kept; nothing clears it."""
+def refuse(state: dict, host: str, code: int, retry=None, now: float | None = None) -> None:
+    """Record a refusal. A 401 or 403 blocks for the session; nothing clears it, and a
+    later code does not replace it. A 429 or 503 blocks until the time its Retry-After
+    header (`retry`) names, else for temp_block() seconds; another one while the block
+    holds can only move the lift time later."""
+    now = time.time() if now is None else now
     entry = _entry(state, host)
-    if not entry["blocked"]:
-        entry["blocked"] = int(code)
+    current = _active(entry, now)
+    if current and current not in TEMP_CODES:
+        return
+    code = int(code)
+    if code not in TEMP_CODES:
+        entry.update(blocked=code, until=0.0, source="")
+        return
+    wait = retry_after(retry, now)
+    source = "default" if wait is None else "retry-after"
+    wait = min(max(temp_block() if wait is None else wait, MIN_BLOCK), MAX_BLOCK)
+    if current and float(entry["until"]) >= now + wait:
+        return
+    entry.update(blocked=code, until=now + wait, source=source, window=wait)
 
 
 def note_download_dir(state: dict, folder: str) -> None:

@@ -75,8 +75,8 @@ STRICT = (
     "specific purpose; one request, no retry after a refusal."
 )
 REFUSED = (
-    "{host} refused an automated request earlier in this session (HTTP {code}). A refusal "
-    "is final for the session; approve only if the user wants this one request sent anyway."
+    "{host} refused an automated request earlier in this session and is blocked {note}. "
+    "Approve only if the user wants this one request sent anyway."
 )
 UNSCANNED = (
     "This batch download skips its scan, so its files reach the session unchecked. "
@@ -418,7 +418,7 @@ def main() -> int:
             if guard.is_strict(host):
                 ask = ask or STRICT.format(host=host)
             elif guard.blocked(state, host):
-                ask = ask or REFUSED.format(host=host, code=guard.blocked(state, host))
+                ask = ask or REFUSED.format(host=host, note=guard.block_note(state, host))
         if call.download:
             where = bad_place(call.target, guard) if call.target else ""
             deny = deny or (PLACE.format(where=where) if where else ONE_WAY.format(downloader=downloader()))

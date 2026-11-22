@@ -21,6 +21,7 @@ What each push changes, newest first, for machines pulling this repo.
 - `skill-authoring`: `trigger_ab.py` runs on `trigger_eval.py`; `--jobs`, `--skill-creator` and `--variant-timeout` are accepted and ignored.
 - `skill-authoring`: skill descriptions aim at 950 characters and fail above 1000; `check_descriptions.py` notes anything over 950.
 - Web guard hooks: one host takes up to 100 requests per session, up from 20.
+- Web guard hooks: a 429 or 503 blocks its host until the Retry-After time, else for one hour (`WEB_GUARD_BLOCK` sets the window in seconds); a 401 or 403 still blocks for the session. Block messages and `web_download.py` say when a block lifts.
 - `markdown-kg`, `code-kg`: `migrate` drops an ignore row that names the legacy store folder itself, and reports it.
 - `compact-notes`: `inspect`, `backup` and `verify` take `<heading>~N` to address the Nth section under a repeated heading.
 - `repo-device-sync`: the push phase updates `CHANGELOG.md` first when the repo keeps one.
