@@ -3323,6 +3323,27 @@ class FolderNameTests(VaultCase):
         markdown_kg.ingest(self.vault)
         self.assertFalse({"journal", "hub"} & self._note_ids())
 
+    def test_migrate_drops_the_ignore_row_for_the_legacy_folder_itself(self):
+        cfg = self.legacy() / "vault-kg-config.md"
+        cfg.write_text('```json\n{"ignore": [{"path": "vault-kg/**", "reason":'
+                       ' "the graph\'s own folder"}, {"path": "./vault-kg/"},'
+                       ' {"path": "journal.md"}]}\n```\n', encoding="utf-8")
+        report = markdown_kg.migrate(self.vault)
+        kgignore = (self.vault / ".kgignore").read_text()
+        self.assertNotIn("vault-kg", kgignore)
+        self.assertNotIn("own folder", kgignore)
+        self.assertIn("journal.md\n", kgignore)
+        self.assertEqual(report["dropped"], ["vault-kg/**", "./vault-kg/"])
+        code, out = self._cli("migrate", str(self.vault))
+        self.assertEqual(code, 0)
+
+    def test_migrate_report_names_each_dropped_row(self):
+        (self.legacy() / "vault-kg-config.md").write_text(
+            '```json\n{"ignore": ["vault-kg/**"]}\n```\n', encoding="utf-8")
+        code, out = self._cli("migrate", str(self.vault))
+        self.assertEqual(code, 0)
+        self.assertIn("dropped ignore row vault-kg/**", out)
+
     def test_migrate_refuses_a_malformed_config_and_moves_nothing(self):
         (self.legacy() / "vault-kg-config.md").write_text(
             "# c\n\n```JSON\n{}\n```\n", encoding="utf-8")

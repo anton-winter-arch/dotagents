@@ -194,7 +194,8 @@ def render(spine):
                 f"- Parent: FEATURE-{parent['_id']}\n"
                 f"{depends_line(node)}\n"
                 f"**DESCRIPTION**\n````\n{STORY_BODY}\n````\n\n"
-                f"**ACCEPTANCE CRITERIA**\n````\n{STORY_AC}\n````\n"
+                f"**ACCEPTANCE CRITERIA**\n````\n{STORY_AC}\n````\n\n"
+                f"**COMMENTS**\n````\n````\n"
             )
     return "\n---\n\n".join(parts)
 

@@ -29,6 +29,26 @@ class TempCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
 
+class LegacyFolderRowTests(unittest.TestCase):
+    LEGACY = {"vault-kg": {}, "markdown-kg": {}}
+
+    def test_the_folders_own_forms_match(self):
+        for row in ("vault-kg", "./vault-kg", "/vault-kg/**/", "vault-kg/*/*",
+                    "//vault-kg//", " markdown-kg/** "):
+            self.assertTrue(kg_core.legacy_folder_row(row, self.LEGACY), row)
+
+    def test_a_pattern_that_only_mentions_the_name_is_kept(self):
+        for row in ("vault-kg-notes/", "docs/vault-kg/", "vault-kg.md", "**/vault-kg/",
+                    "vault-kg/*.db", "vault-kg/**/*.md", "!vault-kg/", "./../vault-kg"):
+            self.assertFalse(kg_core.legacy_folder_row(row, self.LEGACY), row)
+
+    def test_a_hostile_row_is_judged_in_linear_time(self):
+        started = time.monotonic()
+        for row in ("/*" * 500000 + "x", "vault-kg" + "/*" * 500000 + "x"):
+            self.assertFalse(kg_core.legacy_folder_row(row, self.LEGACY))
+        self.assertLess(time.monotonic() - started, 1.0)
+
+
 class SeedFolderTests(TempCase):
     def test_a_new_folder_gets_every_file(self):
         kg = self.tmp / ".kg"

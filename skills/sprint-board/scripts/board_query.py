@@ -15,6 +15,8 @@ what the linter sees.
     board_query.py <board> --status                 per item: boxes, state, disagreement;
                                                     per parent: closeable, or what blocks it
     board_query.py <board> --trace                  feature criteria <-> stories, both ways
+    board_query.py <board> --story STORY-NNNN03     one story's criteria, VALIDATION and
+                                                    DEFINITION OF DONE, each with its box
     board_query.py <board> --json                   machine-readable, any mode
 
 Filters combine. Exit 0 when at least one item matches, 1 when none do, so a query
@@ -181,6 +183,46 @@ def print_trace(entries):
             print(f"    uncovered: {ref}")
 
 
+# ---- story ----------------------------------------------------------------------
+
+# Label inside a story's ACCEPTANCE CRITERIA block -> list name. The unlabelled head
+# of the block is the criteria themselves; COMMENTS is a separate block, never read.
+STORY_LISTS = {None: "criteria", "VALIDATION": "validation",
+               "DEFINITION OF DONE": "definition_of_done"}
+
+
+def story_detail(items, ref):
+    """One story's criteria, VALIDATION and DEFINITION OF DONE lines, each with its
+    board line number and checked state. None when the ref is not exactly one story."""
+    found = board_lint.find_stories(items, ref)
+    if len(found) != 1:
+        return None
+    it = found[0]
+    out = {**as_dict(it), **{name: [] for name in STORY_LISTS.values()}}
+    label = None
+    for lineno, text in it.blocks.get("ACCEPTANCE CRITERIA", {}).get("body", []):
+        m = board_lint.ANY_LABEL_RE.match(text)
+        if m:
+            label = re.sub(r"\s+", " ", m.group(1)).strip().upper()
+            continue
+        box = board_lint.CHECKBOX_RE.match(text)
+        if box and label in STORY_LISTS:
+            out[STORY_LISTS[label]].append({"line": lineno, "text": box.group(1).strip(),
+                                            "checked": bool(CHECKED_RE.match(text))})
+    return out
+
+
+def print_story(d):
+    print(f"{'DONE' if d['done'] else 'OPEN':4}  {(d['state'] or '-'):10.10}  "
+          f"{d['ref']:16}  {d['title'] or ''}")
+    for name in STORY_LISTS.values():
+        print(f"  {name.replace('_', ' ')}:")
+        for c in d[name]:
+            print(f"    [{'x' if c['checked'] else ' '}] {c['text']}")
+        if not d[name]:
+            print("    (none)")
+
+
 # ---- plain views ----------------------------------------------------------------
 
 def print_rows(rows):
@@ -237,6 +279,8 @@ def main(argv=None):
                       help="boxes, state and disagreement per item; closeability per parent")
     mode.add_argument("--trace", action="store_true",
                       help="feature criteria and the stories they name, both directions")
+    mode.add_argument("--story", metavar="ID",
+                      help="one story's criteria, VALIDATION and DEFINITION OF DONE lines")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
 
@@ -245,6 +289,14 @@ def main(argv=None):
     except OSError as e:
         print(f"cannot read board: {e}", file=sys.stderr)
         return 2
+
+    if a.story:
+        detail = story_detail(items, a.story)
+        if detail is None:
+            print(f"{a.story} is not exactly one story on this board", file=sys.stderr)
+            return 1
+        print(json.dumps(detail, indent=2)) if a.json else print_story(detail)
+        return 0
 
     done = True if a.done else False if a.open else None
     rows = select(items, a.kind, a.owner, done, a.parent, a.state)

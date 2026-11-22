@@ -112,6 +112,22 @@ class TestStatus(Base):
     def test_missing_section_exits_2(self):
         self.assertEqual(self.run_out('inspect', self.note, '2026-01-01')[0], 2)
 
+    def test_a_duplicate_heading_is_addressed_by_its_key_ordinal(self):
+        self.note.write_text(NOTE + "\n---\n## 2026-07-10\n\nThe second meeting that day.\n",
+                             encoding='utf-8')
+        rc, out = self.run_out('inspect', self.note, '2026-07-10~2')
+        self.assertEqual(rc, 0)
+        st = json.loads(out)
+        self.assertEqual(st['key'], 'notes-meetings.md#2026-07-10~2')
+        rc, out = self.run_out('inspect', self.note, '2026-07-10')
+        self.assertEqual(json.loads(out)['key'], 'notes-meetings.md#2026-07-10')
+        self.assertEqual(self.run_out('inspect', self.note, '2026-07-10~1')[0], 0)
+        self.assertEqual(self.run_out('inspect', self.note, '2026-07-10~3')[0], 2)
+        rc, path = self.backup('2026-07-10~2')
+        self.assertEqual(rc, 0)
+        self.assertIn('The second meeting that day.', path.read_text(encoding='utf-8'))
+        self.assertNotIn('narrative', path.read_text(encoding='utf-8'))
+
     def test_there_is_no_ledger_or_receipt_command(self):
         for cmd in ('record',):
             with self.assertRaises(SystemExit) as cm, contextlib.redirect_stderr(io.StringIO()):

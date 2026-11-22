@@ -63,9 +63,13 @@ def section_status(sec: dict) -> dict:
 
 
 def find_by_heading(path: Path, heading: str) -> dict | None:
+    """The section under a heading. A trailing `~N`, as section keys write it, picks
+    the Nth section with that heading; without it the first one is returned."""
     want = heading.strip().lstrip('#').strip()
+    m = re.match(r'^(.*?)~(\d{1,6})$', want)
+    want, ordinal = (m.group(1).strip(), int(m.group(2))) if m else (want, None)
     for sec in date_sections(path):
-        if lines_of(sec['body'])[0][3:].strip() == want:
+        if lines_of(sec['body'])[0][3:].strip() == want and ordinal in (None, sec['ord']):
             return sec
     return None
 

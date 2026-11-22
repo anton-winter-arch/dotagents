@@ -61,7 +61,7 @@ An ignored file is not read, chunked, indexed or counted, and `stats` reports
 which file and line matched. A link pointing at one gets status `ignored`, not
 `unresolved`, so it does not pollute the broken-link worklist. A config that
 still has an `ignore` array is refused with an error, never half-read;
-`migrate` moves a legacy config's rows into `.kgignore`.
+`migrate` moves a legacy config's rows into `.kgignore`, dropping and reporting any row that names the legacy folder itself.
 
 Exclusion is the cheapest quality lever there is. Indexing an archived snapshot
 beside its live note means every search returns each answer twice, and the stale

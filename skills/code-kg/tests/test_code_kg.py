@@ -1000,6 +1000,12 @@ class TestEngineFolder(unittest.TestCase):
         code_kg.ingest(self.repo)
         self.assertEqual(self.files(), {"a.py"})
 
+    def test_migrate_drops_the_ignore_row_for_the_legacy_folder_itself(self):
+        self.legacy({"ignore": [".code-kg/", "/.code-kg/*", "b.py"]})
+        report = code_kg.migrate(self.repo)
+        self.assertEqual((self.repo / ".kgignore").read_text(), "b.py\n")
+        self.assertEqual(report["dropped"], [".code-kg/", "/.code-kg/*"])
+
     def test_migrate_keeps_a_legacy_folder_holding_unknown_files(self):
         old = self.legacy()
         (old / "notes.txt").write_text("mine\n", encoding="utf-8")

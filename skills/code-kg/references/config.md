@@ -27,7 +27,7 @@ output and dependency folders (`node_modules`, `dist`, `build`, `target` and
 the like) are never walked at all. Every excluded
 folder or file is recorded in the `ignored` table with the file and line that
 matched. A config that still has an `ignore` array is refused with an error;
-`migrate` moves a legacy config's patterns into `.kgignore`.
+`migrate` moves a legacy config's patterns into `.kgignore`, dropping and reporting any pattern that names the legacy folder itself.
 
 Files whose names conventionally hold credentials (`.env*`, `*.env`, `.envrc`,
 `*.config`, `*.tfvars`, `secrets.*`, `credentials`, private keys and keystores,

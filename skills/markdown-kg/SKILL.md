@@ -45,7 +45,7 @@ Either engine writes the `.gitignore` and the three docs when they are missing, 
 
 A vault built earlier has its graph in a legacy `markdown-kg/` or `vault-kg/` folder, with a markdown config holding one fenced `json` block.
 Until `.kg/` holds a markdown-kg database or config, the engine reads and writes the legacy folder in place, never creates one, and `init` refuses to run there.
-`migrate <vault>` moves the legacy files into `.kg/`: its `ignore` rows go to `.kgignore`, the config becomes plain json with every other key kept, the databases move unchanged, and the empty legacy folder is removed.
+`migrate <vault>` moves the legacy files into `.kg/`: its `ignore` rows go to `.kgignore` (a row naming the legacy folder itself is dropped and reported), the config becomes plain json with every other key kept, the databases move unchanged, and the empty legacy folder is removed.
 Until then, a legacy config with `ignore` rows is refused rather than half-read.
 Run it while no other command is using the graph.
 

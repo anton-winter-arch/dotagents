@@ -7,7 +7,9 @@ import json
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
@@ -16,6 +18,7 @@ sys.path.insert(0, str(SCRIPTS))
 import board_lint  # noqa: E402
 import board_query  # noqa: E402
 import board_scaffold  # noqa: E402
+import board_state  # noqa: E402
 
 # FIXTURES, NOT REAL IDS. Every identifier in this file is synthetic: NNNNnn
 # placeholders, repdigit runs, consecutive runs (123456) and zero-padded counters
@@ -794,6 +797,288 @@ class TestStateField(unittest.TestCase):
         self.assertNotIn("state-box-disagree", lint_text(agreed))
 
 
+def with_comments(text, ref, body):
+    """Append a **COMMENTS** block after a story's last fenced block."""
+    head, rest = text.split(f"### {ref}\n", 1)
+    nxt = rest.find("\n---\n")
+    story, tail = (rest, "") if nxt < 0 else (rest[:nxt + 1], rest[nxt + 1:])
+    story = story.rstrip("\n") + f"\n\n**COMMENTS**\n````\n{body}````\n"
+    return head + f"### {ref}\n" + story + tail
+
+
+class TestCommentsBlock(unittest.TestCase):
+    """COMMENTS is the story's working record: optional, append-only, never a criterion."""
+
+    def test_empty_comments_block_lints_clean(self):
+        self.assertEqual(lint_text(with_comments(CLEAN_BOARD, "STORY-NNNN03", "")), [])
+
+    def test_comments_block_is_parsed_as_a_block(self):
+        items, _ = board_lint.parse(with_comments(CLEAN_BOARD, "STORY-NNNN03", "- a note\n"))
+        self.assertIn("COMMENTS", items[2].blocks)
+
+    def test_comment_boxes_do_not_count_toward_completion(self):
+        record = "- [ ] Evidence still to attach\n- [x] Run linked\n"
+        before, _ = board_lint.parse(CLEAN_BOARD)
+        items, _ = board_lint.parse(with_comments(CLEAN_BOARD, "STORY-NNNN03", record))
+        self.assertEqual(board_lint.box_counts(before[2]), (0, 8))
+        self.assertEqual(board_lint.box_counts(items[2]), (0, 8))
+
+    def test_open_box_in_comments_does_not_reopen_a_closed_story(self):
+        text = with_comments(STORY3_CLOSED, "STORY-NNNN03", "- [ ] Follow-up raised\n")
+        codes = lint_text(text)
+        self.assertNotIn("done-with-open-boxes", codes)
+        self.assertNotIn("done-without-exception", codes)
+
+    def test_conversational_comments_pass_the_register_checks(self):
+        record = ("- 2026-01-01T00:00:00Z New -> Active by seat-a\n"
+                  "- Asked with AB about the table, because the job and the pipeline "
+                  "and the workflow were ours\n"
+                  "**DEFINITION OF DONE**:\n- [ ] Criterion 1\n")
+        self.assertEqual(lint_text(with_comments(CLEAN_BOARD, "STORY-NNNN03", record)), [])
+
+    def test_scaffolded_story_carries_an_empty_comments_block(self):
+        text = board_scaffold.render(json.loads(json.dumps(TestScaffoldLintContract.SPINE)))
+        items, _ = board_lint.parse(text)
+        for story in (i for i in items if i.kind == "story"):
+            names = list(story.blocks)
+            self.assertEqual(names[-2:], ["ACCEPTANCE CRITERIA", "COMMENTS"], story.ref)
+            self.assertEqual(story.blocks["COMMENTS"]["body"], [])
+        flagged = {f[1] for f in board_lint.check(items, []) if f[2] == "empty-block"}
+        comment_lines = {s.blocks["COMMENTS"]["line"] for s in items if s.kind == "story"}
+        self.assertFalse(flagged & comment_lines)
+
+    def test_story_template_carries_an_empty_comments_block(self):
+        anatomy = (SCRIPTS.parent / "references" / "anatomy.md").read_text(encoding="utf-8")
+        template = anatomy.split("## Story template", 1)[1].split("`````", 2)[1]
+        self.assertIn("**ACCEPTANCE CRITERIA**", template)
+        self.assertTrue(template.rstrip().endswith("**COMMENTS**\n````\n````"), template[-80:])
+
+
+T0 = datetime(2026, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
+T1 = datetime(2026, 1, 1, 10, 30, 0, tzinfo=timezone.utc)
+
+# STORY-NNNN03 already worked: a State line and an empty COMMENTS block.
+WORKED = with_comments(with_states(CLEAN_BOARD, {"STORY-NNNN03": "New"}), "STORY-NNNN03", "")
+
+
+def comments_of(text, ref):
+    items, _ = board_lint.parse(text)
+    story = next(i for i in items if i.ref == ref)
+    return [t for _, t in story.blocks["COMMENTS"]["body"]]
+
+
+class TestBoardState(unittest.TestCase):
+    """board_state.set_state is a neutral stamp: it records any move and checks none."""
+
+    def test_change_touches_only_the_state_line_and_one_comment_line(self):
+        out, changed = board_state.set_state(WORKED, "STORY-NNNN03", "Active", "seat-a", T1)
+        self.assertTrue(changed)
+        expected = WORKED.replace("- State: New\n", "- State: Active\n", 1).replace(
+            "**COMMENTS**\n````\n````",
+            "**COMMENTS**\n````\n- 2026-01-01T10:30:00Z New -> Active by seat-a\n````", 1)
+        self.assertEqual(out, expected)
+
+    def test_story_id_without_prefix_is_accepted(self):
+        out, _ = board_state.set_state(WORKED, "nnnn03", "Active", "seat-a", T1)
+        self.assertIn("- State: Active\n", out)
+
+    def test_resetting_the_current_state_is_byte_identical(self):
+        out, changed = board_state.set_state(WORKED, "STORY-NNNN03", "New", "seat-a", T1,
+                                             tick=True)
+        self.assertFalse(changed)
+        self.assertEqual(out, WORKED)
+
+    def test_first_state_records_none_and_adds_the_state_line(self):
+        board = with_comments(CLEAN_BOARD, "STORY-NNNN03", "")
+        out, _ = board_state.set_state(board, "STORY-NNNN03", "New", "seat-a", T1)
+        items, _ = board_lint.parse(out)
+        self.assertEqual(items[2].state, "New")
+        self.assertIn("- Parent: FEATURE-NNNN02\n- State: New\n", out)
+        self.assertEqual(comments_of(out, "STORY-NNNN03"),
+                         ["- 2026-01-01T10:30:00Z (none) -> New by seat-a"])
+
+    def test_story_without_comments_gains_the_block(self):
+        out, _ = board_state.set_state(CLEAN_BOARD, "STORY-NNNN03", "Active", "seat-a", T1)
+        self.assertEqual(comments_of(out, "STORY-NNNN03"),
+                         ["- 2026-01-01T10:30:00Z (none) -> Active by seat-a"])
+        self.assertEqual(lint_text(out), [])
+        items, _ = board_lint.parse(out)
+        self.assertNotIn("COMMENTS", items[3].blocks)
+
+    def test_moves_append_in_order(self):
+        out, _ = board_state.set_state(WORKED, "STORY-NNNN03", "Active", "seat-a", T0)
+        out, _ = board_state.set_state(out, "STORY-NNNN03", "Blocked", "seat-a", T1)
+        self.assertEqual(comments_of(out, "STORY-NNNN03"), [
+            "- 2026-01-01T09:00:00Z New -> Active by seat-a",
+            "- 2026-01-01T10:30:00Z Active -> Blocked by seat-a"])
+
+    def test_title_box_changes_only_when_flagged(self):
+        closed = with_comments(with_states(
+            tick_all_boxes(CLEAN_BOARD, "### STORY-NNNN03", "### STORY-NNNN04"),
+            {"STORY-NNNN03": "Resolved"}), "STORY-NNNN03", "")
+        plain, _ = board_state.set_state(closed, "STORY-NNNN03", "Closed", "seat-a", T1)
+        self.assertIn("- [ ] Record scheduler job outcomes", plain)
+        ticked, _ = board_state.set_state(closed, "STORY-NNNN03", "Closed", "seat-a", T1,
+                                          tick=True)
+        self.assertIn("- [x] Record scheduler job outcomes", ticked)
+        reopened, _ = board_state.set_state(ticked, "STORY-NNNN03", "Active", "seat-a", T1,
+                                            tick=False)
+        self.assertIn("- [ ] Record scheduler job outcomes", reopened)
+
+    def test_unknown_story_is_refused(self):
+        for ref in ("STORY-NNNN99", "FEATURE-NNNN02", "NNNN02"):
+            with self.assertRaises(board_state.StateError, msg=ref):
+                board_state.set_state(WORKED, ref, "Active", "seat-a", T1)
+
+    def test_a_clock_earlier_than_the_last_state_line_is_refused(self):
+        out, _ = board_state.set_state(WORKED, "STORY-NNNN03", "Active", "seat-a", T1)
+        with self.assertRaises(board_state.StateError):
+            board_state.set_state(out, "STORY-NNNN03", "Blocked", "seat-a", T0)
+        same, changed = board_state.set_state(out, "STORY-NNNN03", "Blocked", "seat-a", T1)
+        self.assertTrue(changed)
+
+    def test_an_edit_that_adds_a_lint_error_is_refused(self):
+        # Ticking the title with Definition of Done boxes open is done-without-exception.
+        with self.assertRaises(board_state.StateError) as ctx:
+            board_state.set_state(WORKED, "STORY-NNNN03", "Closed", "seat-a", T1, tick=True)
+        self.assertIn("done-without-exception", str(ctx.exception))
+
+    def test_errors_already_on_the_board_do_not_block_a_change(self):
+        broken = WORKED.replace("- Depends on: STORY-NNNN03", "- Depends on: STORY-NNNN98")
+        self.assertIn("unresolved-dependency", lint_errors(broken))
+        out, changed = board_state.set_state(broken, "STORY-NNNN03", "Active", "seat-a", T1)
+        self.assertTrue(changed)
+
+    def test_values_that_would_break_the_record_are_refused(self):
+        for state, by in (("", "seat-a"), ("Active", ""), ("Act\nive", "seat-a"),
+                          ("Active", "seat\na"), ("New -> Active", "seat-a"),
+                          ("Active by me", "seat-a")):
+            with self.assertRaises(board_state.StateError, msg=repr((state, by))):
+                board_state.set_state(WORKED, "STORY-NNNN03", state, by, T1)
+
+    # Built at runtime: every separator str.splitlines() honours besides LF and CR.
+    # Literal invisible characters never appear in this file.
+    SEPARATORS = [chr(c) for c in (0x2028, 0x2029, 0x85, 0x0B, 0x0C, 0x1C, 0x1D, 0x1E)]
+
+    def test_values_that_could_forge_lines_or_hide_text_are_refused(self):
+        forged = "- 2099-12-31T23:59:59Z Active -> Approved by lead"
+        for sep in self.SEPARATORS:
+            for state, by in (("Active", "seat-a" + sep + forged),
+                              ("Active" + sep + "- Owner: someone-else", "seat-a")):
+                with self.assertRaises(board_state.StateError, msg=repr((state, by))):
+                    board_state.set_state(WORKED, "STORY-NNNN03", state, by, T1)
+        hidden = ["seat-a" + chr(0x1B) + "]8;;x" + chr(0x07), "seat-a" + chr(0xE0041),
+                  "seat-a" + chr(0x200B), "seat-a ```` x", "seat-a ``` x"]
+        for by in hidden:
+            with self.assertRaises(board_state.StateError, msg=repr(by)):
+                board_state.set_state(WORKED, "STORY-NNNN03", "Active", by, T1)
+
+    def test_a_long_hostile_comment_line_is_read_quickly(self):
+        hostile = "- 2026-01-01T00:00:00Z " + " -> " * 200000 + "\n"
+        board = with_comments(with_states(CLEAN_BOARD, {"STORY-NNNN03": "New"}),
+                              "STORY-NNNN03", hostile)
+        started = time.monotonic()
+        board_state.set_state(board, "STORY-NNNN03", "Active", "seat-a", T1)
+        self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_a_board_already_holding_a_unicode_line_break_keeps_its_lines(self):
+        ls = chr(0x2028)
+        board = WORKED.replace("- State: New\n", "- State: New" + ls, 1)
+        out, _ = board_state.set_state(board, "STORY-NNNN03", "Active", "seat-a", T1)
+        self.assertIn("- State: Active" + ls + "- Parent: FEATURE-NNNN02\n", out)
+
+    def test_crlf_line_endings_are_kept(self):
+        crlf = WORKED.replace("\n", "\r\n")
+        out, _ = board_state.set_state(crlf, "STORY-NNNN03", "Active", "seat-a", T1)
+        self.assertNotIn("\n", out.replace("\r\n", ""))
+        self.assertEqual(out.replace("\r\n", "\n"), board_state.set_state(
+            WORKED, "STORY-NNNN03", "Active", "seat-a", T1)[0])
+
+
+class TestBoardStateCli(unittest.TestCase):
+    def run_state(self, board, *args):
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "board_state.py"), str(board), *args],
+            capture_output=True, text=True)
+
+    def test_change_is_written_in_place_keeping_the_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            board = Path(tmp) / "board.md"
+            board.write_text(WORKED, encoding="utf-8")
+            board.chmod(0o640)
+            proc = self.run_state(board, "STORY-NNNN03", "Active", "--by", "seat-a")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            text = board.read_text(encoding="utf-8")
+            self.assertIn("- State: Active\n", text)
+            self.assertRegex(text, r"\n- \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ New -> Active by seat-a\n")
+            self.assertEqual(board.stat().st_mode & 0o777, 0o640)
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["board.md"])
+
+    def test_refusal_leaves_the_file_byte_identical(self):
+        future = with_comments(with_states(CLEAN_BOARD, {"STORY-NNNN03": "Active"}),
+                               "STORY-NNNN03", "- 2999-01-01T00:00:00Z New -> Active by seat-a\n")
+        cases = [(WORKED, ["STORY-NNNN99", "Active", "--by", "seat-a"]),
+                 (future, ["STORY-NNNN03", "Blocked", "--by", "seat-a"]),
+                 (WORKED, ["STORY-NNNN03", "Closed", "--by", "seat-a", "--tick"])]
+        for text, args in cases:
+            with tempfile.TemporaryDirectory() as tmp:
+                board = Path(tmp) / "board.md"
+                board.write_text(text, encoding="utf-8")
+                before = board.read_bytes()
+                proc = self.run_state(board, *args)
+                self.assertEqual(proc.returncode, 1, (args, proc.stdout, proc.stderr))
+                self.assertEqual(board.read_bytes(), before, args)
+                self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["board.md"])
+
+    def test_unchanged_state_exits_zero_and_leaves_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            board = Path(tmp) / "board.md"
+            board.write_text(WORKED, encoding="utf-8")
+            before = board.stat().st_mtime_ns
+            proc = self.run_state(board, "STORY-NNNN03", "New", "--by", "seat-a")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("unchanged", proc.stdout)
+            self.assertEqual(board.stat().st_mtime_ns, before)
+
+    def test_a_symlinked_board_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real = Path(tmp) / "real.md"
+            real.write_text(WORKED, encoding="utf-8")
+            link = Path(tmp) / "board.md"
+            link.symlink_to(real)
+            proc = self.run_state(link, "STORY-NNNN03", "Active", "--by", "seat-a")
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            self.assertEqual(real.read_text(encoding="utf-8"), WORKED)
+            self.assertTrue(link.is_symlink())
+
+    def test_an_unwritable_folder_exits_two_without_a_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "ro"
+            folder.mkdir()
+            board = folder / "board.md"
+            board.write_text(WORKED, encoding="utf-8")
+            folder.chmod(0o500)
+            try:
+                proc = self.run_state(board, "STORY-NNNN03", "Active", "--by", "seat-a")
+            finally:
+                folder.chmod(0o700)
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr)
+            self.assertEqual(board.read_text(encoding="utf-8"), WORKED)
+
+    def test_missing_board_and_bad_flags_exit_two(self):
+        proc = self.run_state("/nonexistent/board.md", "STORY-NNNN03", "Active", "--by", "a")
+        self.assertEqual(proc.returncode, 2)
+        with tempfile.TemporaryDirectory() as tmp:
+            board = Path(tmp) / "board.md"
+            board.write_text(WORKED, encoding="utf-8")
+            proc = self.run_state(board, "STORY-NNNN03", "Active")
+            self.assertEqual(proc.returncode, 2)
+            proc = self.run_state(board, "STORY-NNNN03", "Active", "--by", "a",
+                                  "--tick", "--untick")
+            self.assertEqual(proc.returncode, 2)
+
+
 class TestQuery(unittest.TestCase):
     def items(self, text=CLEAN_BOARD):
         items, _ = board_lint.parse(text)
@@ -851,6 +1136,88 @@ class TestQuery(unittest.TestCase):
         [entry] = board_query.trace(items, items)
         self.assertEqual([c["stories"] for c in entry["criteria"] if not c["stories"]], [[]])
         self.assertEqual(entry["uncovered"], ["STORY-NNNN04"])
+
+
+# STORY-NNNN04 in the current template shape: criteria at the head of the block,
+# then VALIDATION and DEFINITION OF DONE, plus a COMMENTS record holding boxes.
+TEMPLATE_STORY_BOARD = with_comments(CLEAN_BOARD.replace(
+    "**DEFINITION OF DONE**:\n"
+    "- [ ] An alert fires at the threshold\n"
+    "- [ ] The alert names the job\n"
+    "- [ ] The response is documented\n\n"
+    "**TESTING APPROACH**:\n"
+    "- [ ] Force repeated failures and confirm one alert\n"
+    "- [ ] Confirm a single failure does not alert\n",
+    "- [x] An alert fires at the threshold\n"
+    "- [ ] The alert names the job\n\n"
+    "**VALIDATION**:\n"
+    "_Starter queries, adapt or extend as needed._\n"
+    "- [ ] alerts_test.py passes\n"
+    "- [x] On-call lead confirms the page\n\n"
+    "**Definition of Done**:\n"
+    "- [ ] Evidence linked: the passing run\n"
+    "- [ ] The response is documented\n"
+    "- [ ] Runbook updated\n"), "STORY-NNNN04", "- [ ] pass alerts_test.py\n- verdict pending\n")
+
+
+class TestStoryQuery(unittest.TestCase):
+    def detail(self, text, ref):
+        items, _ = board_lint.parse(text)
+        return board_query.story_detail(items, ref)
+
+    def test_lists_criteria_validation_and_done_separately_with_checked_state(self):
+        d = self.detail(TEMPLATE_STORY_BOARD, "STORY-NNNN04")
+        self.assertEqual(d["ref"], "STORY-NNNN04")
+        self.assertEqual([(c["text"], c["checked"]) for c in d["criteria"]],
+                         [("An alert fires at the threshold", True),
+                          ("The alert names the job", False)])
+        self.assertEqual([(c["text"], c["checked"]) for c in d["validation"]],
+                         [("alerts_test.py passes", False),
+                          ("On-call lead confirms the page", True)])
+        self.assertEqual([c["text"] for c in d["definition_of_done"]],
+                         ["Evidence linked: the passing run", "The response is documented",
+                          "Runbook updated"])
+
+    def test_each_line_carries_its_board_line_number(self):
+        d = self.detail(TEMPLATE_STORY_BOARD, "STORY-NNNN04")
+        lines = TEMPLATE_STORY_BOARD.splitlines()
+        for entry in d["criteria"] + d["validation"] + d["definition_of_done"]:
+            self.assertIn(entry["text"], lines[entry["line"] - 1])
+
+    def test_comments_never_become_criteria(self):
+        d = self.detail(TEMPLATE_STORY_BOARD, "STORY-NNNN04")
+        texts = [c["text"] for k in ("criteria", "validation", "definition_of_done")
+                 for c in d[k]]
+        self.assertNotIn("pass alerts_test.py", texts)
+
+    def test_legacy_story_reports_its_done_list_and_nothing_else(self):
+        d = self.detail(CLEAN_BOARD, "nnnn03")
+        self.assertEqual(d["criteria"], [])
+        self.assertEqual(d["validation"], [])
+        self.assertEqual(len(d["definition_of_done"]), 3)
+
+    def test_unknown_or_non_story_ref_is_none(self):
+        self.assertIsNone(self.detail(CLEAN_BOARD, "STORY-NNNN99"))
+        self.assertIsNone(self.detail(CLEAN_BOARD, "FEATURE-NNNN02"))
+
+    def test_cli_json_and_exit_codes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            board = Path(tmp) / "board.md"
+            board.write_text(TEMPLATE_STORY_BOARD, encoding="utf-8")
+            run = lambda *a: subprocess.run(
+                [sys.executable, str(SCRIPTS / "board_query.py"), str(board), *a],
+                capture_output=True, text=True)
+            proc = run("--story", "STORY-NNNN04", "--json")
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            payload = json.loads(proc.stdout)
+            self.assertEqual(len(payload["criteria"]), 2)
+            self.assertEqual(payload["definition_of_done"][2]["text"], "Runbook updated")
+            text = run("--story", "STORY-NNNN04")
+            self.assertEqual(text.returncode, 0, text.stderr)
+            self.assertIn("[x] On-call lead confirms the page", text.stdout)
+            missing = run("--story", "STORY-NNNN99", "--json")
+            self.assertEqual(missing.returncode, 1)
+            self.assertEqual(missing.stdout, "")
 
 
 class TestCycles(unittest.TestCase):

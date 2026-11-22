@@ -168,7 +168,9 @@ ROLE_WORDS = re.compile(
     r"governance|security|business|technical|product|delivery|support)\b",
     re.I)
 
-# Blocks holding verbatim tracker history rather than authored prose.
+# Blocks holding verbatim tracker history rather than authored prose. A story's
+# COMMENTS block is its append-only working record: it may be empty or absent, its
+# lines are evidence rather than criteria, and no content check reads it.
 VERBATIM_BLOCKS = {"COMMENTS", "STORY-EDITS-AND-NOTES"}
 # Labelled sections quoting someone else's words, which are preserved as written
 # and so are not the board's prose to correct.
@@ -292,6 +294,21 @@ def parse(text):
         findings.append(("error", len(lines), "unclosed-fence",
                          "A code fence is never closed; the file cannot be parsed reliably."))
     return items, findings
+
+
+def authored(item):
+    """(name, block) for every block holding the board's own prose and boxes.
+
+    Verbatim blocks keep only their structural checks (fence present, fence width);
+    budgets, register, residue and completion counts never see them.
+    """
+    return [(n, b) for n, b in item.blocks.items() if n not in VERBATIM_BLOCKS]
+
+
+def find_stories(items, ref):
+    """Every story matching a ref given with or without its STORY- prefix, any case."""
+    sid = re.sub(r"^STORY-", "", ref.strip(), flags=re.I).upper()
+    return [i for i in items if i.kind == "story" and i.id.upper() == sid]
 
 
 def classify_ids(items):
@@ -460,7 +477,7 @@ def check(items, parse_findings, glossary=None):
     # Definition of Done that restates a Development Approach step says nothing.
     seen_lines = {}
     for it in items:
-        for name, block in it.blocks.items():
+        for name, block in authored(it):
             for lineno, text in block.get("body", []):
                 m = CHECKBOX_RE.match(text)
                 if m and m.group(1).strip():
@@ -536,7 +553,7 @@ def check(items, parse_findings, glossary=None):
             continue
         # A Scope Boundary naming an exclusion is declaring it out, not doing it.
         scanned, in_boundary = [], False
-        for b in it.blocks.values():
+        for _, b in authored(it):
             for _, line in b.get("body", []):
                 m = LABEL_RE.match(line)
                 if m:
@@ -556,7 +573,7 @@ def check(items, parse_findings, glossary=None):
     for it in items:
         if it.kind != "story":
             continue
-        body = "\n".join(t for b in it.blocks.values() for _, t in b.get("body", []))
+        body = "\n".join(t for _, b in authored(it) for _, t in b.get("body", []))
         low = body.lower()
         vague = sorted({p for p in VAGUE_PHRASES if p in low})
         if len(vague) >= 3:
@@ -574,12 +591,10 @@ def check(items, parse_findings, glossary=None):
     # requester's own words, preserved verbatim) and verbatim tracker history.
     for it in items:
         artifacts = set()
-        for b in it.blocks.values():
+        for _, b in authored(it):
             for _, line in b.get("body", []):
                 artifacts.update(ARTIFACT_RE.findall(line))
-        for block_name, block in it.blocks.items():
-            if block_name in VERBATIM_BLOCKS:
-                continue
+        for block_name, block in authored(it):
             in_sql = verbatim = explains = False
             for lineno, line in block.get("body", []):
                 m = LABEL_RE.match(line)
@@ -623,9 +638,7 @@ def check(items, parse_findings, glossary=None):
     # People are fields, not prose. An initial in a body duplicates an authoritative
     # field, rots on reassignment, and asks an owner to confirm their own work.
     for it in items:
-        for block_name, block in it.blocks.items():
-            if block_name in VERBATIM_BLOCKS:
-                continue
+        for block_name, block in authored(it):
             in_code = False
             for lineno, line in block.get("body", []):
                 stripped = line.lstrip()
@@ -762,6 +775,8 @@ def check(items, parse_findings, glossary=None):
                 add("error", block["line"], "fence-width",
                     f"{it.ref} block **{name}** uses a {len(block['fence'])}-backtick "
                     f"fence; the template uses four.")
+            if name in VERBATIM_BLOCKS:
+                continue
             body = block["body"]
             if not any(t.strip() for _, t in body):
                 add("warning", block["line"], "empty-block",
@@ -851,7 +866,7 @@ def sections(item):
                 "boxes": 0, "checked": 0, "bullets": 0, "open": [], "head": head}
 
     out = []
-    for block_name, block in item.blocks.items():
+    for block_name, block in authored(item):
         current = entry(block_name, block_name, block["line"], head=True)
         out.append(current)
         for lineno, text in block.get("body", []):

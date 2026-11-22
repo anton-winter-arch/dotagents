@@ -127,9 +127,19 @@ _Starter queries, adapt or extend as needed._
 - [ ] {Impacted documentation updated, or confirmed unaffected}
 - [ ] {One line for the work type where the standard carries one: CI checks, retained validation evidence, release evidence and rollback guidance}
 ````
+
+**COMMENTS**
+````
+````
 `````
 
 The heading above each fence is the tracker's field name, and the fence is what gets pasted into it. So the criteria need no label of their own - they are the first thing in the field that is already called Acceptance Criteria - while the blocks after them do, because one tracker field is carrying three things.
+
+`**COMMENTS**` is the story's working record, written empty and filled by whoever works the story: state changes, evidence, verdicts. It is append-only, and audits read it as evidence and never rewrite it. No completion count, budget or register check reads it, and an older story without the block is still valid. State changes go through `scripts/board_state.py`, never a hand edit:
+
+    python3 scripts/board_state.py BOARD.md STORY-NNNN03 Active --by <name> [--tick | --untick]
+
+It rewrites the `- State:` line (adding one under the metadata lines if there is none), appends `- <UTC time> <old> -> <new> by <name>` to COMMENTS (adding the block if there is none), and ticks or unticks the title box only when told to. It knows no state values and checks no moves. Setting the current state again changes nothing. It refuses, leaving the file byte-identical and exiting 1, on an unknown story, a clock earlier than the story's last state line, or an edit that adds a lint error. The new file is written beside the board and renamed over it, so no reader sees a half-written board.
 
 Only stories carry a separate `**ACCEPTANCE CRITERIA**` block. Epics and features
 hold their completion conditions inside the description block, because that is

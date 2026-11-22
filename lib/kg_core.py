@@ -385,12 +385,19 @@ class Store:
                 sys.exit(f"error: {cfg_src} has invalid json: {e}")
             if not isinstance(data, dict):
                 sys.exit(f"error: {cfg_src} must hold a json object")
-        lines = []
+        lines, dropped = [], []
         for row in data.pop("ignore", None) or []:
             row = row if isinstance(row, dict) else {"path": row}
+            path = str(row.get("path", ""))
+            # A row ignoring a legacy store folder itself is dead weight once
+            # the store lives in .kg/ (legacy folders are never indexed), so
+            # it is dropped and reported.
+            if legacy_folder_row(path, self.legacy):
+                dropped.append(path)
+                continue
             reason = str(row.get("reason", "")).strip()
-            lines += [f"# {reason}"] * bool(reason) + [str(row.get("path", ""))]
-        rewrite = bool(lines) or cfg_src.suffix != ".json"
+            lines += [f"# {reason}"] * bool(reason) + [path]
+        rewrite = bool(lines or dropped) or cfg_src.suffix != ".json"
         moves = [(cfg_src, new / self.config)]
         moves += [(old / (names.get(n, n) + s), new / (n + s))
                   for n in (self.db, self.prev_db)
@@ -425,7 +432,18 @@ class Store:
             (old / ".gitignore").unlink(missing_ok=True)
             old.rmdir()
         return {"from": old.name, "to": KG_DIR, "moved": moved,
-                "removed": not left, "left": left}
+                "dropped": dropped, "removed": not left, "left": left}
+
+
+def legacy_folder_row(path: str, legacy: dict) -> bool:
+    """True when an ignore row names a legacy store folder itself, in any of
+    the forms a config writes it: `vault-kg`, `/vault-kg/`, `./vault-kg/**`. A long
+    row is kept unjudged, since keeping a row is the safe failure."""
+    path = path.strip()
+    if len(path) > 256:
+        return False
+    m = re.fullmatch(r"(?:\./|/)*([^/*]+)(?:/\*{1,2})*/*", path)
+    return bool(m) and m.group(1) in legacy
 
 
 def render_migrate(p: dict) -> int:
@@ -434,6 +452,9 @@ def render_migrate(p: dict) -> int:
         print(f"migrate: nothing to move; the graph is in {KG_DIR}/"
               " already, or not built yet")
         return 0
+    for path in p.get("dropped", []):
+        print(f"dropped ignore row {path}: it names a legacy store folder,"
+              " which is never indexed")
     for src, dst in p["moved"]:
         print(f"moved {src} -> {dst}")
     print(f"removed {p['from']}/" if p["removed"] else

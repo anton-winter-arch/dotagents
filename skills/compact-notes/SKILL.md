@@ -63,7 +63,7 @@ Exit codes: 0 ok, 2 target not found, 4 verify failed, 6 backup refused.
 
 ### 1. Resolve the target and the graph
 
-Headings are `## YYYY-MM-DD`, optionally suffixed, and they duplicate, so trust the script's keys (`file#date-suffix~N`) and never address a section by date alone. On zero or multiple matches, ask through AskUserQuestion rather than guessing.
+Headings are `## YYYY-MM-DD`, optionally suffixed, and they duplicate, so trust the script's keys (`file#date-suffix~N`) and never address a section by date alone: pass a duplicate's heading with its `~N`, as in `"2026-07-22~2"`, and a heading that itself ends in `~N` with `~1` appended. On zero or multiple matches, ask through AskUserQuestion rather than guessing.
 
 The vault's knowledge graph is required. Resolve the names, systems and terms in the section against it with the `markdown-kg` skill (`entity`, `search`) rather than reading other notes whole. A vault with no graph is ingested first (`markdown_kg.py ingest <vault>`).
 

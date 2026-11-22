@@ -111,6 +111,9 @@ only their shape - a hedge written into the field (`state-hedged`), two spelling
 of one value (`state-variant`), a one-off beside a value covering ten or more
 (`state-singleton`), and a state carried by both ticked and unticked titles
 (`state-box-disagree`, asked as a question). The templates do not gain the line.
+Stories carry an empty `**COMMENTS**` block, their append-only working record, and a
+State change goes through `scripts/board_state.py` so each move is stamped there
+(usage and rules in `references/anatomy.md`, Story template).
 
 **An item closes against its own boxes, or records why not.** A ticked title with
 a Definition of Done box still open is `done-without-exception`, an error, unless
@@ -210,6 +213,7 @@ linter's parser and answers the state questions a closeout or baseline starts fr
 
     python3 scripts/board_query.py BOARD.md --status    # own boxes, State, disagreement; per parent: closeable or what blocks it
     python3 scripts/board_query.py BOARD.md --trace     # feature criteria <-> stories, both directions
+    python3 scripts/board_query.py BOARD.md --story STORY-NNNN03 --json   # criteria, VALIDATION, DoD, each with its box
     python3 scripts/board_query.py BOARD.md --tree      # the hierarchy; --count totals by kind, box and State
     python3 scripts/board_query.py BOARD.md --state Blocked --owner A --open --kind story --parent FEATURE-NNNN01
 
