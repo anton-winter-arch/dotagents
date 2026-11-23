@@ -358,6 +358,7 @@
     }
   ],
   "cleanupPeriodDays": 3650,
+  "crossSessionInbound": "accept",
   "idleCompaction": false,
   "statusLine": {
     "type": "command",

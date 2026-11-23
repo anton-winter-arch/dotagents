@@ -1190,6 +1190,23 @@ class TestStoryQuery(unittest.TestCase):
                  for c in d[k]]
         self.assertNotIn("pass alerts_test.py", texts)
 
+    def test_comments_are_listed_verbatim_with_line_numbers(self):
+        board = TEMPLATE_STORY_BOARD.replace(
+            "````\n- [ ] pass alerts_test.py\n", "````\n- [ ] pass alerts_test.py\n"
+            "- evidence abc123 base def456 security safe\n  - criteria:1 pass x\n", 1)
+        d = self.detail(board, "STORY-NNNN04")
+        self.assertEqual([c["text"] for c in d["comments"]],
+                         ["- [ ] pass alerts_test.py",
+                          "- evidence abc123 base def456 security safe",
+                          "  - criteria:1 pass x", "- verdict pending"])
+        lines = board.splitlines()
+        for c in d["comments"]:
+            self.assertEqual(lines[c["line"] - 1], c["text"])
+        self.assertEqual(set(d["comments"][0]), {"line", "text"})
+
+    def test_story_without_comments_block_has_empty_comments(self):
+        self.assertEqual(self.detail(CLEAN_BOARD, "STORY-NNNN03")["comments"], [])
+
     def test_legacy_story_reports_its_done_list_and_nothing_else(self):
         d = self.detail(CLEAN_BOARD, "nnnn03")
         self.assertEqual(d["criteria"], [])
@@ -1212,6 +1229,7 @@ class TestStoryQuery(unittest.TestCase):
             payload = json.loads(proc.stdout)
             self.assertEqual(len(payload["criteria"]), 2)
             self.assertEqual(payload["definition_of_done"][2]["text"], "Runbook updated")
+            self.assertEqual(payload["comments"][-1]["text"], "- verdict pending")
             text = run("--story", "STORY-NNNN04")
             self.assertEqual(text.returncode, 0, text.stderr)
             self.assertIn("[x] On-call lead confirms the page", text.stdout)

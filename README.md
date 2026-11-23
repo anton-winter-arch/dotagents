@@ -95,6 +95,7 @@ Each entry's own file is authoritative: a skill's frontmatter `description` is i
 | Skill | What it does |
 |---|---|
 | `meta-loop` | Plan, fan out to parallel workers, verify each result, synthesize, with an `advisor` consulted off the hot path. |
+| `agent-team` | `/agent-team lead` runs live sessions in other repos by direct message: seats own their boards and commits, the lead checks each delivery with `packet_check.py` and a scratch clone, and the user approves every push in the seat. |
 | `deep-research` | Multi-angle web research with parallel researchers, cross-validated and cited. |
 | `task` | `/task <harness>` hands one bounded task to Codex, Cursor or Antigravity in an isolated worktree; `/task tryout` benchmarks a candidate harness. |
 | `agent-review` | One outside model reviews a user-approved file set in a single headless call with no tools. |

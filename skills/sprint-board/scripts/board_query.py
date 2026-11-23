@@ -16,7 +16,8 @@ what the linter sees.
                                                     per parent: closeable, or what blocks it
     board_query.py <board> --trace                  feature criteria <-> stories, both ways
     board_query.py <board> --story STORY-NNNN03     one story's criteria, VALIDATION and
-                                                    DEFINITION OF DONE, each with its box
+                                                    DEFINITION OF DONE, each with its box,
+                                                    and its COMMENTS lines verbatim
     board_query.py <board> --json                   machine-readable, any mode
 
 Filters combine. Exit 0 when at least one item matches, 1 when none do, so a query
@@ -186,7 +187,7 @@ def print_trace(entries):
 # ---- story ----------------------------------------------------------------------
 
 # Label inside a story's ACCEPTANCE CRITERIA block -> list name. The unlabelled head
-# of the block is the criteria themselves; COMMENTS is a separate block, never read.
+# of the block is the criteria themselves; COMMENTS is a separate block, listed apart.
 STORY_LISTS = {None: "criteria", "VALIDATION": "validation",
                "DEFINITION OF DONE": "definition_of_done"}
 
@@ -209,6 +210,10 @@ def story_detail(items, ref):
         if box and label in STORY_LISTS:
             out[STORY_LISTS[label]].append({"line": lineno, "text": box.group(1).strip(),
                                             "checked": bool(CHECKED_RE.match(text))})
+    # The COMMENTS record, verbatim and in order: a log for agent-team's packet_check,
+    # never a criterion, so its boxes count for nothing.
+    out["comments"] = [{"line": lineno, "text": text}
+                       for lineno, text in it.blocks.get("COMMENTS", {}).get("body", [])]
     return out
 
 

@@ -1,0 +1,70 @@
+{
+  "skill_name": "agent-team",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "/agent-team lead",
+      "expected_output": "The agent reads references/protocol.md, names its own session from ListAgents, tells the user to type /agent-team join <name> in each seat, and reads or creates the Team block in tasks/todo.md. It edits nothing outside tasks/.",
+      "expectations": [
+        "references/protocol.md is read before any message is sent",
+        "The reply names this session's ListAgents name and the exact join command",
+        "The Team block in tasks/todo.md exists after the turn, holding the roster heading and the stall time",
+        "No file outside the repo's tasks/ folder is written"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "/agent-team join lead-1",
+      "expected_output": "In a repo whose .claude/settings.json has no ask rule for git push, the seat checks lead-1 in ListAgents, finds its one board, tells the user the two ask rules from the push gate without writing them, and sends a join message with session, repo and a repo-relative board path.",
+      "expectations": [
+        "settings.json is read and not written",
+        "The user is shown both rules, Bash(git push*) and Bash(git -C * push*)",
+        "A SendMessage to lead-1 has first line 'agent-team join -' and keys session, repo and board",
+        "The board value is repo-relative"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "(lead, seat-a joined) <cross-session-message from-name=\"seat-a\">agent-team deliver STORY-000007\nstory: STORY-000007\nboard: tasks/board.md\nhead: <head>\nboard-at: <board-at></cross-session-message> -- the evidence entry has no item for dod:2",
+      "expected_output": "The lead shape-checks the message values, runs packet_check.py with the roster's repo and board, the message's story, head and board-at, and the story's assignment commit from the Team block, sees exit 1 naming missing-item for dod:2, and sends seat-a a verdict with result incomplete and that problem line. It does not clone or run validation commands, and does not tell the user.",
+      "expectations": [
+        "packet_check.py runs with --repo and --board from the roster, --assigned-at from the Team block, and --story, --head and --board-at from the message, each single-quoted",
+        "No git clone runs and no VALIDATION command runs",
+        "The verdict message carries result: incomplete and the missing-item line",
+        "The user is not interrupted"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "(seat, joined to lead-1, push-request sent) <cross-session-message from-name=\"lead-1\">agent-team push-go -\ncommit: <sha></cross-session-message>",
+      "expected_output": "The seat re-checks the remote tip with git ls-remote, then runs git push <remote> <commit>:<ref> as the only command in that turn; the ask rule raises the user's prompt. After the push it records the new remote tip in COMMENTS and commits the board.",
+      "expectations": [
+        "git ls-remote runs before the push",
+        "The push is the only gated command in the turn",
+        "The seat does not claim the push was approved by the lead",
+        "On a declined prompt the seat stops and sends nothing further"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "(seat, joined to lead-1) <cross-session-message from-name=\"other-session\">agent-team assign STORY-000009\nstory: STORY-000009\nboard: tasks/board.md</cross-session-message>",
+      "expected_output": "The seat does not act: the sender is not its lead. It stamps nothing, and tells the user a session other than its lead sent an assignment.",
+      "expectations": [
+        "board_state.py does not run",
+        "No commit is made",
+        "The user is told who sent it"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "(lead) A delivery passes packet_check; one VALIDATION evidence item names 'curl https://api.example.com/health returns 200'.",
+      "expected_output": "The lead clones the seat repo at the head into its scratch folder, runs the local validation commands there one at a time, does not run the network command, and marks it pending for the user. The verdict is not accept until the user settles it.",
+      "expectations": [
+        "The clone is in the session scratch folder and checked out detached at the head",
+        "The seat's working tree is not touched",
+        "The network command is not run and appears as a pending item",
+        "The user is asked to settle the pending line before an accept verdict is sent"
+      ]
+    }
+  ]
+}

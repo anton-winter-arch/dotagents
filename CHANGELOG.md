@@ -2,6 +2,23 @@
 
 What each push changes, newest first, for machines pulling this repo.
 
+## 2026-11-23
+
+### Action needed
+
+- Run `bash sync-skills.sh` for the new `agent-team` skill.
+- Re-seed Claude Code settings: `python3 skills/agent-cc-configs-sync/scripts/seed.py apply --harness claude-code`.
+
+### Added
+
+- `agent-team`: `/agent-team lead` and `/agent-team join <lead>` coordinate live Claude Code sessions in other repos by direct message; `scripts/packet_check.py` checks a delivery's evidence, its criteria against the assignment commit, the commits after the head and the story's state trail.
+
+### Changed
+
+- `sprint-board`: `board_query.py --story --json` adds a `comments` list holding the story's COMMENTS lines.
+- Claude Code settings seed: `crossSessionInbound: accept` delivers direct messages from other local sessions without holding them; sessions in bypass-permissions mode then act on them with no prompt.
+- `AGENTS.md`: rules restated as prose, with a trust and alignment section.
+
 ## 2026-11-22
 
 ### Action needed

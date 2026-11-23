@@ -213,7 +213,7 @@ linter's parser and answers the state questions a closeout or baseline starts fr
 
     python3 scripts/board_query.py BOARD.md --status    # own boxes, State, disagreement; per parent: closeable or what blocks it
     python3 scripts/board_query.py BOARD.md --trace     # feature criteria <-> stories, both directions
-    python3 scripts/board_query.py BOARD.md --story STORY-NNNN03 --json   # criteria, VALIDATION, DoD, each with its box
+    python3 scripts/board_query.py BOARD.md --story STORY-NNNN03 --json   # criteria, VALIDATION, DoD with boxes; COMMENTS lines
     python3 scripts/board_query.py BOARD.md --tree      # the hierarchy; --count totals by kind, box and State
     python3 scripts/board_query.py BOARD.md --state Blocked --owner A --open --kind story --parent FEATURE-NNNN01
 
